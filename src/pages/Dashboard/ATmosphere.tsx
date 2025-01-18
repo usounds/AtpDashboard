@@ -28,6 +28,7 @@ const ATmosphere: React.FC = () => {
   const loadData = async () => {
     setCollection([])
     setNsidLv2(0)
+    setDid([])
 
     const collection = await fetch('https://collectiondata.usounds.work/collection_count_view');
     if (!collection.ok) {
