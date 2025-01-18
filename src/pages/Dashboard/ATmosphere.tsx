@@ -5,6 +5,7 @@ import { Collection, Did } from '../../types/collection';
 import { FiUsers } from "react-icons/fi";
 import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
+import { MdDomain } from "react-icons/md";
 
 function epochUsToTimeAgo(cursor: number): string {
   const cursorDate = new Date(cursor / 1000); // UNIXタイムスタンプからDateオブジェクトを作成
@@ -20,14 +21,11 @@ const ATmosphere: React.FC = () => {
   const [collection, setCollection] = useState<Collection[]>([]);
   const [did, setDid] = useState<Did[]>([]);
   const [cursor, setCursor] = useState<number>(0);
+  const [nsidLv2, setNsidLv2] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [earliestCollection, setEarliestCollection] = useState<Collection | null>(null);
 
   const loadData = async () => {
-    setCollection([])
-    setDid([])
-    setCursor(0)
-    setError('')
 
     const collection = await fetch('https://collectiondata.usounds.work/collection_count_view');
     if (!collection.ok) {
@@ -59,6 +57,17 @@ const ATmosphere: React.FC = () => {
     const result3 = await index.json();
     console.log(result3)
     setCursor(result3[0].cursor);
+
+
+
+    const nsid = await fetch('https://collectiondata.usounds.work/collection_lv2_view');
+    if (!nsid.ok) {
+      throw new Error(`Error: ${nsid.statusText}`);
+    }
+    const result4 = await nsid.json();
+    console.log(result4)
+    setNsidLv2(result4.length);
+
   }
 
   useEffect(() => {
@@ -90,6 +99,9 @@ const ATmosphere: React.FC = () => {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
         <CardDataStats title="Total Collections" total={collection.length.toString()} rate="">
           <MdOutlineFolderCopy size={22} />
+        </CardDataStats>
+        <CardDataStats title="Total Sub Name Spaces" total={nsidLv2.toString()} rate="">
+          <MdDomain size={22} />
         </CardDataStats>
         <CardDataStats title="Total Users" total={did.length.toString()} rate="">
           <FiUsers size={22} />
