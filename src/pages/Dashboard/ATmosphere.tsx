@@ -88,8 +88,8 @@ const ATmosphere: React.FC = () => {
   return (
     <>
       <div className="mb-2">
-        All data indexed from {earliestCollection?.min ? new Date(Date.parse(earliestCollection.min + 'Z')).toLocaleString() : "Unknown date"}.
-        {cursor > 1 && " The index is up to " + new Date(cursor / 1000).toLocaleString() + "."}
+        Indexed from {earliestCollection?.min ? new Date(Date.parse(earliestCollection.min + 'Z')).toLocaleString() : "Unknown date"}
+        {cursor > 1 && " to " + new Date(cursor / 1000).toLocaleString() + "."}
       </div>
       {error &&
         <div className="my-2 bg-red-500">
