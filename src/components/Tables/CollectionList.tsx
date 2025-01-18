@@ -116,11 +116,12 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             </div>
 
             <div className="flex items-center justify-center p-2.5 xl:p-5">
-              {new Date(item.min).toLocaleString()}
+            {new Date(Date.parse(item.min + 'Z')).toLocaleString()}
+
             </div>
 
             <div className="hidden items-center justify-center p-2.5 sm:flex xl:p-5">
-              {new Date(item.max).toLocaleString()}
+            {new Date(Date.parse(item.max + 'Z')).toLocaleString()}
             </div>
           </div>
         ))}
