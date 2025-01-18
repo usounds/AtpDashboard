@@ -1,5 +1,5 @@
 import { Collection } from '../../types/collection';
-import React, { useEffect, useState } from 'react';import { IoIosSearch } from "react-icons/io";
+import React, { useEffect, useState } from 'react'; import { IoIosSearch } from "react-icons/io";
 
 interface CollectionListProps {
   collections: Collection[]; // Collection[] 型の props を定義
@@ -63,16 +63,16 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
         <h4 className="text-xl font-semibold text-black dark:text-white">
           3rd Party Collections
         </h4>
-        <div className="flex items-center p-2 border rounded-lg text-black dark:text-white dark:bg-meta-4 focus:outline-none">
-      <IoIosSearch className="text-lg text-gray-500 dark:text-gray-300 mr-2" />
-      <input
-        type="text"
-        value={searchQuery}
-        onChange={handleSearch}
-        placeholder="Search..."
-        className="w-full bg-transparent focus:outline-none"
-      />
-    </div>
+        <div className="flex items-center p-2 border rounded-lg text-black dark:text-white focus:outline-none border-stroke dark:border-strokedark">
+          <IoIosSearch className="text-lg text-gray-500 dark:text-gray-300 mr-2" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={handleSearch}
+            placeholder="Search..."
+            className="w-full bg-transparent focus:outline-none"
+          />
+        </div>
       </div>
 
       <div className="flex flex-col">
@@ -92,7 +92,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
         </div>
 
         {sortedCollections.length === 0 &&
-          <div className="m-2">
+          <div className="m-5 text-black dark:text-white">
             No Item
           </div>
         }
@@ -116,12 +116,12 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             </div>
 
             <div className="flex items-center justify-center p-2.5 xl:p-5">
-            {new Date(Date.parse(item.min + 'Z')).toLocaleString()}
+              {new Date(Date.parse(item.min + 'Z')).toLocaleString()}
 
             </div>
 
             <div className="hidden items-center justify-center p-2.5 sm:flex xl:p-5">
-            {new Date(Date.parse(item.max + 'Z')).toLocaleString()}
+              {new Date(Date.parse(item.max + 'Z')).toLocaleString()}
             </div>
           </div>
         ))}
