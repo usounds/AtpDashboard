@@ -63,7 +63,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
         <h4 className="text-xl font-semibold text-black dark:text-white">
           Collections
         </h4>
-        <div className="flex items-center p-2 border rounded-lg text-black dark:text-white focus:outline-none border-stroke dark:border-strokedark">
+        <div className="flex items-center ml-1 p-2 border rounded-lg text-black dark:text-white focus:outline-none border-stroke dark:border-strokedark">
           <IoIosSearch className="text-lg text-gray-500 dark:text-gray-300 mr-2" />
           <input
             type="text"
