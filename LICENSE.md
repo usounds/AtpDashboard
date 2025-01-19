@@ -19,3 +19,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+### Additional Copyright Notice
+
+Copyright (c) 2025 usounds.work
+
+This software incorporates portions of the software originally developed by TailAdmin. My modifications and additions are provided under the same terms as the MIT License unless otherwise noted. Please retain the original copyright notice and this additional copyright notice in any redistributions of the software.
