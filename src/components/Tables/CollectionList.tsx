@@ -13,7 +13,6 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
 
   useEffect(() => {
     setSortedCollections(collections);
-    console.log(sortConfig?.key)
     handleSort(sortConfig?.key || '', searchQuery)
   }, [collections]);
 

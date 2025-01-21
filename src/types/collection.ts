@@ -11,3 +11,7 @@ export type Did = {
     min: string;
     max: string;
 }
+
+export type NSIDLv2 = {
+    nsidlv2: string;
+}

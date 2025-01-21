@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import CardDataStats from '../../components/CardDataStats';
+import Checkbox from '../../components/Checkboxes/CheckBox';
 import CollectionList from '../../components/Tables/CollectionList';
-import { Collection, Did } from '../../types/collection';
+import { Collection, Did, NSIDLv2 } from '../../types/collection';
 import { FiUsers } from "react-icons/fi";
 import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
 import { MdDomain } from "react-icons/md";
+
+import { useModeStore } from "../../zustand/preference";
 
 function epochUsToTimeAgo(cursor: number): string {
   const cursorDate = new Date(cursor / 1000); // UNIXタイムスタンプからDateオブジェクトを作成
@@ -24,6 +27,8 @@ const ATmosphere: React.FC = () => {
   const [nsidLv2, setNsidLv2] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [earliestCollection, setEarliestCollection] = useState<Collection | null>(null);
+  const exceptCollectionWithTransaction = useModeStore((state) => state.exceptCollectionWithTransaction);
+  const setExceptCollectionWithTransaction = useModeStore((state) => state.setExceptCollectionWithTransaction);
 
   const loadData = async () => {
     setCollection([])
@@ -34,17 +39,31 @@ const ATmosphere: React.FC = () => {
     if (!collection.ok) {
       throw new Error(`Error: ${collection.statusText}`);
     }
-    const result1 = await collection.json();
-    setCollection(result1);
+    const result1 = await collection.json() as Collection[];
 
-    const earliest = result1.reduce((earliest: Collection | null, current: Collection) => {
+    const ret = []
+
+    for (const item of result1) {
+      if (exceptCollectionWithTransaction) {
+        if (!item.collection.startsWith('ge.shadowcaster')) {
+          ret.push(item)
+        }
+
+      } else {
+        ret.push(item)
+
+      }
+    }
+
+    setCollection(ret);
+
+    const earliest = ret.reduce((earliest: Collection | null, current: Collection) => {
       const currentMinDate = new Date(current.min);
       const earliestMinDate = earliest ? new Date(earliest.min) : new Date();
       return currentMinDate < earliestMinDate ? current : earliest;
     }, null);
 
     setEarliestCollection(earliest);
-
 
     const did = await fetch('https://collectiondata.usounds.work/did_count_view');
     if (!did.ok) {
@@ -58,18 +77,29 @@ const ATmosphere: React.FC = () => {
       throw new Error(`Error: ${index.statusText}`);
     }
     const result3 = await index.json();
-    console.log(result3)
     setCursor(result3[0].cursor);
-
 
 
     const nsid = await fetch('https://collectiondata.usounds.work/collection_lv2_view');
     if (!nsid.ok) {
       throw new Error(`Error: ${nsid.statusText}`);
     }
-    const result4 = await nsid.json();
-    console.log(result4)
-    setNsidLv2(result4.length);
+    const result4 = await nsid.json() as NSIDLv2[]
+
+
+    const ret2 = []
+
+    for (const item of result4) {
+      if (exceptCollectionWithTransaction) {
+        if (item.nsidlv2 && !item.nsidlv2.startsWith('ge.shadowcaster')) {
+          ret2.push(item);
+        }
+      } else {
+        ret2.push(item);
+      }
+    }
+
+    setNsidLv2(ret2.length);
 
   }
 
@@ -86,7 +116,7 @@ const ATmosphere: React.FC = () => {
     };
 
     fetchData();
-  }, []);
+  }, [exceptCollectionWithTransaction]);
 
   return (
     <>
@@ -99,6 +129,13 @@ const ATmosphere: React.FC = () => {
           {error}
         </div>
       }
+      <div className="mb-2">
+        <Checkbox
+          checked={exceptCollectionWithTransaction}
+          onChange={setExceptCollectionWithTransaction}
+          label="Exclude collections with transaction key"
+        />
+      </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
         <CardDataStats title="Total Collections" total={collection.length.toString()} rate="">
           <MdOutlineFolderCopy size={22} />
