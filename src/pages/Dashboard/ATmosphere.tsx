@@ -146,7 +146,7 @@ const ATmosphere: React.FC = () => {
         <CardDataStats title="Total Users" total={did.length.toString()} rate="">
           <FiUsers size={22} />
         </CardDataStats>
-        <CardDataStats title="Cursor Behind Minues" total={cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={epochUsToTimeAgo(cursor) !== '0'}>
+        <CardDataStats title="Cursor Delay in Minutes" total={cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={epochUsToTimeAgo(cursor) !== '0'}>
           <BiTachometer size={28} />
         </CardDataStats>
       </div>
