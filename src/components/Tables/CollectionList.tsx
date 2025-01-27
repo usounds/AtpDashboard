@@ -1,5 +1,7 @@
 import { Collection } from '../../types/collection';
-import React, { useEffect, useState } from 'react'; import { IoIosSearch } from "react-icons/io";
+import CollectionDetail from '../CollectionDetail'
+import React, { useEffect, useState } from 'react'
+  ; import { IoIosSearch } from "react-icons/io";
 
 interface CollectionListProps {
   collections: Collection[]; // Collection[] 型の props を定義
@@ -10,6 +12,8 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
   const [sortedCollections, setSortedCollections] = useState<Collection[]>(collections);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'ascending' | 'descending' } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isOpen, setIsOpen] = useState(false);
+  const [selectedCollection, setSelectedCollection] = useState<string>('');
 
   useEffect(() => {
     setSortedCollections(collections);
@@ -21,6 +25,11 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
     setSearchQuery(query);
     handleSort(sortConfig?.key || '', query)
   };
+
+  const handleSelectedCollection = (collection: string) => {
+    setSelectedCollection(collection)
+    setIsOpen(true)
+  }
 
   const handleSort = (key: string, query: string) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -74,6 +83,15 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
         </div>
       </div>
 
+      {isOpen &&
+        <CollectionDetail
+          open={isOpen}
+          onCancel={() => setIsOpen(false)}
+          onOk={() => setIsOpen(false)}
+          collection={selectedCollection}
+        />
+      }
+
       <div className="flex flex-col">
         <div className="grid grid-cols-3 rounded-sm bg-gray-2 dark:bg-meta-4 sm:grid-cols-4">
           <div className="p-2.5 xl:p-5 cursor-pointer" onClick={() => handleSort('collection', searchQuery)}>
@@ -103,6 +121,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
               : 'border-b border-stroke dark:border-strokedark'
               }`}
             key={key}
+            onClick={() => handleSelectedCollection(item.collection)}
           >
             <div className="flex items-center gap-3 p-2.5 xl:p-5">
               <p className="text-black dark:text-white sm:block break-words overflow-hidden break-all">

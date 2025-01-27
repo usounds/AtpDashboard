@@ -13,6 +13,7 @@
     "url": "https://atpdashboard.usounds.work/"
   },
   "dependencies": {
+    "@react-spring/web": "^9.7.5",
     "apexcharts": "^3.41.0",
     "braces": "^3.0.3",
     "flatpickr": "^4.6.13",

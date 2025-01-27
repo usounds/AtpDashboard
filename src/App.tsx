@@ -26,7 +26,7 @@ function App() {
           index
           element={
             <>
-              <PageTitle title="ATmosphere Dashboard | ATProto Dashboard" />
+              <PageTitle title="3rd Party Collection | ATProto Dashboard" />
               <ATmosphere />
             </>
           }
