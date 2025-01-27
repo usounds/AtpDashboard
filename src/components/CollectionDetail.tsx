@@ -36,7 +36,7 @@ const CollectionDetail = (props: ModalProps) => {
         <>
             {/* オーバーレイ（背景） */}
             <div
-                className="fixed inset-0 bg-black bg-opacity-50 z-10"
+                className="fixed inset-0 bg-black bg-opacity-50 dark:bg-gray-700 dark:bg-opacity-50 z-10"
                 onClick={() => props.onCancel()}
             ></div>
 
