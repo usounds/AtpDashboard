@@ -193,6 +193,9 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }: SidebarProps) => {
 
             </ul>
           </div>
+          <div className="flex gap-2 flex-wrap items-center justify-center mb-4">
+            <a href='https://whtwnd.com/usounds.work/3lfzredx3di22' target="_blank">Usage</a> / <a href='https://whtwnd.com/usounds.work/3lfzowsaasz2q' target="_blank">使い方</a>
+          </div>
           <div className="flex gap-6 flex-wrap items-center justify-center ">
             <div className="text-center">
               <a
