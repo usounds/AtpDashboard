@@ -47,7 +47,7 @@ const CollectionDetail = (props: ModalProps) => {
                     {'at://' + did + '/' + props.collection + '/' + rkey}
                 </p>
                 <div className="flex w-full justify-center items-center mt-2 mb-4">
-                    <a href={'https://pdsls.pages.dev/at/' + did + '/' + props.collection + '/' + rkey} target="_blank" rel="noreferrer" className="flex items-center">
+                    <a href={'https://pdsls.dev/at/' + did + '/' + props.collection + '/' + rkey} target="_blank" rel="noreferrer" className="flex items-center">
                         <span>View in PDSls</span>
                         <BsBoxArrowUpRight className="ml-2" />
                     </a>
