@@ -56,10 +56,11 @@ const ATmosphere: React.FC = () => {
       if (exceptCollectionWithTransaction) {
         if (!item.collection.startsWith('ge.shadowcaster')) {
           ret.push(item)
-          const minDate = new Date(item.min+"z"); 
+          const minDate = new Date(item.min+"Z"); 
           if(minDate>threeDaysAgo) {
             newCollection++
             item.isNew = true
+            console.log(item)
           }
         }
 
