@@ -17,11 +17,14 @@ function epochUsToTimeAgo(cursor: number): string {
   const diffInMs = now.getTime() - cursorDate.getTime(); // 現在時刻との差をミリ秒単位で計算
   const diffInMinutes = Math.floor(diffInMs / (1000 * 60)); // ミリ秒を分に変換
 
+  if(diffInMinutes<=0) return '0'
+
   return `${diffInMinutes}`;
 }
 
 const ATmosphere: React.FC = () => {
   const [collection, setCollection] = useState<Collection[]>([]);
+  const [newCollection, setNewCollection] = useState<number>(0);
   const [did, setDid] = useState<number>(0);
   const [cursor, setCursor] = useState<number>(0);
   const [nsidLv2, setNsidLv2] = useState<number>(0);
@@ -34,6 +37,7 @@ const ATmosphere: React.FC = () => {
     setCollection([])
     setNsidLv2(0)
     setDid(0)
+    setNewCollection(0)
 
     const collection = await fetch('https://collectiondata.usounds.work/collection_count_view');
     if (!collection.ok) {
@@ -43,19 +47,35 @@ const ATmosphere: React.FC = () => {
 
     const ret = []
 
+    let newCollection  = 0
+    const now = new Date();
+    const threeDaysAgo = new Date(now);
+    threeDaysAgo.setHours(now.getHours() - 72);
+
     for (const item of result1) {
       if (exceptCollectionWithTransaction) {
         if (!item.collection.startsWith('ge.shadowcaster')) {
           ret.push(item)
+          const minDate = new Date(item.min+"z"); 
+          if(minDate>threeDaysAgo) {
+            newCollection++
+            item.isNew = true
+          }
         }
 
       } else {
         ret.push(item)
+        const minDate = new Date(item.min+"z"); 
+        if(minDate>threeDaysAgo) {
+          newCollection++
+          item.isNew = true
+        }
 
       }
     }
 
     setCollection(ret);
+    setNewCollection(newCollection)
 
     const earliest = ret.reduce((earliest: Collection | null, current: Collection) => {
       const currentMinDate = new Date(current.min);
@@ -137,7 +157,7 @@ const ATmosphere: React.FC = () => {
         />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
-        <CardDataStats title="Total Collections" total={collection.length.toString()} rate="">
+      <CardDataStats title="Total Collections" total={collection.length.toString()} rate={newCollection>0?newCollection.toString():''} levelUp={newCollection > 0}>
           <MdOutlineFolderCopy size={22} />
         </CardDataStats>
         <CardDataStats title="Total Sub Name Spaces" total={nsidLv2.toString()} rate="">

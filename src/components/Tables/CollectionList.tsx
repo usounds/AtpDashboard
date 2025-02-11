@@ -1,8 +1,8 @@
 import { Collection } from '../../types/collection';
 import CollectionDetail from '../CollectionDetail'
 import React, { useEffect, useState } from 'react'
-  ; import { IoIosSearch } from "react-icons/io";
-
+import { IoIosSearch } from "react-icons/io"
+import { GoDotFill } from "react-icons/go";
 interface CollectionListProps {
   collections: Collection[]; // Collection[] 型の props を定義
 }
@@ -53,11 +53,22 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
         return direction === 'ascending' ? a.count - b.count : b.count - a.count;
       }
       if (key === 'min' || key === 'max') {
-        const dateA = new Date(a[key as keyof Collection]);
-        const dateB = new Date(b[key as keyof Collection]);
+        const valueA = a[key as keyof Collection];
+        const valueB = b[key as keyof Collection];
 
-        return direction === 'ascending' ? dateA.getTime() - dateB.getTime() : dateB.getTime() - dateA.getTime();
+        const dateA = typeof valueA === 'string' || typeof valueA === 'number'
+          ? new Date(valueA)
+          : new Date(0); // 無効な場合は1970-01-01 (Epoch)
+
+        const dateB = typeof valueB === 'string' || typeof valueB === 'number'
+          ? new Date(valueB)
+          : new Date(0);
+
+        return direction === 'ascending'
+          ? dateA.getTime() - dateB.getTime()
+          : dateB.getTime() - dateA.getTime();
       }
+
       return 0;
     });
 
@@ -125,7 +136,11 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
           >
             <div className="flex items-center gap-3 p-2.5 xl:p-5">
               <p className="text-black dark:text-white sm:block break-words overflow-hidden break-all">
-                {item.collection}
+                <div className="flex items-center">
+                  {item.isNew && <GoDotFill size={10} className="shrink-0 text-meta-3 mr-1" />}
+                  {item.collection}
+                </div>
+
               </p>
             </div>
 

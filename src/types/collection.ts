@@ -3,6 +3,7 @@ export type Collection = {
     count: number;
     min: string;
     max: string;
+    isNew?: boolean;
 }
 
 export type Did = {
