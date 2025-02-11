@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import CardDataStats from '../../components/CardDataStats';
 import Checkbox from '../../components/Checkboxes/CheckBox';
 import CollectionList from '../../components/Tables/CollectionList';
-import { Collection, Did, NSIDLv2 } from '../../types/collection';
+import { Collection, NSIDLv2 } from '../../types/collection';
 import { FiUsers } from "react-icons/fi";
 import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
@@ -22,7 +22,7 @@ function epochUsToTimeAgo(cursor: number): string {
 
 const ATmosphere: React.FC = () => {
   const [collection, setCollection] = useState<Collection[]>([]);
-  const [did, setDid] = useState<Did[]>([]);
+  const [did, setDid] = useState<number>(0);
   const [cursor, setCursor] = useState<number>(0);
   const [nsidLv2, setNsidLv2] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,7 @@ const ATmosphere: React.FC = () => {
   const loadData = async () => {
     setCollection([])
     setNsidLv2(0)
-    setDid([])
+    setDid(0)
 
     const collection = await fetch('https://collectiondata.usounds.work/collection_count_view');
     if (!collection.ok) {
@@ -65,12 +65,12 @@ const ATmosphere: React.FC = () => {
 
     setEarliestCollection(earliest);
 
-    const did = await fetch('https://collectiondata.usounds.work/did_count_view');
+    const did = await fetch('https://collectiondata.usounds.work/unique_did_count_view');
     if (!did.ok) {
       throw new Error(`Error: ${did.statusText}`);
     }
     const result2 = await did.json();
-    setDid(result2);
+    setDid(result2[0].unique_did_count);
 
     const index = await fetch('https://collectiondata.usounds.work/cursor?service=eq.collection&select=service,cursor');
     if (!index.ok) {
@@ -143,7 +143,7 @@ const ATmosphere: React.FC = () => {
         <CardDataStats title="Total Sub Name Spaces" total={nsidLv2.toString()} rate="">
           <MdDomain size={22} />
         </CardDataStats>
-        <CardDataStats title="Total Users" total={did.length.toString()} rate="">
+        <CardDataStats title="Total Users" total={did.toString()} rate="">
           <FiUsers size={22} />
         </CardDataStats>
         <CardDataStats title="Cursor Delay in Minutes" total={cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={epochUsToTimeAgo(cursor) !== '0'}>
