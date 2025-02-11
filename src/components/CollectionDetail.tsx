@@ -19,7 +19,7 @@ const CollectionDetail = (props: ModalProps) => {
             setRkey('')
             setCreatedDate('')
 
-            const result = await fetch(`https://collectiondata.usounds.work/collection?select=did,rkey,collection,createdAt&collection=eq.${props.collection}&order=createdAt.desc&limit=1'`)
+            const result = await fetch(`https://collectiondata.usounds.work/collection?select=did,rkey,collection,createdAt&collection=eq.${props.collection}&order=createdAt.desc&limit=1`)
             const result4 = await result.json()
             const item = result4[0] as { did: string; rkey: string, createdAt: string }
 
