@@ -52,6 +52,9 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
       if (key === 'count') {
         return direction === 'ascending' ? a.count - b.count : b.count - a.count;
       }
+      if (key === 'recent_count') {
+        return direction === 'ascending' ? a.recent_count - b.recent_count : b.recent_count - a.recent_count;
+      }
       if (key === 'min' || key === 'max') {
         const valueA = a[key as keyof Collection];
         const valueB = b[key as keyof Collection];
@@ -104,12 +107,15 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
       }
 
       <div className="flex flex-col">
-        <div className="grid grid-cols-3 rounded-sm bg-gray-2 dark:bg-meta-4 sm:grid-cols-4">
+        <div className="grid grid-cols-3 rounded-sm bg-gray-2 dark:bg-meta-4 sm:grid-cols-5">
           <div className="p-2.5 xl:p-5 cursor-pointer" onClick={() => handleSort('collection', searchQuery)}>
             <h5 className="text-sm font-medium uppercase xsm:text-base">Collection</h5>
           </div>
-          <div className="p-2.5 text-center xl:p-5 cursor-pointer" onClick={() => handleSort('count', searchQuery)}>
+          <div className="hidden sm:block p-2.5 text-center xl:p-5 cursor-pointer" onClick={() => handleSort('count', searchQuery)}>
             <h5 className="text-sm font-medium uppercase xsm:text-base">Events</h5>
+          </div>
+          <div className="p-2.5 text-center xl:p-5 cursor-pointer" onClick={() => handleSort('recent_count', searchQuery)}>
+            <h5 className="text-sm font-medium uppercase xsm:text-base">72hour</h5>
           </div>
           <div className="p-2.5 text-center xl:p-5 cursor-pointer" onClick={() => handleSort('min', searchQuery)}>
             <h5 className="text-sm font-medium uppercase xsm:text-base">First Indexed</h5>
@@ -127,7 +133,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
 
         {sortedCollections.map((item, key) => (
           <div
-            className={`grid grid-cols-3 sm:grid-cols-4 ${key === collections.length - 1
+            className={`grid grid-cols-3 sm:grid-cols-5 ${key === collections.length - 1
               ? ''
               : 'border-b border-stroke dark:border-strokedark'
               }`}
@@ -144,8 +150,12 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
               </p>
             </div>
 
-            <div className="flex items-center justify-center p-2.5 xl:p-5">
+            <div className="hidden sm:flex items-center justify-center p-2.5 xl:p-5">
               <p className="text-black dark:text-white">{item.count}</p>
+            </div>
+
+            <div className="flex items-center justify-center p-2.5 xl:p-5">
+              <p className="text-black dark:text-white">{item.recent_count}</p>
             </div>
 
             <div className="flex items-center justify-center p-2.5 xl:p-5">

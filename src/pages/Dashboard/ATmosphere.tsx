@@ -2,12 +2,12 @@ import React, { useEffect, useState } from 'react';
 import CardDataStats from '../../components/CardDataStats';
 import Checkbox from '../../components/Checkboxes/CheckBox';
 import CollectionList from '../../components/Tables/CollectionList';
+import WeekChart from '../../components/Charts/WeekChart';
 import { Collection, NSIDLv2 } from '../../types/collection';
 import { FiUsers } from "react-icons/fi";
 import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
 import { MdDomain } from "react-icons/md";
-
 import { useModeStore } from "../../zustand/preference";
 
 function epochUsToTimeAgo(cursor: number): string {
@@ -17,9 +17,9 @@ function epochUsToTimeAgo(cursor: number): string {
   const diffInMs = now.getTime() - cursorDate.getTime(); // 現在時刻との差をミリ秒単位で計算
   const diffInMinutes = Math.floor(diffInMs / (1000 * 60)); // ミリ秒を分に変換
 
-  if(diffInMinutes<=0) return '0'
+  if (diffInMinutes <= 0) return '0'
 
-  return `${diffInMinutes}`;
+  return `${diffInMinutes.toLocaleString()}`;
 }
 
 const ATmosphere: React.FC = () => {
@@ -47,7 +47,7 @@ const ATmosphere: React.FC = () => {
 
     const ret = []
 
-    let newCollection  = 0
+    let newCollection = 0
     const now = new Date();
     const threeDaysAgo = new Date(now);
     threeDaysAgo.setHours(now.getHours() - 72);
@@ -56,18 +56,17 @@ const ATmosphere: React.FC = () => {
       if (exceptCollectionWithTransaction) {
         if (!item.collection.startsWith('ge.shadowcaster')) {
           ret.push(item)
-          const minDate = new Date(item.min+"Z"); 
-          if(minDate>threeDaysAgo) {
+          const minDate = new Date(item.min + "Z");
+          if (minDate > threeDaysAgo) {
             newCollection++
             item.isNew = true
-            console.log(item)
           }
         }
 
       } else {
         ret.push(item)
-        const minDate = new Date(item.min+"z"); 
-        if(minDate>threeDaysAgo) {
+        const minDate = new Date(item.min + "Z");
+        if (minDate > threeDaysAgo) {
           newCollection++
           item.isNew = true
         }
@@ -158,18 +157,23 @@ const ATmosphere: React.FC = () => {
         />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
-      <CardDataStats title="Total Collections" total={collection.length.toString()} rate={newCollection>0?newCollection.toString():''} levelUp={newCollection > 0}>
+        <CardDataStats title="Total Collections" total={collection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
           <MdOutlineFolderCopy size={22} />
         </CardDataStats>
-        <CardDataStats title="Total Sub Name Spaces" total={nsidLv2.toString()} rate="">
+        <CardDataStats title="Total Sub Name Spaces" total={nsidLv2.toLocaleString()} rate="">
           <MdDomain size={22} />
         </CardDataStats>
-        <CardDataStats title="Total Users" total={did.toString()} rate="">
+        <CardDataStats title="Total Users" total={did.toLocaleString()} rate="">
           <FiUsers size={22} />
         </CardDataStats>
         <CardDataStats title="Cursor Delay in Minutes" total={cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={epochUsToTimeAgo(cursor) !== '0'}>
           <BiTachometer size={28} />
         </CardDataStats>
+      </div>
+
+      <div className="mt-4 grid grid-cols-12 gap-4 md:mt-6 md:gap-6 2xl:mt-7.5 2xl:gap-7.5">
+        <WeekChart newView='new_collection_summary_view' newTitle="New" activeView='active_collection_summary_view' activeTitle="Active" title='Daily Collections' />
+        <WeekChart newView='new_did_summary_view' newTitle="New" activeView='active_did_summary_view' activeTitle="Active" title='Daily Users' />
       </div>
 
       <div className="mt-4 grid grid-cols-12 gap-4 md:mt-6 md:gap-6 2xl:mt-7.5 2xl:gap-7.5">

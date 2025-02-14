@@ -4,6 +4,7 @@ import Loader from './common/Loader';
 import PageTitle from './components/PageTitle';
 import DefaultLayout from './layout/DefaultLayout';
 import ATmosphere from './pages/Dashboard/ATmosphere';
+import ChartBoard from './pages/Dashboard/ChartBoard';
 
 function App() {
   const [loading, setLoading] = useState<boolean>(true);
@@ -28,6 +29,16 @@ function App() {
             <>
               <PageTitle title="3rd Party Collection | ATProto Dashboard" />
               <ATmosphere />
+            </>
+          }
+        />
+
+        <Route
+          path="/collectionChart"
+          element={
+            <>
+              <PageTitle title="Calendar | TailAdmin - Tailwind CSS Admin Dashboard Template" />
+              <ChartBoard />
             </>
           }
         />
