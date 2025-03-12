@@ -54,7 +54,7 @@ const CollectionDetail = (props: ModalProps) => {
                     </a>
                 </div>
 
-                <p>
+                <p className='w-full'>
                     <LexiconViewer domain={props.collection} />
                 </p>
 

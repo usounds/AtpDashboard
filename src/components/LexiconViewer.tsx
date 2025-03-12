@@ -102,7 +102,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             const data = await record.json();
             setLexicon(data.value);
             setMessage(''); // 成功したら終了
-            setIsLoading(false);
+                setIsLoading(false);
         } catch (e) {
             setMessage(`No lexicon found. Can't get record from PDS.`);
             setIsLoading(false);
@@ -118,17 +118,20 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     return (
         <div className='mb-2 w-full'>
             {isLoading && (
-                <div><PulseLoader 
-                color={colorMode === 'dark' ? "#a6a6a6" : '#000000'} 
-            />
-                    <p>{(!lexicon) && message}</p>
+                <div className='w-full flex justify-center'>
+                    <div className='flex flex-col items-center'>
+                        <PulseLoader
+                            color={colorMode === 'dark' ? "#a6a6a6" : '#000000'}
+                        />
+                        <p className='mt-2'>{(!lexicon) && message}</p>
+                    </div>
                 </div>
             )}
             {lexicon && (
                 <>
                     <p>Lexicon :</p>
-                    
-                    <JsonView value={lexicon!} collapsed={5} style={colorMode=='dark'?darkTheme:lightTheme}/>
+
+                    <JsonView value={lexicon!} collapsed={5} style={colorMode == 'dark' ? darkTheme : lightTheme} />
                 </>
             )}
         </div>
