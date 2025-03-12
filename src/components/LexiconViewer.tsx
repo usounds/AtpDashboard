@@ -118,8 +118,9 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     return (
         <div className='mb-2 w-full'>
             {isLoading && (
-                <div>
-                    <PulseLoader className='w-full' color={colorMode==='dark'?"#FFFFFF":'#a6a6a6'}/>
+                <div><PulseLoader 
+                color={colorMode === 'dark' ? "#a6a6a6" : '#000000'} 
+            />
                     <p>{(!lexicon) && message}</p>
                 </div>
             )}
