@@ -151,11 +151,11 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             </div>
 
             <div className="hidden 2xl:flex items-center justify-center p-2.5 xl:p-5">
-              <p className="text-black dark:text-white">{item.count}</p>
+              <p className="text-black dark:text-white">{item.count.toLocaleString()}</p>
             </div>
 
             <div className="flex items-center justify-center p-2.5 xl:p-5">
-              <p className="text-black dark:text-white">{item.recent_count}</p>
+              <p className="text-black dark:text-white">{item.recent_count.toLocaleString()}</p>
             </div>
 
             <div className="flex items-center justify-center p-2.5 xl:p-5">
