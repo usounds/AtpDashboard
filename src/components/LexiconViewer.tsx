@@ -4,6 +4,9 @@ import { getResolver as getWebResolver } from 'web-did-resolver'
 import { Resolver, ResolverRegistry, DIDResolver, DIDDocument } from 'did-resolver'
 import { getResolver } from '../logic/DidPlcResolver'
 import JsonView from '@uiw/react-json-view';
+import { lightTheme } from '@uiw/react-json-view/light';
+import { darkTheme } from '@uiw/react-json-view/dark';
+import useColorMode from '../hooks/useColorMode';
 
 const myResolver = getResolver()
 const web = getWebResolver()
@@ -22,6 +25,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     const [message, setMessage] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);
     const [lexicon, setLexicon] = useState<object | null>(null);
+    const [colorMode, setColorMode] = useColorMode();
 
     const fetchTxtRecords = async (subDomain: string): Promise<string | null> => {
         try {
@@ -113,12 +117,17 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
 
     return (
         <div className='mb-2 w-full'>
-            {isLoading && <PulseLoader className='w-full' />}
-            <p>{(!lexicon) && message}</p>
+            {isLoading && (
+                <div>
+                    <PulseLoader className='w-full' color={colorMode==='dark'?"#FFFFFF":'#a6a6a6'}/>
+                    <p>{(!lexicon) && message}</p>
+                </div>
+            )}
             {lexicon && (
                 <>
                     <p>Lexicon :</p>
-                    <JsonView value={lexicon!} collapsed={5} />
+                    
+                    <JsonView value={lexicon!} collapsed={5} style={colorMode=='dark'?darkTheme:lightTheme}/>
                 </>
             )}
         </div>

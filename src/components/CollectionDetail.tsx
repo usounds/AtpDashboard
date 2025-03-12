@@ -1,17 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BsBoxArrowUpRight } from "react-icons/bs";
 import LexiconViewer  from "./LexiconViewer";
-import { getResolver as getWebResolver } from 'web-did-resolver'
-import { Resolver, ResolverRegistry, DIDResolver } from 'did-resolver'
-import { getResolver } from '../logic/DidPlcResolver'
-
-const myResolver = getResolver()
-const web = getWebResolver()
-const resolver: ResolverRegistry = {
-    'plc': myResolver.DidPlcResolver as unknown as DIDResolver,
-    'web': web as unknown as DIDResolver,
-}
-const resolverInstance = new Resolver(resolver)
 
 export type ModalProps = {
     open: boolean;
