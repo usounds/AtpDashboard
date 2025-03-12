@@ -166,7 +166,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             {/* item と selectedCollection が一致する場合に CollectionDetail を表示 */}
             {selectedCollection === item.collection && (
               <>
-                <div className="ml-3 mt-1 col-span-3 2xl:col-span-5">
+                <div className="ml-2 lg:ml-5 mt-1 col-span-3 2xl:col-span-5">
                   <CollectionDetail
                     open={isOpen}
                     onCancel={() => handleUnselect()}
