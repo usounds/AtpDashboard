@@ -25,7 +25,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     const [message, setMessage] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);
     const [lexicon, setLexicon] = useState<object | null>(null);
-    const [colorMode, ] = useColorMode();
+    const [colorMode,] = useColorMode();
 
     const fetchTxtRecords = async (subDomain: string): Promise<string | null> => {
         try {
@@ -128,11 +128,14 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             )}
             <p className=''>{(!lexicon) && message}</p>
             {lexicon && (
-                <>
+                <div className="max-h-[65vh] overflow-y-auto">
                     <p>Lexicon :</p>
-
-                    <JsonView value={lexicon!} collapsed={5} style={colorMode == 'dark' ? darkTheme : lightTheme} />
-                </>
+                    <JsonView
+                        value={lexicon!}
+                        collapsed={5}
+                        style={colorMode === 'dark' ? darkTheme : lightTheme}
+                    />
+                </div>
             )}
         </div>
     );

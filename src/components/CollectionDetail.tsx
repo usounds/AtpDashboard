@@ -41,8 +41,8 @@ const CollectionDetail = (props: ModalProps) => {
                 onClick={() => props.onCancel()}
             ></div>
 
-            {/* モーダル本体 */}
-            <div className="fixed bg-white dark:bg-boxdark top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 max-w-171.5 p-5 flex flex-col items-start z-20 rounded shadow-lg">
+            <div className="fixed bg-white dark:bg-boxdark top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-3/5 p-5 flex flex-col items-start z-20 rounded shadow-lg">
+
                 <p className="mb-1">Last Indexed : {createdDate}</p>
                 <p className="mb-1 break-all">
                     {'at://' + did + '/' + props.collection + '/' + rkey}
