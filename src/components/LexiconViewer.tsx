@@ -25,7 +25,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     const [message, setMessage] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);
     const [lexicon, setLexicon] = useState<object | null>(null);
-    const [colorMode, setColorMode] = useColorMode();
+    const [colorMode, ] = useColorMode();
 
     const fetchTxtRecords = async (subDomain: string): Promise<string | null> => {
         try {
@@ -102,7 +102,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             const data = await record.json();
             setLexicon(data.value);
             setMessage(''); // 成功したら終了
-                setIsLoading(false);
+            setIsLoading(false);
         } catch (e) {
             setMessage(`No lexicon found. Can't get record from PDS.`);
             setIsLoading(false);
@@ -123,10 +123,10 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
                         <PulseLoader
                             color={colorMode === 'dark' ? "#a6a6a6" : '#000000'}
                         />
-                        <p className='mt-2'>{(!lexicon) && message}</p>
                     </div>
                 </div>
             )}
+            <p className=''>{(!lexicon) && message}</p>
             {lexicon && (
                 <>
                     <p>Lexicon :</p>
