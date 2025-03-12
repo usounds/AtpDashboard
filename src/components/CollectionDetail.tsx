@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BsBoxArrowUpRight } from "react-icons/bs";
-import LexiconViewer  from "./LexiconViewer";
+import LexiconViewer from "./LexiconViewer";
 
 export type ModalProps = {
     open: boolean;
@@ -54,7 +54,7 @@ const CollectionDetail = (props: ModalProps) => {
                     </a>
                 </div>
 
-                <p className='w-full'>
+                <p className='w-full hidden sm:block'>
                     <LexiconViewer domain={props.collection} />
                 </p>
 
