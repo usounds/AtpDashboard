@@ -1,5 +1,17 @@
 import { useEffect, useState } from 'react';
 import { BsBoxArrowUpRight } from "react-icons/bs";
+import LexiconViewer  from "./LexiconViewer";
+import { getResolver as getWebResolver } from 'web-did-resolver'
+import { Resolver, ResolverRegistry, DIDResolver } from 'did-resolver'
+import { getResolver } from '../logic/DidPlcResolver'
+
+const myResolver = getResolver()
+const web = getWebResolver()
+const resolver: ResolverRegistry = {
+    'plc': myResolver.DidPlcResolver as unknown as DIDResolver,
+    'web': web as unknown as DIDResolver,
+}
+const resolverInstance = new Resolver(resolver)
 
 export type ModalProps = {
     open: boolean;
@@ -52,6 +64,10 @@ const CollectionDetail = (props: ModalProps) => {
                         <BsBoxArrowUpRight className="ml-2" />
                     </a>
                 </div>
+
+                <p>
+                    <LexiconViewer domain={props.collection} />
+                </p>
 
                 <div className="flex mt-auto w-full justify-center items-center">
                     <button
