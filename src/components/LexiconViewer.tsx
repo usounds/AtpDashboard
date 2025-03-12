@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { PulseLoader } from 'react-spinners';
+import { BarLoader } from 'react-spinners';
 import { getResolver as getWebResolver } from 'web-did-resolver'
 import { Resolver, ResolverRegistry, DIDResolver, DIDDocument } from 'did-resolver'
 import { getResolver } from '../logic/DidPlcResolver'
@@ -119,8 +119,9 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         <div className='mb-2 w-full'>
             {isLoading && (
                 <div className='w-full flex justify-center'>
-                    <div className='flex flex-col items-center'>
-                        <PulseLoader
+                    <div className='flex w-full flex-col items-center'>
+                        <BarLoader 
+                            width="100%"
                             color={colorMode === 'dark' ? "#a6a6a6" : '#000000'}
                         />
                     </div>
