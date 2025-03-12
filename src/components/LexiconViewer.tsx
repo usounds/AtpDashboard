@@ -129,12 +129,15 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             )}
             <p className=''>{(!lexicon) && message}</p>
             {lexicon && (
-                <div className="max-h-[65vh] overflow-y-auto">
+                <div className="">
                     <p>Lexicon :</p>
                     <JsonView
                         value={lexicon!}
-                        collapsed={5}
+                        collapsed={9}
                         style={colorMode === 'dark' ? darkTheme : lightTheme}
+                        displayDataTypes={false}
+                        enableClipboard={false}
+                        shortenTextAfterLength={0}
                     />
                 </div>
             )}

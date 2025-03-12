@@ -35,13 +35,8 @@ const CollectionDetail = (props: ModalProps) => {
 
     return props.open ? (
         <>
-            {/* オーバーレイ（背景） */}
-            <div
-                className="fixed inset-0 bg-black bg-opacity-50 dark:bg-gray-700 dark:bg-opacity-50 z-10"
-                onClick={() => props.onCancel()}
-            ></div>
 
-            <div className="fixed bg-white dark:bg-boxdark top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full sm:w-full lg:w-2/5 xl:w-3/5 p-5 flex flex-col items-start z-20 rounded shadow-lg">
+            <div className="bg-white dark:bg-boxdark w-ful mb-2 flex flex-col items-start">
 
                 <p className="mb-1">Last Indexed : {createdDate}</p>
                 <p className="mb-1 break-all">
@@ -54,18 +49,18 @@ const CollectionDetail = (props: ModalProps) => {
                     </a>
                 </div>
 
-                <p className='w-full hidden sm:block'>
-                    <LexiconViewer domain={props.collection} />
-                </p>
-
-                <div className="flex mt-auto w-full justify-center items-center">
+                <div className="flex mt-auto w-full justify-center items-center mb-2">
                     <button
                         className="inline-flex items-center justify-center bg-black py-2 px-8 text-center font-medium text-white hover:bg-opacity-90 lg:px-2 xl:px-8"
-                        onClick={() => props.onOk()}
+                        onClick={(e) => { e.stopPropagation(); props.onOk(); }}
                     >
                         Close
                     </button>
                 </div>
+
+                <p className='w-full'>
+                    <LexiconViewer domain={props.collection} />
+                </p>
             </div>
         </>
     ) : null;

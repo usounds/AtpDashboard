@@ -13,7 +13,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'ascending' | 'descending' } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedCollection, setSelectedCollection] = useState<string>('');
+  const [selectedCollection, setSelectedCollection] = useState<string | null>('');
 
   useEffect(() => {
     setSortedCollections(collections);
@@ -78,6 +78,11 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
     setSortedCollections(sorted);
     setSortConfig({ key, direction });
   };
+  const handleUnselect = () => {
+    setSelectedCollection('')
+    setIsOpen(false)
+  }
+
 
   return (
     <div className="rounded-sm border border-stroke bg-white px-5 pt-6 pb-2.5 shadow-default dark:border-strokedark dark:bg-boxdark sm:px-7.5 xl:pb-1">
@@ -96,15 +101,6 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
           />
         </div>
       </div>
-
-      {isOpen &&
-        <CollectionDetail
-          open={isOpen}
-          onCancel={() => setIsOpen(false)}
-          onOk={() => setIsOpen(false)}
-          collection={selectedCollection}
-        />
-      }
 
       <div className="flex flex-col">
         <div className="grid grid-cols-3 rounded-sm bg-gray-2 dark:bg-meta-4 2xl:grid-cols-5">
@@ -166,7 +162,24 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             <div className="hidden items-center justify-center p-2.5 2xl:flex xl:p-5">
               {new Date(Date.parse(item.max + 'Z')).toLocaleString()}
             </div>
+
+            {/* item と selectedCollection が一致する場合に CollectionDetail を表示 */}
+            {selectedCollection === item.collection && (
+              <>
+                <div className="ml-3 mt-1 col-span-3 2xl:col-span-5">
+                  <CollectionDetail
+                    open={isOpen}
+                    onCancel={() => handleUnselect()}
+                    onOk={() => handleUnselect()}
+                    collection={selectedCollection}
+                  />
+                </div>
+              </>
+            )}
+
           </div>
+
+
         ))}
       </div>
     </div>
