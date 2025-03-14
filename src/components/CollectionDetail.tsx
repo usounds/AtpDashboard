@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BsBoxArrowUpRight } from "react-icons/bs";
 import LexiconViewer from "./LexiconViewer";
+import DataViewer from "./DataViewer";
 
 export type ModalProps = {
     open: boolean;
@@ -13,6 +14,7 @@ const CollectionDetail = (props: ModalProps) => {
     const [did, setDid] = useState('');
     const [rkey, setRkey] = useState('');
     const [createdDate, setCreatedDate] = useState('');
+    const [mode, setMode] = useState('lexicon');
 
     useEffect(() => {
         const fetchData = async () => {
@@ -32,22 +34,37 @@ const CollectionDetail = (props: ModalProps) => {
         fetchData();
     }, []);
 
-
     return props.open ? (
         <>
 
             <div className="bg-white dark:bg-boxdark w-ful mb-2 flex flex-col items-start">
 
-                <p className="mb-1">Last Indexed : {createdDate}</p>
-                <p className="mb-1 break-all">
-                    {'at://' + did + '/' + props.collection + '/' + rkey}
-                </p>
-                <div className="flex w-full justify-center items-center mt-2 mb-4">
-                    <a href={'https://pdsls.dev/at/' + did + '/' + props.collection + '/' + rkey} target="_blank" rel="noreferrer" className="flex items-center">
-                        <span>View in PDSls</span>
-                        <BsBoxArrowUpRight className="ml-2" />
-                    </a>
+                <div className="flex mt-auto w-full justify-center items-center mb-2">
+                    <button
+                        className={`inline-flex items-center justify-center py-2 px-8 text-center font-medium text-white hover:bg-opacity-90 lg:px-2 xl:px-8 ${mode === 'data' ? 'bg-black' : 'bg-meta-3'}`}
+                        onClick={() => { setMode('lexicon') }}
+                    >
+                        Lexicon
+                    </button>
+                    <button
+                        className={`inline-flex items-center justify-center py-2 px-8 text-center font-medium text-white hover:bg-opacity-90 lg:px-2 xl:px-8 ${mode === 'lexicon' ? 'bg-black' : 'bg-meta-3'}`}
+                        onClick={() => { setMode('data') }}
+                    >
+                        Data
+                    </button>
                 </div>
+
+                {mode === 'lexicon' &&
+                    <p className='w-full'>
+                        <LexiconViewer domain={props.collection} />
+                    </p>
+                }
+
+                {mode === 'data' &&
+                    <p className='w-full'>
+                        <DataViewer uri={'at://'+did+'/'+props.collection+'/'+rkey} />
+                    </p>
+                }
 
                 <div className="flex mt-auto w-full justify-center items-center mb-2">
                     <button
@@ -58,9 +75,6 @@ const CollectionDetail = (props: ModalProps) => {
                     </button>
                 </div>
 
-                <p className='w-full'>
-                    <LexiconViewer domain={props.collection} />
-                </p>
             </div>
         </>
     ) : null;

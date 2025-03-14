@@ -14,8 +14,11 @@ const resolver: ResolverRegistry = {
     'plc': myResolver.DidPlcResolver as unknown as DIDResolver,
     'web': web as unknown as DIDResolver,
 }
-const resolverInstance = new Resolver(resolver)
+export const resolverInstance = new Resolver(resolver)
 
+export const getServiceEndpoint = (didDoc: DIDDocument) => {
+    return didDoc.service?.find(service => service.id.trim() === '#atproto_pds')?.serviceEndpoint;
+};
 
 type DnsTxtRecordProps = {
     domain: string;
@@ -83,11 +86,6 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             setIsLoading(false);
         }
     };
-
-    const getServiceEndpoint = (didDoc: DIDDocument) => {
-        return didDoc.service?.find(service => service.id.trim() === '#atproto_pds')?.serviceEndpoint;
-    };
-
     const fetchLexicon = async (serviceEndpoint: string, foundDid: string) => {
         setMessage('Retrieving lexicon from PDS...');
         const recordUri = `${serviceEndpoint}/xrpc/com.atproto.repo.getRecord?repo=${foundDid}&collection=com.atproto.lexicon.schema&rkey=${domain}`;
@@ -109,7 +107,6 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         }
     };
 
-
     useEffect(() => {
         findValidTxtRecord();
 
@@ -130,7 +127,6 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             <p className=''>{(!lexicon) && message}</p>
             {lexicon && (
                 <div className="">
-                    <p>Lexicon :</p>
                     <JsonView
                         value={lexicon!}
                         collapsed={9}
