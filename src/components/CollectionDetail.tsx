@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { BsBoxArrowUpRight } from "react-icons/bs";
 import LexiconViewer from "./LexiconViewer";
 import DataViewer from "./DataViewer";
 
@@ -13,20 +12,16 @@ export type ModalProps = {
 const CollectionDetail = (props: ModalProps) => {
     const [did, setDid] = useState('');
     const [rkey, setRkey] = useState('');
-    const [createdDate, setCreatedDate] = useState('');
     const [mode, setMode] = useState('lexicon');
 
     useEffect(() => {
         const fetchData = async () => {
             setDid('')
             setRkey('')
-            setCreatedDate('')
 
             const result = await fetch(`https://collectiondata.usounds.work/collection?select=did,rkey,collection,createdAt&collection=eq.${props.collection}&order=createdAt.desc&limit=1`)
             const result4 = await result.json()
             const item = result4[0] as { did: string; rkey: string, createdAt: string }
-
-            setCreatedDate(new Date(Date.parse(item.createdAt + 'Z')).toLocaleString())
 
             setDid(item.did)
             setRkey(item.rkey)
