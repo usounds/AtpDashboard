@@ -71,7 +71,7 @@ const DataViewer = ({ uri }: DataViewerProp) => {
 
     return (
         <div className='mb-2 w-full'>
-            <p className=''>{uri}</p>
+            <p className='break-all'>{uri}</p>
             {isLoading && (
                 <div className='w-full flex justify-center'>
                     <div className='flex w-full flex-col items-center'>
