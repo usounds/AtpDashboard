@@ -50,15 +50,16 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         const parts = domain.split('.').reverse(); // 'uk.skyblur.post' -> ['post', 'skyblur', 'uk']
 
         // Lv4以上に対応し、_lexicon.のバリエーションを生成
-        for (let i = 0; i < parts.length - 1; i++) {
-            const subDomain = `_lexicon.${parts.slice(i).join('.')}`; // ex: "_lexicon.post.skyblur.uk"
+        //for (let i = 0; i < parts.length - 1; i++) {
+            const subDomain = `_lexicon.${parts.slice(1).join('.')}`; // ex: "_lexicon.post.skyblur.uk"
+            console.log(subDomain)
             const foundDid = await fetchTxtRecords(subDomain);
 
             if (foundDid) {
                 await resolvePds(foundDid);
                 return;
             }
-        }
+        //}
 
         setMessage('No lexicon found. Can\'t find DNS record.');
         setIsLoading(false);
