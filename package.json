@@ -13,6 +13,7 @@
     "url": "https://atpdashboard.usounds.work/"
   },
   "dependencies": {
+    "@babel/runtime": "^7.26.10",
     "@react-spring/web": "^9.7.5",
     "@uiw/react-json-view": "^2.0.0-alpha.30",
     "apexcharts": "^3.41.0",
@@ -21,7 +22,7 @@
     "flatpickr": "^4.6.13",
     "headlessui": "^0.0.0",
     "jsvectormap": "^1.5.3",
-    "match-sorter": "^6.3.1",
+    "match-sorter": "^6.3.4",
     "pretty-print-json": "^3.0.4",
     "react": "^18.2.0",
     "react-apexcharts": "^1.4.1",
