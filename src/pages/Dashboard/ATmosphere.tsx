@@ -29,6 +29,7 @@ const ATmosphere: React.FC = () => {
   const [cursor, setCursor] = useState<number>(0);
   const [nsidLv2, setNsidLv2] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [earliestCollection, setEarliestCollection] = useState<Collection | null>(null);
   const exceptCollectionWithTransaction = useModeStore((state) => state.exceptCollectionWithTransaction);
   const setExceptCollectionWithTransaction = useModeStore((state) => state.setExceptCollectionWithTransaction);
@@ -38,9 +39,11 @@ const ATmosphere: React.FC = () => {
     setNsidLv2(0)
     setDid(0)
     setNewCollection(0)
+    setIsLoading(true)
 
     const collection = await fetch('https://collectiondata.usounds.work/collection_count_view');
     if (!collection.ok) {
+      setIsLoading(false)
       throw new Error(`Error: ${collection.statusText}`);
     }
     const result1 = await collection.json() as Collection[];
@@ -87,6 +90,7 @@ const ATmosphere: React.FC = () => {
 
     const did = await fetch('https://collectiondata.usounds.work/unique_did_count_view');
     if (!did.ok) {
+      setIsLoading(false)
       throw new Error(`Error: ${did.statusText}`);
     }
     const result2 = await did.json();
@@ -94,6 +98,7 @@ const ATmosphere: React.FC = () => {
 
     const index = await fetch('https://collectiondata.usounds.work/cursor?service=eq.collection&select=service,cursor');
     if (!index.ok) {
+      setIsLoading(false)
       throw new Error(`Error: ${index.statusText}`);
     }
     const result3 = await index.json();
@@ -102,6 +107,7 @@ const ATmosphere: React.FC = () => {
 
     const nsid = await fetch('https://collectiondata.usounds.work/collection_lv2_view');
     if (!nsid.ok) {
+      setIsLoading(false)
       throw new Error(`Error: ${nsid.statusText}`);
     }
     const result4 = await nsid.json() as NSIDLv2[]
@@ -120,6 +126,7 @@ const ATmosphere: React.FC = () => {
     }
 
     setNsidLv2(ret2.length);
+    setIsLoading(false)
 
   }
 
@@ -157,16 +164,16 @@ const ATmosphere: React.FC = () => {
         />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
-        <CardDataStats title="Total Collections" total={collection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
+        <CardDataStats title="Total Collections"total={collection.length === 0 ? "Loading" : collection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
           <MdOutlineFolderCopy size={22} />
         </CardDataStats>
-        <CardDataStats title="Total Sub Name Spaces" total={nsidLv2.toLocaleString()} rate="">
+        <CardDataStats title="Total Sub Name Spaces" total={nsidLv2 === 0 ? "Loading" : nsidLv2.toLocaleString()} rate="">
           <MdDomain size={22} />
         </CardDataStats>
-        <CardDataStats title="Total Users" total={did.toLocaleString()} rate="">
+        <CardDataStats title="Total Users" total={did===0? 'Loading' : did.toLocaleString()} rate="">
           <FiUsers size={22} />
         </CardDataStats>
-        <CardDataStats title="Cursor Delay in Minutes" total={cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={epochUsToTimeAgo(cursor) !== '0'}>
+        <CardDataStats title="Cursor Delay in Minutes" total={isLoading? "Loading" :cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={isLoading ? '' : epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={isLoading ? false: epochUsToTimeAgo(cursor) !== '0'}>
           <BiTachometer size={28} />
         </CardDataStats>
       </div>
