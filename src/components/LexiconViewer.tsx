@@ -12,7 +12,7 @@ const myResolver = getResolver()
 const web = getWebResolver()
 const resolver: ResolverRegistry = {
     'plc': myResolver.DidPlcResolver as unknown as DIDResolver,
-    'web': web as unknown as DIDResolver,
+    'web': web.web, 
 }
 export const resolverInstance = new Resolver(resolver)
 
