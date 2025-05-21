@@ -88,14 +88,6 @@ const ATmosphere: React.FC = () => {
 
     setEarliestCollection(earliest);
 
-    const did = await fetch('https://collectiondata.usounds.work/unique_did_count_view');
-    if (!did.ok) {
-      setIsLoading(false)
-      throw new Error(`Error: ${did.statusText}`);
-    }
-    const result2 = await did.json();
-    setDid(result2[0].unique_did_count);
-
     const index = await fetch('https://collectiondata.usounds.work/cursor?service=eq.collection&select=service,cursor');
     if (!index.ok) {
       setIsLoading(false)
@@ -126,6 +118,15 @@ const ATmosphere: React.FC = () => {
     }
 
     setNsidLv2(ret2.length);
+
+    const did = await fetch('https://collectiondata.usounds.work/unique_did_count_view');
+    if (!did.ok) {
+      setIsLoading(false)
+      throw new Error(`Error: ${did.statusText}`);
+    }
+    const result2 = await did.json();
+    setDid(result2[0].unique_did_count);
+
     setIsLoading(false)
 
   }
