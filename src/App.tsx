@@ -4,6 +4,7 @@ import Loader from './common/Loader';
 import PageTitle from './components/PageTitle';
 import DefaultLayout from './layout/DefaultLayout';
 import ATmosphere from './pages/Dashboard/ATmosphere';
+import CollectonBrowser from './pages/Dashboard/CollectonBrowser';
 import ChartBoard from './pages/Dashboard/ChartBoard';
 
 function App() {
@@ -29,6 +30,16 @@ function App() {
             <>
               <PageTitle title="3rd Party Collection | ATProto Dashboard" />
               <ATmosphere />
+            </>
+          }
+        />
+
+        <Route
+          path="/collection/browser"
+          element={
+            <>
+              <PageTitle title="Collection Browser | ATProto Dashboard" />
+              <CollectonBrowser />
             </>
           }
         />

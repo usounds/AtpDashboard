@@ -102,6 +102,20 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
         </div>
       </div>
 
+      {/* item と selectedCollection が一致する場合に CollectionDetail を表示 */}
+      {(isOpen && selectedCollection) && (
+        <>
+          <div className="ml-2 lg:ml-5 mt-1 col-span-3 2xl:col-span-5">
+            <CollectionDetail
+              open={isOpen}
+              onCancel={() => handleUnselect()}
+              onOk={() => handleUnselect()}
+              collection={selectedCollection}
+            />
+          </div>
+        </>
+      )}
+
       <div className="flex flex-col">
         <div className="grid grid-cols-3 rounded-sm bg-gray-2 dark:bg-meta-4 2xl:grid-cols-5">
           <div className="p-2.5 xl:p-5 cursor-pointer" onClick={() => handleSort('collection', searchQuery)}>
@@ -162,20 +176,6 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             <div className="hidden items-center justify-center p-2.5 2xl:flex xl:p-5">
               {new Date(Date.parse(item.max + 'Z')).toLocaleString()}
             </div>
-
-            {/* item と selectedCollection が一致する場合に CollectionDetail を表示 */}
-            {selectedCollection === item.collection && (
-              <>
-                <div className="ml-2 lg:ml-5 mt-1 col-span-3 2xl:col-span-5">
-                  <CollectionDetail
-                    open={isOpen}
-                    onCancel={() => handleUnselect()}
-                    onOk={() => handleUnselect()}
-                    collection={selectedCollection}
-                  />
-                </div>
-              </>
-            )}
 
           </div>
 

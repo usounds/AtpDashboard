@@ -70,7 +70,7 @@ const DataViewer = ({ uri }: DataViewerProp) => {
     }, [uri]);
 
     return (
-        <div className='mb-2 w-full'>
+        <div className='mb-2 w-full max-h-[80vh]'>
             <p className='break-all'>{uri}</p>
             {isLoading && (
                 <div className='w-full flex justify-center'>
@@ -84,7 +84,7 @@ const DataViewer = ({ uri }: DataViewerProp) => {
             )}
             <p className=''>{(!data) && message}</p>
             {data && (
-                <div className="">
+                <div className="max-h-[70vh] ">
                     <JsonView
                         value={data!}
                         collapsed={9}

@@ -114,7 +114,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     }, [domain]);
 
     return (
-        <div className='mb-2 w-full'>
+        <div className='mb-2 w-full max-h-[80vh] '>
             {isLoading && (
                 <div className='w-full flex justify-center'>
                     <div className='flex w-full flex-col items-center'>
@@ -125,18 +125,19 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
                     </div>
                 </div>
             )}
-            <p className=''>{(!lexicon) && message}</p>
+            <p className=''>{(!lexicon) &&` [${domain}] ${message}`}</p>
             {lexicon && (
-                <div className="">
-                    <JsonView
-                        value={lexicon!}
-                        collapsed={9}
-                        style={colorMode === 'dark' ? darkTheme : lightTheme}
-                        displayDataTypes={false}
-                        enableClipboard={false}
-                        shortenTextAfterLength={0}
-                    />
-                </div>
+        <div className="max-h-[70vh] overflow-y-auto borderrounded p-2">
+            <div className="p-2 break-words">{domain}</div>
+            <JsonView
+                value={lexicon!}
+                collapsed={9}
+                style={colorMode === 'dark' ? darkTheme : lightTheme}
+                displayDataTypes={false}
+                enableClipboard={false}
+                shortenTextAfterLength={0}
+            />
+        </div>
             )}
         </div>
     );

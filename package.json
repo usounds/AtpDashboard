@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@babel/runtime": "^7.26.10",
+    "@preline/accordion": "^3.1.0",
+    "@preline/tree-view": "^3.1.0",
     "@react-spring/web": "^9.7.5",
     "@uiw/react-json-view": "^2.0.0-alpha.30",
     "apexcharts": "^3.41.0",
@@ -26,6 +28,7 @@
     "pretty-print-json": "^3.0.4",
     "react": "^18.3.1",
     "react-apexcharts": "^1.4.1",
+    "react-arborist": "^3.4.3",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.4.1",
     "react-icons": "^4.12.0",
