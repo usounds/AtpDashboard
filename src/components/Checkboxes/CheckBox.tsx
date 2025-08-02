@@ -1,33 +1,36 @@
 type CheckboxOneProps = {
-    label:string
-    checked: boolean; // チェック状態を制御するプロパティ
-    onChange: (checked: boolean) => void; // 状態変更時に通知するコールバック
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+};
+
+const Checkbox = ({ checked, onChange, label }: CheckboxOneProps) => {
+  const handleCheckboxChange = () => {
+    onChange(!checked);
   };
-  
-  const Checkbox = ({ checked, onChange,label }: CheckboxOneProps) => {
-    const handleCheckboxChange = () => {
-      onChange(!checked); // 状態変更を親に通知
-    };
-  
-    return (
-      <div>
-        <label
-          htmlFor="checkboxLabelOne"
-          className="flex cursor-pointer select-none items-center"
-        >
-          <div className="relative">
-            <input
-              type="checkbox"
-              id="checkboxLabelOne"
-              className="sr-only"
-              checked={checked} 
-              onChange={handleCheckboxChange}
-            />
-            <div
-              className={`mr-4 flex h-5 w-5 items-center justify-center rounded border ${
-                checked && 'border-primary bg-gray dark:bg-transparent'
-              }`}
-            >
+
+  // label を元にユニークな id を生成（空白→ハイフン、小文字化）
+  const id = `checkbox-${label.replace(/\s+/g, '-').toLowerCase()}`;
+
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="flex cursor-pointer select-none items-center"
+      >
+        <div className="relative">
+          <input
+            type="checkbox"
+            id={id}
+            className="sr-only"
+            checked={checked}
+            onChange={handleCheckboxChange}
+          />
+          <div
+            className={`mr-2 flex h-5 w-5 items-center justify-center rounded border ${
+              checked && 'border-primary bg-gray dark:bg-transparent'
+            }`}
+          >
             <span className={`opacity-0 ${checked && '!opacity-100'}`}>
               <svg
                 width="11"
@@ -44,13 +47,12 @@ type CheckboxOneProps = {
                 ></path>
               </svg>
             </span>
-            </div>
           </div>
-          {label}
-        </label>
-      </div>
-    );
-  };
-  
-  export default Checkbox;
-  
+        </div>
+        {label}
+      </label>
+    </div>
+  );
+};
+
+export default Checkbox;

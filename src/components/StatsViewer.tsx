@@ -14,13 +14,13 @@ type Props = {
 
 const StatsViewer: React.FC<Props> = ({ collection }) => {
   const [stats, setStats] = useState<Stats | null>(null);
-  const [loading, setLoading] = useState(true);
+  //const [_, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        setLoading(true);
+        //setLoading(true);
         const url = `https://collectiondata.usounds.work/collection_stats?collection=eq.${encodeURIComponent(collection)}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -30,7 +30,7 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
         setError(err.message);
         setStats(null);
       } finally {
-        setLoading(false);
+        //setLoading(false);
       }
     };
     fetchStats();

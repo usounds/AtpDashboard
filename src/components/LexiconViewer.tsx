@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { BarLoader } from 'react-spinners';
 import { getResolver as getWebResolver } from 'web-did-resolver'
 import { Resolver, ResolverRegistry, DIDResolver, DIDDocument } from 'did-resolver'
 import { getResolver } from '../logic/DidPlcResolver'
@@ -7,12 +6,13 @@ import JsonView from '@uiw/react-json-view';
 import { lightTheme } from '@uiw/react-json-view/light';
 import { darkTheme } from '@uiw/react-json-view/dark';
 import useColorMode from '../hooks/useColorMode';
+import { FaSpinner, FaCheckCircle, FaTimesCircle } from "react-icons/fa";
 
 const myResolver = getResolver()
 const web = getWebResolver()
 const resolver: ResolverRegistry = {
     'plc': myResolver.DidPlcResolver as unknown as DIDResolver,
-    'web': web.web, 
+    'web': web.web,
 }
 export const resolverInstance = new Resolver(resolver)
 
@@ -24,11 +24,35 @@ type DnsTxtRecordProps = {
     domain: string;
 };
 
+type CheckResult = {
+    isProgress: boolean;
+    result?: boolean;
+    message?: string;
+};
+
+
 const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
-    const [message, setMessage] = useState<string>('');
-    const [isLoading, setIsLoading] = useState(true);
     const [lexicon, setLexicon] = useState<object | null>(null);
     const [colorMode,] = useColorMode();
+    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true });
+    const [dnsRecord, setDNSRecord] = useState<CheckResult | null>({ isProgress: true });
+
+    const renderIcon = (status: CheckResult | null) => {
+        if (!status) return null;
+
+        if (status.isProgress) {
+            return <FaSpinner className="animate-spin text-blue-500" />;
+        }
+        if (status.result) {
+            return <FaCheckCircle className="text-green-500" />;
+        }
+        return <FaTimesCircle className="text-red-500" />;
+    };
+
+    const renderMessage = (status: CheckResult | null) => {
+        if (!status) return "";
+        return status.message || "";
+    };
 
     const fetchTxtRecords = async (subDomain: string): Promise<string | null> => {
         try {
@@ -44,29 +68,44 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     };
 
     const findValidTxtRecord = async () => {
-        setIsLoading(true);
+        //setIsLoading(true);
         setLexicon(null);
-        setMessage('DID looking up from NSID...');
+        //setMessage('DID looking up from NSID...');
         const parts = domain.split('.').reverse(); // 'uk.skyblur.post' -> ['post', 'skyblur', 'uk']
 
         // Lv4以上に対応し、_lexicon.のバリエーションを生成
         //for (let i = 0; i < parts.length - 1; i++) {
-            const subDomain = `_lexicon.${parts.slice(1).join('.')}`; // ex: "_lexicon.post.skyblur.uk"
-            console.log(subDomain)
-            const foundDid = await fetchTxtRecords(subDomain);
+        const subDomain = `_lexicon.${parts.slice(1).join('.')}`; // ex: "_lexicon.post.skyblur.uk"
+        console.log(subDomain)
+        const foundDid = await fetchTxtRecords(subDomain);
 
-            if (foundDid) {
-                await resolvePds(foundDid);
-                return;
-            }
+        if (foundDid) {
+            setDNSRecord({
+                isProgress: false,
+                result: true,
+                message: `Found for ${subDomain}`
+            });
+            await resolvePds(foundDid);
+            return;
+        }
         //}
+        setDNSRecord({
+            isProgress: false,
+            result: false,
+            message: `Not found for ${subDomain}`
+        });
 
-        setMessage('No lexicon found. Can\'t find DNS record.');
-        setIsLoading(false);
+        setLexiconShema({
+            isProgress: false,
+            result: false,
+            message: `Check not performed because DNS record was not found.`
+        });
+        //setMessage('No lexicon found. Can\'t find DNS record.');
+        //setIsLoading(false);
     };
 
     const resolvePds = async (foundDid: string) => {
-        setMessage('Resolving PDS...');
+        // setMessage('Resolving PDS...');
         try {
             const didDoc = await resolverInstance.resolve(foundDid) as unknown as DIDDocument;
             const serviceEndpoint = getServiceEndpoint(didDoc);
@@ -78,33 +117,56 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
                 if (typeof serviceEndpoint === 'string') {
                     await fetchLexicon(serviceEndpoint, foundDid);
                 } else {
-                    setMessage(`No lexicon found. Invalid service endpoint.`);
-                    setIsLoading(false);
+                    setLexiconShema({
+                        isProgress: false,
+                        result: false,
+                        message: `Invalid service endpoint for ${didDoc}`
+                    });
+                    //setMessage(`No lexicon found. Invalid service endpoint.`);
+                    //setIsLoading(false);
                 }
             }
         } catch (e) {
-            setMessage(`No lexicon found. Can't resolve PDS for ${foundDid}.`);
-            setIsLoading(false);
+            setLexiconShema({
+                isProgress: false,
+                result: false,
+                message: `Can't resolve PDS for ${foundDid}`
+            });
+            //setMessage(` Can't resolve PDS for ${foundDid}.`);
+            //setIsLoading(false);
         }
     };
+
     const fetchLexicon = async (serviceEndpoint: string, foundDid: string) => {
-        setMessage('Retrieving lexicon from PDS...');
         const recordUri = `${serviceEndpoint}/xrpc/com.atproto.repo.getRecord?repo=${foundDid}&collection=com.atproto.lexicon.schema&rkey=${domain}`;
         try {
             const record = await fetch(recordUri);
+
             if (!record.ok) {
-                setMessage(`No lexicon found. Can't get record from PDS.`);
-                setIsLoading(false);
+                setLexiconShema({
+                    isProgress: false,
+                    result: false,
+                    message: `Not found for ${domain}`
+                });
+                //setIsLoading(false);
                 return;
             }
 
             const data = await record.json();
+            setLexiconShema({
+                isProgress: false,
+                result: true,
+                message: `Found for ${domain}`
+            });
             setLexicon(data.value);
-            setMessage(''); // 成功したら終了
-            setIsLoading(false);
+            //setIsLoading(false);
         } catch (e) {
-            setMessage(`No lexicon found. Can't get record from PDS.`);
-            setIsLoading(false);
+            setLexiconShema({
+                isProgress: false,
+                result: false,
+                message: `${e instanceof Error ? e.message : 'Unknown error'} for ${recordUri} `
+            });
+            //setIsLoading(false);
         }
     };
 
@@ -115,29 +177,40 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
 
     return (
         <div className='mb-2 w-full max-h-[80vh] '>
-            {isLoading && (
-                <div className='w-full flex justify-center'>
-                    <div className='flex w-full flex-col items-center'>
-                        <BarLoader 
-                            width="100%"
-                            color={colorMode === 'dark' ? "#a6a6a6" : '#000000'}
-                        />
-                    </div>
-                </div>
-            )}
-            <p className=''>{(!lexicon) &&` [${domain}] ${message}`}</p>
+            {!lexicon &&
+                <table className="table-auto w-full text-left border-collapse">
+                    <thead>
+                        <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
+                            <th className="px-4 py-2 align-top whitespace-nowrap">Check</th>
+                            <th className="px-4 py-2 align-top whitespace-nowrap">Status</th>
+                            <th className="px-4 py-2 align-top whitespace-nowrap">Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
+                            <th className="px-4 py-2 align-top whitespace-nowrap">DNS</th>
+                            <td className="px-4 py-2">{renderIcon(dnsRecord)}</td>
+                            <td className="px-4 py-2">{renderMessage(dnsRecord)}</td>
+                        </tr>
+                        <tr className="border-gray-300 dark:border-gray-700 align-top">
+                            <th className="px-4 py-2 align-top whitespace-nowrap">Lexicon Schema</th>
+                            <td className="px-4 py-2">{renderIcon(lexiconSchema)}</td>
+                            <td className="px-4 py-2 break-all">{renderMessage(lexiconSchema)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            }
             {lexicon && (
-        <div className="max-h-[70vh] overflow-y-auto borderrounded p-2">
-            <div className="p-2 break-words">{domain}</div>
-            <JsonView
-                value={lexicon!}
-                collapsed={9}
-                style={colorMode === 'dark' ? darkTheme : lightTheme}
-                displayDataTypes={false}
-                enableClipboard={false}
-                shortenTextAfterLength={0}
-            />
-        </div>
+                <div className="max-h-[70vh] overflow-y-auto borderrounded p-2">
+                    <JsonView
+                        value={lexicon!}
+                        collapsed={9}
+                        style={colorMode === 'dark' ? darkTheme : lightTheme}
+                        displayDataTypes={false}
+                        enableClipboard={false}
+                        shortenTextAfterLength={0}
+                    />
+                </div>
             )}
         </div>
     );

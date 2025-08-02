@@ -16,100 +16,14 @@ type TreeNode = {
   id: string;
   name: string;
   children?: TreeNode[];
-  isNew?: boolean;
-  data?: { name: string; isNew?: boolean };
+  hasLexicon?: boolean;
+  data?: { name: string; hasLexicon?: boolean };
 };
-
-function buildTreeFromCollections(collections: Collection[]): TreeNode[] {
-  const root: TreeNode[] = [];
-
-  function findOrCreateNode(nodes: TreeNode[], name: string): TreeNode {
-    let node = nodes.find((n) => n.name === name);
-    if (!node) {
-      node = { id: "", name, children: [], isNew: false, data: { name } };
-      nodes.push(node);
-    }
-    return node;
-  }
-
-  for (const col of collections) {
-    const parts = col.collection.split(".");
-    if (parts.length < 2) continue;
-
-    const rootName = `${parts[0]}.${parts[1]}`;
-    const rootNode = findOrCreateNode(root, rootName);
-    if (col.isNew) rootNode.isNew = true;
-    rootNode.data!.isNew = rootNode.isNew;
-
-    let currentLevel = rootNode.children!;
-    for (let i = 2; i < parts.length; i++) {
-      const fullName = parts.slice(0, i + 1).join(".");
-      const node = findOrCreateNode(currentLevel, fullName);
-      if (col.isNew) node.isNew = true;
-      node.data!.isNew = node.isNew;
-      if (!node.children) node.children = [];
-      currentLevel = node.children;
-    }
-  }
-
-  function removeEmptyChildren(nodes: TreeNode[]) {
-    nodes.forEach((node) => {
-      if (node.children && node.children.length === 0) {
-        delete node.children;
-      } else if (node.children) {
-        removeEmptyChildren(node.children);
-      }
-    });
-  }
-
-  function sortNodesByName(nodes: TreeNode[]) {
-    nodes.sort((a, b) => a.name.localeCompare(b.name));
-    nodes.forEach((node) => {
-      if (node.children) {
-        sortNodesByName(node.children);
-      }
-    });
-  }
-
-  function assignIds(nodes: TreeNode[], prefix?: string) {
-    nodes.forEach((node, idx) => {
-      node.id = prefix ? `${prefix}-${idx + 1}` : `${idx + 1}`;
-      if (node.children && node.children.length > 0) {
-        assignIds(node.children, node.id);
-      }
-    });
-  }
-
-  function compressSingleChild(nodes: TreeNode[]) {
-    nodes.forEach((node) => {
-      if (node.children && node.children.length > 0) {
-        while (
-          node.children &&
-          node.children.length === 1 &&
-          node.children[0].children &&
-          node.children[0].children.length > 0
-        ) {
-          const onlyChild: TreeNode = node.children[0];
-          node.children = onlyChild.children;
-          node.isNew = node.isNew || onlyChild.isNew;
-          node.data!.isNew = node.isNew;
-        }
-        compressSingleChild(node.children ?? []);
-      }
-    });
-  }
-
-  removeEmptyChildren(root);
-  sortNodesByName(root);
-  compressSingleChild(root);
-  assignIds(root);
-
-  return root;
-}
 
 const ATmosphere: React.FC = () => {
   const [collection, setCollection] = useState<Collection[]>([]);
   const [tree, setTree] = useState<TreeNode[]>([]);
+  const [lexiconKeys, setLexiconKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const exceptCollectionWithTransaction = useModeStore((state) => state.exceptCollectionWithTransaction);
@@ -121,6 +35,7 @@ const ATmosphere: React.FC = () => {
   const [lastFrom, setLastFrom] = useState('');
   const [lastTo, setLastTo] = useState('');
   const [word, setWord] = useState('');
+  const [hasLexiconCheck, setHasLexiconCheck] = useState(false);
   const [colorMode,] = useColorMode();
   const treeRef = useRef<TreeApi<TreeNode> | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -140,6 +55,150 @@ const ATmosphere: React.FC = () => {
     setSelectedCollection(null);
   };
 
+  // Lexicon rkey 一覧を取得
+  useEffect(() => {
+    const fetchLexiconKeys = async () => {
+      try {
+        const res = await fetch("https://collectiondata.usounds.work/distinct_schema_rkeys");
+        if (!res.ok) throw new Error(res.statusText);
+        const data: { rkey: string }[] = await res.json();
+        setLexiconKeys(data.map((d) => d.rkey));
+      } catch (err: any) {
+        console.error("Failed to fetch lexicon keys:", err);
+      }
+    };
+    fetchLexiconKeys();
+  }, []);
+
+  function buildTreeFromCollections(collections: Collection[]): TreeNode[] {
+    const root: TreeNode[] = [];
+
+    function findOrCreateNode(nodes: TreeNode[], name: string): TreeNode {
+      let node = nodes.find((n) => n.name === name);
+      if (!node) {
+        node = { id: "", name, children: [], hasLexicon: false, data: { name } };
+        nodes.push(node);
+      }
+      return node;
+    }
+
+    for (const col of collections) {
+      const parts = col.collection.split(".");
+      if (parts.length < 2) continue;
+
+      const rootName = `${parts[0]}.${parts[1]}`;
+      const rootNode = findOrCreateNode(root, rootName);
+
+      if (lexiconKeys.some((key) => rootName.includes(key))) {
+        rootNode.hasLexicon = true;
+        rootNode.data!.hasLexicon = true;
+      }
+
+      let currentLevel = rootNode.children!;
+      for (let i = 2; i < parts.length; i++) {
+        const fullName = parts.slice(0, i + 1).join(".");
+        const node = findOrCreateNode(currentLevel, fullName);
+
+        if (lexiconKeys.some((key) => fullName.includes(key))) {
+          node.hasLexicon = true;
+          node.data!.hasLexicon = true;
+        }
+
+        if (!node.children) node.children = [];
+        currentLevel = node.children;
+      }
+    }
+
+    function removeEmptyChildren(nodes: TreeNode[]) {
+      nodes.forEach((node) => {
+        if (node.children && node.children.length === 0) {
+          delete node.children;
+        } else if (node.children) {
+          removeEmptyChildren(node.children);
+        }
+      });
+    }
+
+    function sortNodesByName(nodes: TreeNode[]) {
+      nodes.sort((a, b) => a.name.localeCompare(b.name));
+      nodes.forEach((node) => {
+        if (node.children) {
+          sortNodesByName(node.children);
+        }
+      });
+    }
+
+    function assignIds(nodes: TreeNode[], prefix?: string) {
+      nodes.forEach((node, idx) => {
+        node.id = prefix ? `${prefix}-${idx + 1}` : `${idx + 1}`;
+        if (node.children && node.children.length > 0) {
+          assignIds(node.children, node.id);
+        }
+      });
+    }
+
+    function compressSingleChild(nodes: TreeNode[]) {
+      nodes.forEach((node) => {
+        if (node.children && node.children.length > 0) {
+          while (
+            node.children &&
+            node.children.length === 1 &&
+            node.children[0].children &&
+            node.children[0].children.length > 0
+          ) {
+            const onlyChild: TreeNode = node.children[0];
+            node.children = onlyChild.children;
+            node.hasLexicon = node.hasLexicon || onlyChild.hasLexicon;
+            node.data!.hasLexicon = node.hasLexicon;
+          }
+          compressSingleChild(node.children ?? []);
+        }
+      });
+    }
+
+    function propagateHasLexicon(nodes: TreeNode[]): boolean {
+      let hasAny = false;
+      for (const node of nodes) {
+        if (node.children && node.children.length > 0) {
+          const childHas = propagateHasLexicon(node.children);
+          if (childHas) {
+            node.hasLexicon = true;
+            node.data!.hasLexicon = true;
+          }
+        }
+        if (node.hasLexicon) hasAny = true;
+      }
+      return hasAny;
+    }
+
+    function filterHasLexicon(nodes: TreeNode[]): TreeNode[] {
+      return nodes
+        .map((node) => {
+          if (node.children) {
+            node.children = filterHasLexicon(node.children);
+          }
+          // 子どもが残っている or 自分がhasLexiconなら残す
+          if (node.hasLexicon || (node.children && node.children.length > 0)) {
+            return node;
+          }
+          return null;
+        })
+        .filter((n): n is TreeNode => n !== null);
+    }
+
+    removeEmptyChildren(root);
+    sortNodesByName(root);
+    compressSingleChild(root);
+    propagateHasLexicon(root);
+    if (hasLexiconCheck) {
+      root.splice(0, root.length, ...filterHasLexicon(root));
+    }
+
+    assignIds(root);
+
+    return root;
+  }
+
   const loadData = async () => {
     setCollection([]);
     setIsLoading(true);
@@ -152,9 +211,6 @@ const ATmosphere: React.FC = () => {
       const result1 = (await collectionRes.json()) as Collection[];
 
       const ret: Collection[] = [];
-      const now = new Date();
-      const threeDaysAgo = new Date(now.getTime() - 72 * 60 * 60 * 1000); // 72時間前
-
       for (const item of result1) {
         if (exceptCollectionWithTransaction) {
           if (
@@ -164,13 +220,9 @@ const ATmosphere: React.FC = () => {
             !item.collection.includes('zzz')
           ) {
             ret.push(item);
-            const minDate = new Date(item.min + "Z");
-            if (minDate > threeDaysAgo) item.isNew = true;
           }
         } else {
           ret.push(item);
-          const minDate = new Date(item.min + "Z");
-          if (minDate > threeDaysAgo) item.isNew = true;
         }
       }
 
@@ -184,17 +236,10 @@ const ATmosphere: React.FC = () => {
   };
 
   useEffect(() => {
-    setIsLoading(true);
-    const fetchData = async () => {
-      try {
-        await loadData();
-      } catch (err: any) {
-        setError(err.message);
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, [exceptCollectionWithTransaction]);
+    if (lexiconKeys.length > 0) {
+      loadData();
+    }
+  }, [exceptCollectionWithTransaction, lexiconKeys]);
 
   const handleSearch = () => {
     try {
@@ -203,7 +248,6 @@ const ATmosphere: React.FC = () => {
 
       let filtered = [...collection];
 
-      // Word 検索（collection名に含まれる）
       if (word.trim()) {
         const keyword = word.trim().toLowerCase();
         filtered = filtered.filter((item) =>
@@ -211,29 +255,18 @@ const ATmosphere: React.FC = () => {
         );
       }
 
-      const toIsoDateString = (dateStr: string) => {
-        // 'YYYY/MM/DD' -> 'YYYY-MM-DD'
-        return dateStr.replace(/\//g, '-');
-      };
+      const toIsoDateString = (dateStr: string) => dateStr.replace(/\//g, '-');
 
-      // First Indexed (min 日付)
       if (firstFrom) {
         const fromDate = new Date(toIsoDateString(firstFrom));
-        filtered = filtered.filter((item) => {
-          const itemDate = new Date(item.min);
-          return itemDate >= fromDate;
-        });
+        filtered = filtered.filter((item) => new Date(item.min) >= fromDate);
       }
       if (firstTo) {
         const toDate = new Date(toIsoDateString(firstTo));
         toDate.setHours(23, 59, 59, 999);
-        filtered = filtered.filter((item) => {
-          const itemDate = new Date(item.min);
-          return itemDate <= toDate;
-        });
+        filtered = filtered.filter((item) => new Date(item.min) <= toDate);
       }
 
-      // Last Indexed (max 日付)
       if (lastFrom) {
         const fromDate = new Date(lastFrom);
         filtered = filtered.filter((item) => new Date(item.max) >= fromDate);
@@ -243,7 +276,6 @@ const ATmosphere: React.FC = () => {
         filtered = filtered.filter((item) => new Date(item.max) <= toDate);
       }
 
-      // ツリー更新
       setTree(buildTreeFromCollections(filtered));
     } catch (err: any) {
       setError(err.message);
@@ -274,7 +306,6 @@ const ATmosphere: React.FC = () => {
       {error && <div className="my-2 bg-red-500 text-white p-2 rounded">{error}</div>}
 
       <div className="mb-2">
-        {/* モバイル用のトグルボタン */}
         <div className="md:hidden mb-2">
           <button
             onClick={() => setShowFilters(!showFilters)}
@@ -284,11 +315,8 @@ const ATmosphere: React.FC = () => {
           </button>
         </div>
 
-        {/* 検索フォーム */}
         <div className={`${showFilters ? "block" : "hidden"} md:block`}>
-          {/* 入力エリア */}
           <div className="flex flex-wrap gap-8 p-1 items-end border-gray-300 pb-2">
-            {/* Word 入力欄 */}
             <div className="flex flex-col flex-grow min-w-[200px]">
               <label className="font-semibold mb-1">Search Collections</label>
               <input
@@ -300,7 +328,6 @@ const ATmosphere: React.FC = () => {
               />
             </div>
 
-            {/* First Indexed */}
             <div className="flex flex-col w-full md:w-auto">
               <label className="font-semibold mb-1">First Indexed</label>
               <div className="flex flex-wrap gap-2">
@@ -315,7 +342,6 @@ const ATmosphere: React.FC = () => {
               </div>
             </div>
 
-            {/* Last Indexed */}
             <div className="flex flex-col w-full md:w-auto">
               <label className="font-semibold mb-1">Last Indexed</label>
               <div className="flex flex-wrap gap-2">
@@ -331,7 +357,6 @@ const ATmosphere: React.FC = () => {
             </div>
           </div>
 
-          {/* ボタン行 */}
           <div className="flex flex-wrap justify-center items-center gap-2 mt-4">
             <button
               onClick={handleSearch}
@@ -359,6 +384,14 @@ const ATmosphere: React.FC = () => {
               <VscCollapseAll />
               <span>Collapse All</span>
             </button>
+
+
+            <Checkbox
+              checked={hasLexiconCheck}
+              onChange={setHasLexiconCheck}
+              label="Has Lexicon"
+            />
+
             <Checkbox
               checked={exceptCollectionWithTransaction}
               onChange={setExceptCollectionWithTransaction}
@@ -367,7 +400,6 @@ const ATmosphere: React.FC = () => {
           </div>
         </div>
 
-        {/* モーダル */}
         {isOpen && selectedCollection && (
           <CollectionDetail
             open={isOpen}
@@ -377,7 +409,6 @@ const ATmosphere: React.FC = () => {
           />
         )}
 
-        {/* ローディング or ツリー */}
         {isLoading ? (
           <div className='mt-2'>
             <BarLoader
@@ -417,8 +448,8 @@ const ATmosphere: React.FC = () => {
                       ) : (
                         <FaRegFolder />
                       )}
-                      {node.data?.isNew && (
-                        <GoDotFill size={10} className="shrink-0 text-meta-3" />
+                      {node.data?.hasLexicon && (
+                        <GoDotFill size={10} className="shrink-0 text-blue-500" />
                       )}
                       <span>{node.data?.name ?? node.data?.id}</span>
                     </div>
@@ -426,9 +457,7 @@ const ATmosphere: React.FC = () => {
                 </Tree>
               </div>
             ) : (
-              <div className="m-5">
-                No Items
-              </div>
+              <div className="m-5">No Items</div>
             )}
           </>
         )}
