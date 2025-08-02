@@ -186,13 +186,13 @@ const ATmosphere: React.FC = () => {
         .filter((n): n is TreeNode => n !== null);
     }
 
+    if (hasLexiconCheck) {
+      root.splice(0, root.length, ...filterHasLexicon(root));
+    }
     removeEmptyChildren(root);
     sortNodesByName(root);
     compressSingleChild(root);
     propagateHasLexicon(root);
-    if (hasLexiconCheck) {
-      root.splice(0, root.length, ...filterHasLexicon(root));
-    }
 
     assignIds(root);
 
