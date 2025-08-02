@@ -59,7 +59,7 @@ const DatePickerOne = ({ value, onChange }: DatePickerOneProps) => {
     <div className="relative">
       <input
         ref={inputRef}
-        className="form-datepicker w-full rounded border-[1.5px] border-stroke bg-transparent px-5 py-3 font-normal outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:focus:border-primary"
+        className="form-datepicker w-full rounded border-[1.5px] border-stroke bg-transparent px-5 py-3 font-normal text-left outline-none transition  dark:border-form-strokedark dark:bg-form-input "
         placeholder="yyyy/mm/dd"
       />
       <div className="pointer-events-none absolute inset-0 left-auto right-5 flex items-center">

@@ -304,11 +304,11 @@ const ATmosphere: React.FC = () => {
             <div className="flex flex-col w-full md:w-auto">
               <label className="font-semibold mb-1">First Indexed</label>
               <div className="flex flex-wrap gap-2">
-                <div className="flex flex-col min-w-[130px] flex-1">
+                <div className="flex flex-col min-w-[110px] flex-1">
                   <span className="text-sm text-gray-500 mb-1">From</span>
                   <DatePickerOne value={firstFrom} onChange={setFirstFrom} />
                 </div>
-                <div className="flex flex-col min-w-[130px] flex-1">
+                <div className="flex flex-col min-w-[110px] flex-1">
                   <span className="text-sm text-gray-500 mb-1">To</span>
                   <DatePickerOne value={firstTo} onChange={setFirstTo} />
                 </div>
@@ -319,11 +319,11 @@ const ATmosphere: React.FC = () => {
             <div className="flex flex-col w-full md:w-auto">
               <label className="font-semibold mb-1">Last Indexed</label>
               <div className="flex flex-wrap gap-2">
-                <div className="flex flex-col min-w-[130px] flex-1">
+                <div className="flex flex-col min-w-[110px] flex-1">
                   <span className="text-sm text-gray-500 mb-1">From</span>
                   <DatePickerOne value={lastFrom} onChange={setLastFrom} />
                 </div>
-                <div className="flex flex-col min-w-[130px] flex-1">
+                <div className="flex flex-col min-w-[110px] flex-1">
                   <span className="text-sm text-gray-500 mb-1">To</span>
                   <DatePickerOne value={lastTo} onChange={setLastTo} />
                 </div>
