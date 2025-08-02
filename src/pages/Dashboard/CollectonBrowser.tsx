@@ -273,10 +273,8 @@ const ATmosphere: React.FC = () => {
       {error && <div className="my-2 bg-red-500 text-white p-2 rounded">{error}</div>}
 
       <div className="mb-2">
-
-
         {/* 入力エリア */}
-        <div className="flex flex-wrap gap-8 p-1 mt-2 items-end border-gray-300 pb-2">
+        <div className="flex flex-wrap gap-8 p-1 items-end border-gray-300 pb-2">
           {/* Word 入力欄 */}
           <div className="flex flex-col flex-grow min-w-[200px]">
             <label className="font-semibold mb-1">Search Collections</label>
@@ -330,7 +328,7 @@ const ATmosphere: React.FC = () => {
           </button>
           <button
             onClick={handleClear}
-            className="bg-black text-white px-4 py-2 rounded"
+            className="bg-black dark:bg-gray-700 text-white px-4 py-2 rounded"
           >
             Clear
           </button>
@@ -355,7 +353,6 @@ const ATmosphere: React.FC = () => {
           />
         </div>
 
-
         {/* モーダル */}
         {isOpen && selectedCollection && (
           <CollectionDetail
@@ -375,43 +372,51 @@ const ATmosphere: React.FC = () => {
             />
           </div>
         ) : (
-          <div style={{ width: "100vw", height: "100vh" }}>
-            <Tree
-              ref={treeRef}
-              initialData={tree}
-              key={tree.length}
-              openByDefault={false}
-              indent={24}
-              rowHeight={36}
-              overscanCount={1}
-              width={"100%"}
-              height={1000}
-              paddingTop={30}
-              paddingBottom={10}
-              padding={25}
-            >
-              {({ node, style, dragHandle }) => (
-                <div
-                  style={style}
-                  className="flex items-center gap-2 px-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 select-none"
-                  onClick={() => handleNodeClick(node)}
-                  {...dragHandle}
-                >
-                  {node.isLeaf ? (
-                    <FaFileCode />
-                  ) : node.isOpen ? (
-                    <FaRegFolderOpen />
-                  ) : (
-                    <FaRegFolder />
-                  )}
-                  {node.data?.isNew && (
-                    <GoDotFill size={10} className="shrink-0 text-meta-3" />
-                  )}
-                  <span>{node.data?.name ?? node.data?.id}</span>
-                </div>
-              )}
-            </Tree>
-          </div>
+          <>
+          {tree.length > 0 ? (
+            <div style={{ width: "100vw", height: "100vh" }}>
+              <Tree
+                ref={treeRef}
+                initialData={tree}
+                key={tree.length}
+                openByDefault={false}
+                indent={24}
+                rowHeight={36}
+                overscanCount={1}
+                width={"100%"}
+                height={1000}
+                paddingTop={30}
+                paddingBottom={10}
+                padding={25}
+              >
+                {({ node, style, dragHandle }) => (
+                  <div
+                    style={style}
+                    className="flex items-center gap-2 px-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 select-none"
+                    onClick={() => handleNodeClick(node)}
+                    {...dragHandle}
+                  >
+                    {node.isLeaf ? (
+                      <FaFileCode />
+                    ) : node.isOpen ? (
+                      <FaRegFolderOpen />
+                    ) : (
+                      <FaRegFolder />
+                    )}
+                    {node.data?.isNew && (
+                      <GoDotFill size={10} className="shrink-0 text-meta-3" />
+                    )}
+                    <span>{node.data?.name ?? node.data?.id}</span>
+                  </div>
+                )}
+              </Tree>
+            </div>
+          ) : (
+            <div className="m-5">
+              No Items
+            </div>
+          )}
+          </>
         )}
       </div>
     </>
