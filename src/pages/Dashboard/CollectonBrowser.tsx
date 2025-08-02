@@ -123,6 +123,7 @@ const ATmosphere: React.FC = () => {
   const [word, setWord] = useState('');
   const [colorMode,] = useColorMode();
   const treeRef = useRef<TreeApi<TreeNode> | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   const handleNodeClick = (node: NodeApi<TreeNode>) => {
     const data = node.data;
@@ -273,84 +274,97 @@ const ATmosphere: React.FC = () => {
       {error && <div className="my-2 bg-red-500 text-white p-2 rounded">{error}</div>}
 
       <div className="mb-2">
-        {/* 入力エリア */}
-        <div className="flex flex-wrap gap-8 p-1 items-end border-gray-300 pb-2">
-          {/* Word 入力欄 */}
-          <div className="flex flex-col flex-grow min-w-[200px]">
-            <label className="font-semibold mb-1">Search Collections</label>
-            <input
-              type="text"
-              value={word}
-              onChange={(e) => setWord(e.target.value)}
-              placeholder="Enter collection name"
-              className="border-b border-gray-400 outline-none px-1 py-1 w-full bg-transparent dark:bg-gray-800 dark:text-white"
-            />
-          </div>
-
-          {/* First Indexed */}
-          <div className="flex flex-col">
-            <label className="font-semibold mb-1">First Indexed</label>
-            <div className="flex gap-2">
-              <div className="flex flex-col w-[180px]">
-                <span className="text-sm text-gray-500 mb-1">From</span>
-                <DatePickerOne value={firstFrom} onChange={setFirstFrom} />
-              </div>
-              <div className="flex flex-col w-[180px]">
-                <span className="text-sm text-gray-500 mb-1">To</span>
-                <DatePickerOne value={firstTo} onChange={setFirstTo} />
-              </div>
-            </div>
-          </div>
-
-          {/* Last Indexed */}
-          <div className="flex flex-col">
-            <label className="font-semibold mb-1">Last Indexed</label>
-            <div className="flex gap-2">
-              <div className="flex flex-col w-[180px]">
-                <span className="text-sm text-gray-500 mb-1">From</span>
-                <DatePickerOne value={lastFrom} onChange={setLastFrom} />
-              </div>
-              <div className="flex flex-col w-[180px]">
-                <span className="text-sm text-gray-500 mb-1">To</span>
-                <DatePickerOne value={lastTo} onChange={setLastTo} />
-              </div>
-            </div>
-          </div>
+        {/* モバイル用のトグルボタン */}
+        <div className="md:hidden mb-2">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="w-full bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded text-left"
+          >
+            {showFilters ? "Hide search conditions" : "Show search conditions"}
+          </button>
         </div>
 
-        {/* ボタン行 */}
-        <div className="flex justify-center items-center gap-2 mt-4">
-          <button
-            onClick={handleSearch}
-            className="bg-meta-3 text-white px-4 py-2 rounded"
-          >
-            Search
-          </button>
-          <button
-            onClick={handleClear}
-            className="bg-black dark:bg-gray-700 text-white px-4 py-2 rounded"
-          >
-            Clear
-          </button>
-          <button
-            onClick={handleExpandAll}
-            className="ml-4 px-2 py-1 rounded flex items-center gap-1"
-          >
-            <VscExpandAll />
-            <span>Expand All</span>
-          </button>
-          <button
-            onClick={handleCollapseAll}
-            className="px-2 py-1 rounded flex items-center gap-1 mr-2"
-          >
-            <VscCollapseAll />
-            <span>Collapse All</span>
-          </button>
-          <Checkbox
-            checked={exceptCollectionWithTransaction}
-            onChange={setExceptCollectionWithTransaction}
-            label="Exclude collections with transaction key"
-          />
+        {/* 検索フォーム */}
+        <div className={`${showFilters ? "block" : "hidden"} md:block`}>
+          {/* 入力エリア */}
+          <div className="flex flex-wrap gap-8 p-1 items-end border-gray-300 pb-2">
+            {/* Word 入力欄 */}
+            <div className="flex flex-col flex-grow min-w-[200px]">
+              <label className="font-semibold mb-1">Search Collections</label>
+              <input
+                type="text"
+                value={word}
+                onChange={(e) => setWord(e.target.value)}
+                placeholder="Enter collection name"
+                className="border-b border-gray-400 outline-none px-1 py-1 w-full bg-transparent dark:bg-gray-800 dark:text-white"
+              />
+            </div>
+
+            {/* First Indexed */}
+            <div className="flex flex-col w-full md:w-auto">
+              <label className="font-semibold mb-1">First Indexed</label>
+              <div className="flex flex-wrap gap-2">
+                <div className="flex flex-col min-w-[130px] flex-1">
+                  <span className="text-sm text-gray-500 mb-1">From</span>
+                  <DatePickerOne value={firstFrom} onChange={setFirstFrom} />
+                </div>
+                <div className="flex flex-col min-w-[130px] flex-1">
+                  <span className="text-sm text-gray-500 mb-1">To</span>
+                  <DatePickerOne value={firstTo} onChange={setFirstTo} />
+                </div>
+              </div>
+            </div>
+
+            {/* Last Indexed */}
+            <div className="flex flex-col w-full md:w-auto">
+              <label className="font-semibold mb-1">Last Indexed</label>
+              <div className="flex flex-wrap gap-2">
+                <div className="flex flex-col min-w-[130px] flex-1">
+                  <span className="text-sm text-gray-500 mb-1">From</span>
+                  <DatePickerOne value={lastFrom} onChange={setLastFrom} />
+                </div>
+                <div className="flex flex-col min-w-[130px] flex-1">
+                  <span className="text-sm text-gray-500 mb-1">To</span>
+                  <DatePickerOne value={lastTo} onChange={setLastTo} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ボタン行 */}
+          <div className="flex flex-wrap justify-center items-center gap-2 mt-4">
+            <button
+              onClick={handleSearch}
+              className="bg-meta-3 text-white px-4 py-2 rounded"
+            >
+              Search
+            </button>
+            <button
+              onClick={handleClear}
+              className="bg-black dark:bg-gray-700 text-white px-4 py-2 rounded"
+            >
+              Clear
+            </button>
+            <button
+              onClick={handleExpandAll}
+              className="ml-4 px-2 py-1 rounded flex items-center gap-1"
+            >
+              <VscExpandAll />
+              <span>Expand All</span>
+            </button>
+            <button
+              onClick={handleCollapseAll}
+              className="px-2 py-1 rounded flex items-center gap-1 mr-2"
+            >
+              <VscCollapseAll />
+              <span>Collapse All</span>
+            </button>
+            <Checkbox
+              checked={exceptCollectionWithTransaction}
+              onChange={setExceptCollectionWithTransaction}
+              label="Exclude specific collection"
+            />
+          </div>
         </div>
 
         {/* モーダル */}
@@ -373,49 +387,49 @@ const ATmosphere: React.FC = () => {
           </div>
         ) : (
           <>
-          {tree.length > 0 ? (
-            <div style={{ width: "100vw", height: "100vh" }}>
-              <Tree
-                ref={treeRef}
-                initialData={tree}
-                key={tree.length}
-                openByDefault={false}
-                indent={24}
-                rowHeight={36}
-                overscanCount={1}
-                width={"100%"}
-                height={1000}
-                paddingTop={30}
-                paddingBottom={10}
-                padding={25}
-              >
-                {({ node, style, dragHandle }) => (
-                  <div
-                    style={style}
-                    className="flex items-center gap-2 px-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 select-none"
-                    onClick={() => handleNodeClick(node)}
-                    {...dragHandle}
-                  >
-                    {node.isLeaf ? (
-                      <FaFileCode />
-                    ) : node.isOpen ? (
-                      <FaRegFolderOpen />
-                    ) : (
-                      <FaRegFolder />
-                    )}
-                    {node.data?.isNew && (
-                      <GoDotFill size={10} className="shrink-0 text-meta-3" />
-                    )}
-                    <span>{node.data?.name ?? node.data?.id}</span>
-                  </div>
-                )}
-              </Tree>
-            </div>
-          ) : (
-            <div className="m-5">
-              No Items
-            </div>
-          )}
+            {tree.length > 0 ? (
+              <div style={{ width: "100vw", height: "100vh" }}>
+                <Tree
+                  ref={treeRef}
+                  initialData={tree}
+                  key={tree.length}
+                  openByDefault={false}
+                  indent={24}
+                  rowHeight={36}
+                  overscanCount={1}
+                  width={"100%"}
+                  height={1000}
+                  paddingTop={30}
+                  paddingBottom={10}
+                  padding={25}
+                >
+                  {({ node, style, dragHandle }) => (
+                    <div
+                      style={style}
+                      className="flex items-center gap-2 px-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 select-none"
+                      onClick={() => handleNodeClick(node)}
+                      {...dragHandle}
+                    >
+                      {node.isLeaf ? (
+                        <FaFileCode />
+                      ) : node.isOpen ? (
+                        <FaRegFolderOpen />
+                      ) : (
+                        <FaRegFolder />
+                      )}
+                      {node.data?.isNew && (
+                        <GoDotFill size={10} className="shrink-0 text-meta-3" />
+                      )}
+                      <span>{node.data?.name ?? node.data?.id}</span>
+                    </div>
+                  )}
+                </Tree>
+              </div>
+            ) : (
+              <div className="m-5">
+                No Items
+              </div>
+            )}
           </>
         )}
       </div>
