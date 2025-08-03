@@ -201,28 +201,28 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     return (
         <div className='mb-2 w-full max-h-[80vh] '>
             {!lexicon &&
-                <table className="table-auto w-full text-left border-collapse">
+                <table className="table-auto w-full text-center border-collapse">
                     <thead>
-                        <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
-                            <th className="px-4 py-2 align-top whitespace-nowrap text-center">Check</th>
-                            <th className="px-4 py-2 align-top whitespace-nowrap text-center">Status</th>
-                            <th className="px-4 py-2 align-top whitespace-nowrap text-center">Message</th>
+                        <tr className="border-b border-gray-300 dark:border-gray-700 align-middle">
+                            <th className="px-4 py-2 whitespace-nowrap text-center align-middle">Check</th>
+                            <th className="px-4 py-2 whitespace-nowrap text-center align-middle">Status</th>
+                            <th className="px-4 py-2 whitespace-nowrap text-center align-middle">Message</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
-                            <th className="px-4 py-2 align-top break-all text-center">DNS</th>
+                        <tr className="border-b border-gray-300 dark:border-gray-700 align-middle">
+                            <th className="px-4 py-2 break-all text-center align-middle">DNS</th>
                             <td className="px-4 py-2 align-middle">
                                 <div className="flex justify-center">{renderIcon(dnsRecord)}</div>
                             </td>
-                            <td className="px-4 py-2 break-all text-center">{renderMessage(dnsRecord)}</td>
+                            <td className="px-4 py-2 break-all text-center align-middle">{renderMessage(dnsRecord)}</td>
                         </tr>
-                        <tr className="border-gray-300 dark:border-gray-700 align-top">
-                            <th className="px-4 py-2 align-top break-all text-center">Lexicon Schema</th>
+                        <tr className="border-gray-300 dark:border-gray-700 align-middle">
+                            <th className="px-4 py-2 break-all text-center align-middle">Lexicon Schema</th>
                             <td className="px-4 py-2 align-middle">
                                 <div className="flex justify-center">{renderIcon(lexiconSchema)}</div>
                             </td>
-                            <td className="px-4 py-2 break-all text-center">{renderMessage(lexiconSchema)}</td>
+                            <td className="px-4 py-2 break-all text-center align-middle">{renderMessage(lexiconSchema)}</td>
                         </tr>
                     </tbody>
                 </table>
