@@ -11,6 +11,7 @@ import CollectionDetail from '../../components/CollectionDetail';
 import DatePickerOne from '../../components/Forms/DatePicker/DatePickerOne';
 import { VscExpandAll } from "react-icons/vsc";
 import { VscCollapseAll } from "react-icons/vsc";
+import { TLD_LIST } from "../../types/tlds";
 
 type TreeNode = {
   id: string;
@@ -70,7 +71,7 @@ const ATmosphere: React.FC = () => {
     fetchLexiconKeys();
   }, []);
 
-  function buildTreeFromCollections(collections: Collection[]): TreeNode[] {
+  async function buildTreeFromCollections(collections: Collection[]): Promise<TreeNode[]> {
     const root: TreeNode[] = [];
 
     function findOrCreateNode(nodes: TreeNode[], name: string): TreeNode {
@@ -186,6 +187,31 @@ const ATmosphere: React.FC = () => {
         .filter((n): n is TreeNode => n !== null);
     }
 
+    if (exceptCollectionWithTransaction) {
+      const tlds = TLD_LIST.map(tld => tld.toLowerCase());
+
+      function filterByTLD(nodes: TreeNode[]): TreeNode[] {
+        return nodes
+          .map(node => {
+            if (node.children) {
+              node.children = filterByTLD(node.children);
+            }
+
+            const lowerName = node.name.toLowerCase();
+            const matchesTLD = tlds.some(tld => lowerName.startsWith(`${tld}.`));
+
+            if (matchesTLD || (node.children && node.children.length > 0)) {
+              return node;
+            }
+            return null;
+          })
+          .filter((n): n is TreeNode => n !== null);
+      }
+
+      const filteredRoot = filterByTLD(root);
+      root.splice(0, root.length, ...filteredRoot);
+    }
+
     if (hasLexiconCheck) {
       root.splice(0, root.length, ...filterHasLexicon(root));
     }
@@ -214,10 +240,7 @@ const ATmosphere: React.FC = () => {
       for (const item of result1) {
         if (exceptCollectionWithTransaction) {
           if (
-            !item.collection.startsWith('ge.shadowcaster') &&
-            !item.collection.includes('---') &&
-            !item.collection.includes('aaa') &&
-            !item.collection.includes('zzz')
+            !item.collection.startsWith('com.example')
           ) {
             ret.push(item);
           }
@@ -227,7 +250,8 @@ const ATmosphere: React.FC = () => {
       }
 
       setCollection(ret);
-      setTree(buildTreeFromCollections(ret));
+      const treeData = await buildTreeFromCollections(ret);
+      setTree(treeData);
       setIsLoading(false);
     } catch (err: any) {
       setError(err.message);
@@ -275,8 +299,7 @@ const ATmosphere: React.FC = () => {
         const toDate = new Date(lastTo);
         filtered = filtered.filter((item) => new Date(item.max) <= toDate);
       }
-
-      setTree(buildTreeFromCollections(filtered));
+      buildTreeFromCollections(filtered).then((treeData) => setTree(treeData));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -291,7 +314,7 @@ const ATmosphere: React.FC = () => {
     setLastTo('');
     setWord('');
     setHasLexiconCheck(false);
-    setTree(buildTreeFromCollections(collection));
+    buildTreeFromCollections(collection).then((treeData) => setTree(treeData));
   };
 
   const handleExpandAll = () => {
