@@ -357,10 +357,22 @@ const ATmosphere: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-wrap justify-center items-center gap-2 mt-4">
+          <div className="flex flex-wrap justify-center items-center gap-2 mt-3">
+            <Checkbox
+              checked={hasLexiconCheck}
+              onChange={setHasLexiconCheck}
+              label="Has Lexicon"
+            />
+
+            <Checkbox
+              checked={exceptCollectionWithTransaction}
+              onChange={setExceptCollectionWithTransaction}
+              label="Exclude specific collection"
+            />
+
             <button
               onClick={handleSearch}
-              className="bg-meta-3 text-white px-4 py-2 rounded"
+              className="bg-meta-3 text-white px-4 py-2 rounded ml-2 "
             >
               Search
             </button>
@@ -372,7 +384,7 @@ const ATmosphere: React.FC = () => {
             </button>
             <button
               onClick={handleExpandAll}
-              className="ml-4 px-2 py-1 rounded flex items-center gap-1"
+              className="px-2 py-1 rounded flex items-center gap-1"
             >
               <VscExpandAll />
               <span>Expand All</span>
@@ -385,18 +397,6 @@ const ATmosphere: React.FC = () => {
               <span>Collapse All</span>
             </button>
 
-
-            <Checkbox
-              checked={hasLexiconCheck}
-              onChange={setHasLexiconCheck}
-              label="Has Lexicon"
-            />
-
-            <Checkbox
-              checked={exceptCollectionWithTransaction}
-              onChange={setExceptCollectionWithTransaction}
-              label="Exclude specific collection"
-            />
           </div>
         </div>
 
