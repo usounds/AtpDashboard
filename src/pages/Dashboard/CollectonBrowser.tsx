@@ -391,7 +391,7 @@ const ATmosphere: React.FC = () => {
             <Checkbox
               checked={exceptCollectionWithTransaction}
               onChange={setExceptCollectionWithTransaction}
-              label="Exclude specific collection"
+              label="Exclude invalid TLDs"
             />
 
             <button
