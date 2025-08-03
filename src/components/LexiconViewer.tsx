@@ -34,8 +34,8 @@ type CheckResult = {
 const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     const [lexicon, setLexicon] = useState<object | null>(null);
     const [colorMode,] = useColorMode();
-    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true });
-    const [dnsRecord, setDNSRecord] = useState<CheckResult | null>({ isProgress: true });
+    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true , message: 'In progress...'});
+    const [dnsRecord, setDNSRecord] = useState<CheckResult | null>({ isProgress: true, message: 'In progress...' });
 
     const renderIcon = (status: CheckResult | null) => {
         if (!status) return null;
@@ -83,7 +83,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             setDNSRecord({
                 isProgress: false,
                 result: true,
-                message: `Found for ${subDomain}`
+                message: `The DID is ${foundDid}`
             });
             await resolvePds(foundDid);
             return;
@@ -146,7 +146,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
                 setLexiconShema({
                     isProgress: false,
                     result: false,
-                    message: `Not found for ${domain}`
+                    message: `Not found for ${recordUri}`
                 });
                 //setIsLoading(false);
                 return;
