@@ -109,7 +109,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         setLexiconShema({
             isProgress: false,
             result: false,
-            message: `Check not performed because DNS record was not found.`
+            message: `Check not performed.`
         });
         //setMessage('No lexicon found. Can\'t find DNS record.');
         //setIsLoading(false);
