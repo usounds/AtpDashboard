@@ -290,6 +290,7 @@ const ATmosphere: React.FC = () => {
     setLastFrom('');
     setLastTo('');
     setWord('');
+    setHasLexiconCheck(false);
     setTree(buildTreeFromCollections(collection));
   };
 
