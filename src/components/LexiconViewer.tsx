@@ -34,7 +34,7 @@ type CheckResult = {
 const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     const [lexicon, setLexicon] = useState<object | null>(null);
     const [colorMode,] = useColorMode();
-    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true , message: 'In progress...'});
+    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true, message: 'In progress...' });
     const [dnsRecord, setDNSRecord] = useState<CheckResult | null>({ isProgress: true, message: 'In progress...' });
 
     const renderIcon = (status: CheckResult | null) => {
@@ -59,7 +59,17 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
             const response = await fetch(`https://dns.google/resolve?name=${subDomain}&type=TXT`);
             const data = await response.json();
 
-            const didMatch = data.Answer?.[0]?.data.match(/did:[\w:]+/);
+            if (!data.Answer || data.Answer.length === 0) return null;
+
+            // すべての data フィールドを結合してクォートを除去
+            const txtData = data.Answer.map((a: any) => a.data)
+                .join("")
+                .replace(/^"|"$/g, "") // 前後の " を削除
+                .replace(/"/g, "");    // 中間の " も削除
+
+            // ドットも許可するように正規表現を修正
+            const didMatch = txtData.match(/did:[\w:.]+/);
+
             return didMatch ? didMatch[0] : null;
         } catch (error) {
             console.error(`TXTレコードの取得に失敗しました (${subDomain}):`, error);
@@ -104,38 +114,48 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         //setIsLoading(false);
     };
 
-    const resolvePds = async (foundDid: string) => {
-        // setMessage('Resolving PDS...');
-        try {
-            const didDoc = await resolverInstance.resolve(foundDid) as unknown as DIDDocument;
-            const serviceEndpoint = getServiceEndpoint(didDoc);
-            if (!serviceEndpoint) throw new Error();
+const resolvePds = async (foundDid: string) => {
+    try {
+        let didDoc: DIDDocument | null = null;
 
-            if (Array.isArray(serviceEndpoint)) {
-                await fetchLexicon(serviceEndpoint[0], foundDid);
-            } else {
-                if (typeof serviceEndpoint === 'string') {
-                    await fetchLexicon(serviceEndpoint, foundDid);
-                } else {
-                    setLexiconShema({
-                        isProgress: false,
-                        result: false,
-                        message: `Invalid service endpoint for ${didDoc}`
-                    });
-                    //setMessage(`No lexicon found. Invalid service endpoint.`);
-                    //setIsLoading(false);
-                }
-            }
-        } catch (e) {
+        // did:web の場合は Universal Resolver を使用
+        if (foundDid.startsWith("did:web:")) {
+            const url = `https://dev.uniresolver.io/1.0/identifiers/${encodeURIComponent(foundDid)}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`Universal Resolver request failed (${res.status})`);
+
+            const json = await res.json();
+            didDoc = json.didDocument as DIDDocument;
+        } else {
+            // それ以外は既存の resolverInstance を使用
+            didDoc = await resolverInstance.resolve(foundDid) as unknown as DIDDocument;
+        }
+
+        if (!didDoc) throw new Error("No DID document found");
+
+        const serviceEndpoint = getServiceEndpoint(didDoc);
+        if (!serviceEndpoint) throw new Error("No service endpoint found");
+
+        if (Array.isArray(serviceEndpoint)) {
+            await fetchLexicon(serviceEndpoint[0], foundDid);
+        } else if (typeof serviceEndpoint === "string") {
+            await fetchLexicon(serviceEndpoint, foundDid);
+        } else {
             setLexiconShema({
                 isProgress: false,
                 result: false,
-                message: `Can't resolve PDS for ${foundDid}`
+                message: `Invalid service endpoint for ${foundDid}`
             });
-            //setMessage(` Can't resolve PDS for ${foundDid}.`);
-            //setIsLoading(false);
         }
-    };
+    } catch (e) {
+        console.error(`Can't resolve PDS for ${foundDid}:`, e);
+        setLexiconShema({
+            isProgress: false,
+            result: false,
+            message: `Can't resolve PDS for ${foundDid}`
+        });
+    }
+};
 
     const fetchLexicon = async (serviceEndpoint: string, foundDid: string) => {
         const recordUri = `${serviceEndpoint}/xrpc/com.atproto.repo.getRecord?repo=${foundDid}&collection=com.atproto.lexicon.schema&rkey=${domain}`;
