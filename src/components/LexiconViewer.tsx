@@ -213,7 +213,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
                         <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
                             <th className="px-4 py-2 align-top break-all text-center">DNS</th>
                             <td className="px-4 py-2 align-middle">
-                                <div className="flex justify-center">{renderIcon(lexiconSchema)}</div>
+                                <div className="flex justify-center">{renderIcon(dnsRecord)}</div>
                             </td>
                             <td className="px-4 py-2 break-all text-center">{renderMessage(dnsRecord)}</td>
                         </tr>
