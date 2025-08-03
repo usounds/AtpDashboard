@@ -13,9 +13,7 @@
     "url": "https://atpdashboard.usounds.work/"
   },
   "dependencies": {
-    "@babel/runtime": "^7.26.10",
-    "@preline/accordion": "^3.1.0",
-    "@preline/tree-view": "^3.1.0",
+    "@babel/runtime": "^7.28.2",
     "@react-spring/web": "^9.7.5",
     "@uiw/react-json-view": "^2.0.0-alpha.30",
     "apexcharts": "^3.41.0",
@@ -41,9 +39,9 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@types/react": "^18.3.21",
+    "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.14",
     "esbuild": "^0.25.0",
     "file-loader": "^6.2.0",
