@@ -385,7 +385,7 @@ const ATmosphere: React.FC = () => {
             <Checkbox
               checked={hasLexiconCheck}
               onChange={setHasLexiconCheck}
-              label="Has Lexicon"
+              label="Has lexicon"
             />
 
             <Checkbox
