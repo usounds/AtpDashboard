@@ -6,7 +6,8 @@ import JsonView from '@uiw/react-json-view';
 import { lightTheme } from '@uiw/react-json-view/light';
 import { darkTheme } from '@uiw/react-json-view/dark';
 import useColorMode from '../hooks/useColorMode';
-import { FaSpinner, FaCheckCircle, FaTimesCircle } from "react-icons/fa";
+import { FaCheckCircle, FaTimesCircle } from "react-icons/fa";
+import { BarLoader } from 'react-spinners';
 
 const myResolver = getResolver()
 const web = getWebResolver()
@@ -41,7 +42,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         if (!status) return null;
 
         if (status.isProgress) {
-            return <FaSpinner className="animate-spin text-blue-500" />;
+            return <BarLoader color="#4ade80" width={40} speedMultiplier={2} />; // 例: Tailwindのtext-green-400相当
         }
         if (status.result) {
             return <FaCheckCircle className="text-green-500" />;
@@ -114,52 +115,52 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
         //setIsLoading(false);
     };
 
-const resolvePds = async (foundDid: string) => {
-    setLexiconShema({ isProgress: true, message: 'Resolve PDS...' })
-    try {
-        let didDoc: DIDDocument | null = null;
+    const resolvePds = async (foundDid: string) => {
+        setLexiconShema({ isProgress: true, message: 'Resolve PDS...' })
+        try {
+            let didDoc: DIDDocument | null = null;
 
-        // did:web の場合は Universal Resolver を使用
-        if (foundDid.startsWith("did:web:")) {
-            const url = `https://dev.uniresolver.io/1.0/identifiers/${encodeURIComponent(foundDid)}`;
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`Universal Resolver request failed (${res.status})`);
+            // did:web の場合は Universal Resolver を使用
+            if (foundDid.startsWith("did:web:")) {
+                const url = `https://dev.uniresolver.io/1.0/identifiers/${encodeURIComponent(foundDid)}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`Universal Resolver request failed (${res.status})`);
 
-            const json = await res.json();
-            didDoc = json.didDocument as DIDDocument;
-        } else {
-            // それ以外は既存の resolverInstance を使用
-            didDoc = await resolverInstance.resolve(foundDid) as unknown as DIDDocument;
-        }
+                const json = await res.json();
+                didDoc = json.didDocument as DIDDocument;
+            } else {
+                // それ以外は既存の resolverInstance を使用
+                didDoc = await resolverInstance.resolve(foundDid) as unknown as DIDDocument;
+            }
 
-        if (!didDoc) throw new Error("No DID document found");
+            if (!didDoc) throw new Error("No DID document found");
 
-        const serviceEndpoint = getServiceEndpoint(didDoc);
-        if (!serviceEndpoint) throw new Error("No service endpoint found");
+            const serviceEndpoint = getServiceEndpoint(didDoc);
+            if (!serviceEndpoint) throw new Error("No service endpoint found");
 
-        if (Array.isArray(serviceEndpoint)) {
-            await fetchLexicon(serviceEndpoint[0], foundDid);
-        } else if (typeof serviceEndpoint === "string") {
-            await fetchLexicon(serviceEndpoint, foundDid);
-        } else {
+            if (Array.isArray(serviceEndpoint)) {
+                await fetchLexicon(serviceEndpoint[0], foundDid);
+            } else if (typeof serviceEndpoint === "string") {
+                await fetchLexicon(serviceEndpoint, foundDid);
+            } else {
+                setLexiconShema({
+                    isProgress: false,
+                    result: false,
+                    message: `Invalid service endpoint for ${foundDid}`
+                });
+            }
+        } catch (e) {
+            console.error(`Can't resolve PDS for ${foundDid}:`, e);
             setLexiconShema({
                 isProgress: false,
                 result: false,
-                message: `Invalid service endpoint for ${foundDid}`
+                message: `Can't resolve PDS for ${foundDid}`
             });
         }
-    } catch (e) {
-        console.error(`Can't resolve PDS for ${foundDid}:`, e);
-        setLexiconShema({
-            isProgress: false,
-            result: false,
-            message: `Can't resolve PDS for ${foundDid}`
-        });
-    }
-};
+    };
 
     const fetchLexicon = async (serviceEndpoint: string, foundDid: string) => {
-    setLexiconShema({ isProgress: true, message: 'Get Lexicon Schema...' })
+        setLexiconShema({ isProgress: true, message: 'Get Lexicon Schema...' })
         const recordUri = `${serviceEndpoint}/xrpc/com.atproto.repo.getRecord?repo=${foundDid}&collection=com.atproto.lexicon.schema&rkey=${domain}`;
         try {
             const record = await fetch(recordUri);
@@ -203,21 +204,25 @@ const resolvePds = async (foundDid: string) => {
                 <table className="table-auto w-full text-left border-collapse">
                     <thead>
                         <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
-                            <th className="px-4 py-2 align-top whitespace-nowrap">Check</th>
-                            <th className="px-4 py-2 align-top whitespace-nowrap">Status</th>
-                            <th className="px-4 py-2 align-top whitespace-nowrap">Message</th>
+                            <th className="px-4 py-2 align-top whitespace-nowrap text-center">Check</th>
+                            <th className="px-4 py-2 align-top whitespace-nowrap text-center">Status</th>
+                            <th className="px-4 py-2 align-top whitespace-nowrap text-center">Message</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
-                            <th className="px-4 py-2 align-top break-all">DNS</th>
-                            <td className="px-4 py-2">{renderIcon(dnsRecord)}</td>
-                            <td className="px-4 py-2 break-all">{renderMessage(dnsRecord)}</td>
+                            <th className="px-4 py-2 align-top break-all text-center">DNS</th>
+                            <td className="px-4 py-2 align-middle">
+                                <div className="flex justify-center">{renderIcon(lexiconSchema)}</div>
+                            </td>
+                            <td className="px-4 py-2 break-all text-center">{renderMessage(dnsRecord)}</td>
                         </tr>
                         <tr className="border-gray-300 dark:border-gray-700 align-top">
-                            <th className="px-4 py-2 align-top break-all">Lexicon Schema</th>
-                            <td className="px-4 py-2">{renderIcon(lexiconSchema)}</td>
-                            <td className="px-4 py-2 break-all">{renderMessage(lexiconSchema)}</td>
+                            <th className="px-4 py-2 align-top break-all text-center">Lexicon Schema</th>
+                            <td className="px-4 py-2 align-middle">
+                                <div className="flex justify-center">{renderIcon(lexiconSchema)}</div>
+                            </td>
+                            <td className="px-4 py-2 break-all text-center">{renderMessage(lexiconSchema)}</td>
                         </tr>
                     </tbody>
                 </table>

@@ -49,7 +49,7 @@ const CollectionDetail = (props: ModalProps) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white dark:bg-boxdark p-4 rounded-lg w-[80%] max-w-3xl">
+      <div className="bg-white dark:bg-boxdark p-4 rounded-lg w-[80%] max-w-4xl">
         <div className="flex justify-center mb-4">
           <button
             className={`px-4 py-2 text-white ${mode === 'stats'  ?'bg-meta-3' : 'bg-black'}`}
