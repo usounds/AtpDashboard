@@ -27,8 +27,8 @@ const ATmosphere: React.FC = () => {
   const [lexiconKeys, setLexiconKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const exceptCollectionWithTransaction = useModeStore((state) => state.exceptCollectionWithTransaction);
-  const setExceptCollectionWithTransaction = useModeStore((state) => state.setExceptCollectionWithTransaction);
+  const exceptInvalidTLDs = useModeStore((state) => state.exceptInvalidTLDs);
+  const setExceptInvalidTLDs = useModeStore((state) => state.setExceptInvalidTLDs);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [firstFrom, setFirstFrom] = useState('');
@@ -187,7 +187,7 @@ const ATmosphere: React.FC = () => {
         .filter((n): n is TreeNode => n !== null);
     }
 
-    if (exceptCollectionWithTransaction) {
+    if (exceptInvalidTLDs) {
       const tlds = TLD_LIST.map(tld => tld.toLowerCase());
 
       function filterByTLD(nodes: TreeNode[]): TreeNode[] {
@@ -238,7 +238,7 @@ const ATmosphere: React.FC = () => {
 
       const ret: Collection[] = [];
       for (const item of result1) {
-        if (exceptCollectionWithTransaction) {
+        if (exceptInvalidTLDs) {
           if (
             !item.collection.startsWith('com.example')
           ) {
@@ -263,7 +263,7 @@ const ATmosphere: React.FC = () => {
     if (lexiconKeys.length > 0) {
       loadData();
     }
-  }, [exceptCollectionWithTransaction, lexiconKeys]);
+  }, [hasLexiconCheck, exceptInvalidTLDs, lexiconKeys]);
 
   const handleSearch = () => {
     try {
@@ -389,8 +389,8 @@ const ATmosphere: React.FC = () => {
             />
 
             <Checkbox
-              checked={exceptCollectionWithTransaction}
-              onChange={setExceptCollectionWithTransaction}
+              checked={exceptInvalidTLDs}
+              onChange={setExceptInvalidTLDs}
               label="Exclude invalid TLDs"
             />
 
