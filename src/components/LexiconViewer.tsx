@@ -34,7 +34,7 @@ type CheckResult = {
 const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     const [lexicon, setLexicon] = useState<object | null>(null);
     const [colorMode,] = useColorMode();
-    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true, message: 'In progress...' });
+    const [lexiconSchema, setLexiconShema] = useState<CheckResult | null>({ isProgress: true, message: 'Waiting for DNS check' });
     const [dnsRecord, setDNSRecord] = useState<CheckResult | null>({ isProgress: true, message: 'In progress...' });
 
     const renderIcon = (status: CheckResult | null) => {
@@ -115,6 +115,7 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
     };
 
 const resolvePds = async (foundDid: string) => {
+    setLexiconShema({ isProgress: true, message: 'Resolve PDS...' })
     try {
         let didDoc: DIDDocument | null = null;
 
@@ -158,6 +159,7 @@ const resolvePds = async (foundDid: string) => {
 };
 
     const fetchLexicon = async (serviceEndpoint: string, foundDid: string) => {
+    setLexiconShema({ isProgress: true, message: 'Get Lexicon Schema...' })
         const recordUri = `${serviceEndpoint}/xrpc/com.atproto.repo.getRecord?repo=${foundDid}&collection=com.atproto.lexicon.schema&rkey=${domain}`;
         try {
             const record = await fetch(recordUri);
