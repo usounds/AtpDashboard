@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import CardDataStats from '../../components/CardDataStats';
 import Checkbox from '../../components/Checkboxes/CheckBox';
-import CollectionList from '../../components/Tables/CollectionList';
+import CollectionList from '../../components/CollectionList';
 import WeekChart from '../../components/Charts/WeekChart';
 import { Collection, NSIDLv2 } from '../../types/collection';
 import { FiUsers } from "react-icons/fi";

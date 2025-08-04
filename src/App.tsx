@@ -5,6 +5,7 @@ import PageTitle from './components/PageTitle';
 import DefaultLayout from './layout/DefaultLayout';
 import ATmosphere from './pages/Dashboard/ATmosphere';
 import CollectonBrowser from './pages/Dashboard/CollectonBrowser';
+import CustomFeedDashboard from './pages/Dashboard/CustomFeedDashboard';
 import ChartBoard from './pages/Dashboard/ChartBoard';
 
 function App() {
@@ -38,8 +39,18 @@ function App() {
           path="/collection/browser"
           element={
             <>
-              <PageTitle title="Collection Browser | ATProto Dashboard" />
+              <PageTitle title="3rd Party Collection Browser | ATProto Dashboard" />
               <CollectonBrowser />
+            </>
+          }
+        />
+
+        <Route
+          path="/customfeed/dashboard"
+          element={
+            <>
+              <PageTitle title="Custom Feed | ATProto Dashboard" />
+              <CustomFeedDashboard />
             </>
           }
         />

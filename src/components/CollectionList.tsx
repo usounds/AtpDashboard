@@ -1,5 +1,5 @@
-import { Collection } from '../../types/collection';
-import CollectionDetail from '../CollectionDetail'
+import { Collection } from '../types/collection';
+import CollectionDetail from './CollectionDetail'
 import React, { useEffect, useState } from 'react'
 import { IoIosSearch } from "react-icons/io"
 import { GoDotFill } from "react-icons/go";
