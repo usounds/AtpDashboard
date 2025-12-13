@@ -169,12 +169,19 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             </div>
 
             <div className="flex items-center justify-center p-2.5 xl:p-5">
-              {new Date(Date.parse(item.min + 'Z')).toLocaleString()}
-
+              {
+                item.min.startsWith('1900-01-01')
+                  ? 'Backfilled Data'
+                  : new Date(Date.parse(item.min + 'Z')).toLocaleString()
+              }
             </div>
 
             <div className="hidden items-center justify-center p-2.5 2xl:flex xl:p-5">
-              {new Date(Date.parse(item.max + 'Z')).toLocaleString()}
+              {
+                item.max.startsWith('1900-01-01')
+                  ? 'Backfilled Data'
+                  : new Date(Date.parse(item.max + 'Z')).toLocaleString()
+              }
             </div>
 
           </div>
