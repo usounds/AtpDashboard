@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from "react";
 
 type Stats = {
-    unique_did: number;
-    min_createdat: string;
-    max_createdat: string;
-    unique_rkey: number;
-    total_count: number;
+  unique_did: number;
+  min_createdat: string;
+  max_createdat: string;
+  unique_rkey: number;
+  total_count: number;
 };
 
 type Props = {
-    collection: string;
+  collection: string;
 };
 
 const StatsViewer: React.FC<Props> = ({ collection }) => {
@@ -56,18 +56,21 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
             <th className="px-4 py-2 whitespace-nowrap">Events</th>
             <td className="px-4 py-2">{stats ? stats.total_count.toLocaleString() : "-"}</td>
           </tr>
-
           <tr>
             <th className="px-4 py-2 whitespace-nowrap">First Indexed</th>
             <td className="px-4 py-2">
               {stats && stats.min_createdat
-                ? new Date(stats.min_createdat + "Z").toLocaleString()
+                ? stats.min_createdat.startsWith("1900-01-01")
+                  ? "Backfilled Data"
+                  : new Date(stats.min_createdat + "Z").toLocaleString()
                 : "-"}
             </td>
             <th className="px-4 py-2 whitespace-nowrap">Last Indexed</th>
             <td className="px-4 py-2">
               {stats && stats.max_createdat
-                ? new Date(stats.max_createdat + "Z").toLocaleString()
+                ? stats.max_createdat.startsWith("1900-01-01")
+                  ? "Backfilled Data"
+                  : new Date(stats.max_createdat + "Z").toLocaleString()
                 : "-"}
             </td>
           </tr>
