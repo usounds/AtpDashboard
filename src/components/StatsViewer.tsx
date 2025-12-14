@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import useColorMode from '../hooks/useColorMode';
+import { BarLoader } from 'react-spinners';
 
 type Stats = {
   unique_did: number;
@@ -14,8 +16,9 @@ type Props = {
 
 const StatsViewer: React.FC<Props> = ({ collection }) => {
   const [stats, setStats] = useState<Stats | null>(null);
-  //const [_, setLoading] = useState(true);
+  const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [colorMode,] = useColorMode();
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -30,7 +33,7 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
         setError(err.message);
         setStats(null);
       } finally {
-        //setLoading(false);
+        setLoading(false);
       }
     };
     fetchStats();
@@ -41,6 +44,13 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
   return (
     <div className="overflow-x-auto">
       {error && <div style={{ color: "red" }}>Error: {error}</div>}
+
+      {isLoading &&
+        <BarLoader
+          width="100%"
+          color={colorMode === 'dark' ? "#a6a6a6" : '#000000'}
+        />
+      }
       <table className="table-auto w-full text-left border-collapse">
         <tbody>
           <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
