@@ -79,13 +79,9 @@ const ATmosphere: React.FC = () => {
     collections: Collection[]
   ): Promise<TreeNode[]> {
     const root: TreeNode[] = [];
-
     const rkeySet = new Set(lexiconKeys);
 
-    function findOrCreate(
-      nodes: TreeNode[],
-      name: string
-    ): TreeNode {
+    function findOrCreate(nodes: TreeNode[], name: string): TreeNode {
       let node = nodes.find(n => n.name === name);
       if (!node) {
         node = {
@@ -93,183 +89,125 @@ const ATmosphere: React.FC = () => {
           name,
           children: [],
           hasLexicon: false,
-          data: {
-            name,
-            hasLexicon: false,
-            isDataNode: false,
-          },
+          data: { name, hasLexicon: false, isDataNode: false },
         };
         nodes.push(node);
       }
       return node;
     }
 
-    // =========================
-    // ツリー構築
-    // =========================
+    // 1. ツリー生成
     for (const col of collections) {
       const parts = col.collection.split(".");
       if (parts.length < 2) continue;
 
-      const rootName = `${parts[0]}.${parts[1]}`;
-      const rootNode = findOrCreate(root, rootName);
+      let currentNodes = root;
 
-      let current = rootNode;
-
-      for (let i = 2; i < parts.length; i++) {
+      // Lv1はTLD+Domain (例: uk.skyblur) なので i=1 スタート
+      for (let i = 1; i < parts.length; i++) {
         const fullName = parts.slice(0, i + 1).join(".");
-        const child = findOrCreate(current.children!, fullName);
-        current = child;
-      }
+        const node = findOrCreate(currentNodes, fullName);
 
-      // 👇 最終ノードのみデータノード判定
-      const fullName = col.collection;
-      if (rkeySet.has(fullName)) {
-        current.hasLexicon = true;
-        current.data!.hasLexicon = true;
-        current.data!.isDataNode = true;
+        // 最終ノードのみデータノード
+        if (i === parts.length - 1) {
+          node.data!.isDataNode = true;
+          if (rkeySet.has(fullName)) {
+            node.hasLexicon = true;
+            node.data!.hasLexicon = true;
+          }
+        }
+
+        if (!node.children) node.children = [];
+        currentNodes = node.children;
       }
     }
 
-    // =========================
-    // TLD フィルタ
-    // =========================
+    // 2. exceptInvalidTLDs フィルタ
     if (exceptInvalidTLDs) {
-      const tlds = TLD_LIST.map(t => t.toLowerCase());
-
-      function filterByTLD(nodes: TreeNode[]): TreeNode[] {
-        return nodes
-          .map(node => {
-            if (node.children) {
-              node.children = filterByTLD(node.children);
-            }
-
-            const lower = node.name.toLowerCase();
-            const ok = tlds.some(tld => lower.startsWith(`${tld}.`));
-
-            if (
-              ok ||
-              node.data?.isDataNode ||
-              (node.children && node.children.length > 0)
-            ) {
-              return node;
-            }
-            return null;
-          })
-          .filter((n): n is TreeNode => n !== null);
-      }
-
-      root.splice(0, root.length, ...filterByTLD(root));
+      const tlds = new Set(TLD_LIST.map(t => t.toLowerCase()));
+      // ルートノードは "uk.skyblur" のような形なので、split('.')[0] でTLDを取得してチェック
+      const validRoots = root.filter(node => {
+        const tld = node.name.split('.')[0].toLowerCase();
+        return tlds.has(tld);
+      });
+      root.splice(0, root.length, ...validRoots);
     }
 
-    // =========================
-    // hasLexicon フィルタ（葉のみ）
-    // =========================
+    // 3. hasLexicon チェック
     if (hasLexiconCheck) {
       function filterHasLexicon(nodes: TreeNode[]): TreeNode[] {
         return nodes
           .map(node => {
-            if (node.children) {
-              node.children = filterHasLexicon(node.children);
-            }
-
-            if (
-              node.data?.isDataNode ||
-              (node.children && node.children.length > 0)
-            ) {
+            if (node.children) node.children = filterHasLexicon(node.children);
+            // Lexiconを持つ、または子供が残っている場合のみ残す
+            if (node.hasLexicon || (node.children && node.children.length > 0)) {
               return node;
             }
             return null;
           })
           .filter((n): n is TreeNode => n !== null);
       }
-
       root.splice(0, root.length, ...filterHasLexicon(root));
     }
 
-    // =========================
-    // 空 children 削除
-    // =========================
-    function prune(nodes: TreeNode[]) {
-      nodes.forEach(n => {
-        if (n.children) {
-          prune(n.children);
-          if (n.children.length === 0) {
-            delete n.children;
+    // 4. lexicon 伝播
+    function propagateHasLexicon(nodes: TreeNode[]): boolean {
+      let any = false;
+      for (const node of nodes) {
+        const childHas = node.children ? propagateHasLexicon(node.children) : false;
+        if (node.hasLexicon || childHas) {
+          node.hasLexicon = true;
+          node.data!.hasLexicon = true;
+          any = true;
+        }
+      }
+      return any;
+    }
+    propagateHasLexicon(root);
+
+    // 5. データノードの子を削除（データノードはリーフとして扱う）
+    function removeChildrenFromDataNodes(nodes: TreeNode[]) {
+      nodes.forEach(node => {
+        if (node.children && node.children.length > 0) {
+          removeChildrenFromDataNodes(node.children);
+        }
+        // データノードの場合、子を削除
+        if (node.data?.isDataNode && node.children) {
+          delete node.children;
+          // 自身がlexiconを持っていない場合、伝播されたフラグをリセット
+          if (!rkeySet.has(node.name)) {
+            node.hasLexicon = false;
+            node.data!.hasLexicon = false;
           }
         }
       });
     }
+    removeChildrenFromDataNodes(root);
 
+    // 6. prune 空 children
+    function prune(nodes: TreeNode[]) {
+      nodes.forEach(n => {
+        if (n.children) {
+          prune(n.children);
+          if (n.children.length === 0) delete n.children;
+        }
+      });
+    }
     prune(root);
 
-    // =========================
-    // ソート
-    // =========================
+
+    // 7. ソート + ID
     function sort(nodes: TreeNode[]) {
       nodes.sort((a, b) => a.name.localeCompare(b.name));
       nodes.forEach(n => n.children && sort(n.children));
     }
-
-    sort(root);
-
-    // =========================
-    // ID 付与
-    // =========================
     function assignIds(nodes: TreeNode[], prefix = "") {
       nodes.forEach((n, i) => {
         n.id = prefix ? `${prefix}-${i + 1}` : `${i + 1}`;
         if (n.children) assignIds(n.children, n.id);
       });
     }
-
-    function propagateHasLexicon(nodes: TreeNode[]): boolean {
-      let hasAny = false;
-
-      for (const node of nodes) {
-        let childHas = false;
-
-        if (node.children && node.children.length > 0) {
-          childHas = propagateHasLexicon(node.children);
-        }
-
-        if (node.hasLexicon || childHas) {
-          node.hasLexicon = true;
-          node.data!.hasLexicon = true;
-          hasAny = true;
-        }
-      }
-      return hasAny;
-    }
-
-    function collapseRedundantFolders(nodes: TreeNode[]) {
-      for (const node of nodes) {
-        if (!node.children || node.children.length === 0) continue;
-
-        // 子が1つだけ
-        if (node.children.length === 1) {
-          const child = node.children[0];
-
-          const canCollapse =
-            // 自分はデータノードではない
-            !node.data?.isDataNode &&
-            // 子はデータノード
-            child.data?.isDataNode &&
-            // 子がさらに子を持たない
-            !child.children;
-
-          if (canCollapse) {
-            // node の children を child に置き換える
-            node.children = [child];
-          }
-        }
-
-        collapseRedundantFolders(node.children);
-      }
-    }
-
-
-    propagateHasLexicon(root);
+    sort(root);
     assignIds(root);
 
     return root;
@@ -286,21 +224,8 @@ const ATmosphere: React.FC = () => {
       }
       const result1 = (await collectionRes.json()) as Collection[];
 
-      const ret: Collection[] = [];
-      for (const item of result1) {
-        if (exceptInvalidTLDs) {
-          if (
-            !item.collection.startsWith('com.example')
-          ) {
-            ret.push(item);
-          }
-        } else {
-          ret.push(item);
-        }
-      }
-
-      setCollection(ret);
-      const treeData = await buildTreeFromCollections(ret);
+      setCollection(result1);
+      const treeData = await buildTreeFromCollections(result1);
       setTree(treeData);
       setIsLoading(false);
     } catch (err: any) {
