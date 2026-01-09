@@ -18,7 +18,7 @@ type TreeNode = {
   name: string;
   children?: TreeNode[];
   hasLexicon?: boolean;
-  data?: { name: string; hasLexicon?: boolean };
+  data?: { name: string; hasLexicon?: boolean; isDataNode?: boolean; };
 };
 
 const ATmosphere: React.FC = () => {
@@ -71,159 +71,176 @@ const ATmosphere: React.FC = () => {
     fetchLexiconKeys();
   }, []);
 
-  async function buildTreeFromCollections(collections: Collection[]): Promise<TreeNode[]> {
-    const root: TreeNode[] = [];
+async function buildTreeFromCollections(
+  collections: Collection[]
+): Promise<TreeNode[]> {
+  const root: TreeNode[] = [];
 
-    function findOrCreateNode(nodes: TreeNode[], name: string): TreeNode {
-      let node = nodes.find((n) => n.name === name);
-      if (!node) {
-        node = { id: "", name, children: [], hasLexicon: false, data: { name } };
-        nodes.push(node);
+  const exactCollections = new Set(
+    collections.map(c => c.collection)
+  );
+
+  function hasLexicon(name: string) {
+    return lexiconKeys.some(k => name.includes(k));
+  }
+
+  function findOrCreateFolder(
+    nodes: TreeNode[],
+    name: string
+  ): TreeNode {
+    let node = nodes.find(
+      n => n.name === name && !n.data?.isDataNode
+    );
+
+    if (!node) {
+      node = {
+        id: "",
+        name,
+        children: [],
+        hasLexicon: false,
+        data: { name }
+      };
+      nodes.push(node);
+    }
+    return node;
+  }
+
+  function addDataNodeIfExact(
+    nodes: TreeNode[],
+    name: string
+  ) {
+    if (!exactCollections.has(name)) return;
+
+    if (
+      nodes.some(n => n.name === name && n.data?.isDataNode)
+    ) return;
+
+    nodes.push({
+      id: "",
+      name,
+      hasLexicon: hasLexicon(name),
+      data: {
+        name,
+        isDataNode: true,
+        hasLexicon: hasLexicon(name)
       }
-      return node;
-    }
+    });
+  }
 
-    for (const col of collections) {
-      const parts = col.collection.split(".");
-      if (parts.length < 2) continue;
+  // ----------------------
+  // 構築
+  // ----------------------
+  for (const col of collections) {
+    const parts = col.collection.split(".");
+    if (parts.length < 2) continue;
 
-      const rootName = `${parts[0]}.${parts[1]}`;
-      const rootNode = findOrCreateNode(root, rootName);
+    let current = root;
 
-      if (lexiconKeys.some((key) => rootName.includes(key))) {
-        rootNode.hasLexicon = true;
-        rootNode.data!.hasLexicon = true;
+    for (let i = 1; i < parts.length; i++) {
+      const name = parts.slice(0, i + 1).join(".");
+      const isLeaf = i === parts.length - 1;
+
+      if (isLeaf) {
+        // 📄 データノード（完全一致のみ）
+        addDataNodeIfExact(current, name);
+      } else {
+        // 📁 フォルダ
+        const folder = findOrCreateFolder(current, name);
+        if (hasLexicon(name)) {
+          folder.hasLexicon = true;
+          folder.data!.hasLexicon = true;
+        }
+        current = folder.children!;
       }
+    }
+  }
 
-      let currentLevel = rootNode.children!;
-      for (let i = 2; i < parts.length; i++) {
-        const fullName = parts.slice(0, i + 1).join(".");
-        const node = findOrCreateNode(currentLevel, fullName);
-
-        if (lexiconKeys.some((key) => fullName.includes(key))) {
-          node.hasLexicon = true;
-          node.data!.hasLexicon = true;
-        }
-
-        if (!node.children) node.children = [];
-        currentLevel = node.children;
+  // ----------------------
+  // hasLexicon 伝播
+  // ----------------------
+  function propagateHasLexicon(nodes: TreeNode[]): boolean {
+    let any = false;
+    for (const n of nodes) {
+      if (n.children && propagateHasLexicon(n.children)) {
+        n.hasLexicon = true;
+        n.data!.hasLexicon = true;
       }
+      if (n.hasLexicon) any = true;
     }
+    return any;
+  }
 
-    function removeEmptyChildren(nodes: TreeNode[]) {
-      nodes.forEach((node) => {
-        if (node.children && node.children.length === 0) {
-          delete node.children;
-        } else if (node.children) {
-          removeEmptyChildren(node.children);
-        }
-      });
-    }
+  propagateHasLexicon(root);
 
-    function sortNodesByName(nodes: TreeNode[]) {
-      nodes.sort((a, b) => a.name.localeCompare(b.name));
-      nodes.forEach((node) => {
-        if (node.children) {
-          sortNodesByName(node.children);
-        }
-      });
-    }
+  // ----------------------
+  // hasLexicon フィルタ
+  // ----------------------
+  function filterHasLexicon(nodes: TreeNode[]): TreeNode[] {
+    return nodes
+      .map(n => {
+        if (n.children) n.children = filterHasLexicon(n.children);
+        if (n.hasLexicon || n.children?.length) return n;
+        return null;
+      })
+      .filter((n): n is TreeNode => n !== null);
+  }
 
-    function assignIds(nodes: TreeNode[], prefix?: string) {
-      nodes.forEach((node, idx) => {
-        node.id = prefix ? `${prefix}-${idx + 1}` : `${idx + 1}`;
-        if (node.children && node.children.length > 0) {
-          assignIds(node.children, node.id);
-        }
-      });
-    }
+  if (hasLexiconCheck) {
+    root.splice(0, root.length, ...filterHasLexicon(root));
+  }
 
-    function compressSingleChild(nodes: TreeNode[]) {
-      nodes.forEach((node) => {
-        if (node.children && node.children.length > 0) {
-          while (
-            node.children &&
-            node.children.length === 1 &&
-            node.children[0].children &&
-            node.children[0].children.length > 0
-          ) {
-            const onlyChild: TreeNode = node.children[0];
-            node.children = onlyChild.children;
-            node.hasLexicon = node.hasLexicon || onlyChild.hasLexicon;
-            node.data!.hasLexicon = node.hasLexicon;
-          }
-          compressSingleChild(node.children ?? []);
-        }
-      });
-    }
+  // ----------------------
+  // TLD フィルタ（復活）
+  // ----------------------
+  if (exceptInvalidTLDs) {
+    const tlds = TLD_LIST.map(t => t.toLowerCase());
 
-    function propagateHasLexicon(nodes: TreeNode[]): boolean {
-      let hasAny = false;
-      for (const node of nodes) {
-        if (node.children && node.children.length > 0) {
-          const childHas = propagateHasLexicon(node.children);
-          if (childHas) {
-            node.hasLexicon = true;
-            node.data!.hasLexicon = true;
-          }
-        }
-        if (node.hasLexicon) hasAny = true;
-      }
-      return hasAny;
-    }
-
-    function filterHasLexicon(nodes: TreeNode[]): TreeNode[] {
+    function filterByTLD(nodes: TreeNode[]): TreeNode[] {
       return nodes
-        .map((node) => {
-          if (node.children) {
-            node.children = filterHasLexicon(node.children);
-          }
-          // 子どもが残っている or 自分がhasLexiconなら残す
-          if (node.hasLexicon || (node.children && node.children.length > 0)) {
-            return node;
-          }
+        .map(n => {
+          if (n.children) n.children = filterByTLD(n.children);
+          const lower = n.name.toLowerCase();
+          const ok = tlds.some(tld =>
+            lower.startsWith(`${tld}.`)
+          );
+          if (ok || n.children?.length) return n;
           return null;
         })
         .filter((n): n is TreeNode => n !== null);
     }
 
-    if (exceptInvalidTLDs) {
-      const tlds = TLD_LIST.map(tld => tld.toLowerCase());
-
-      function filterByTLD(nodes: TreeNode[]): TreeNode[] {
-        return nodes
-          .map(node => {
-            if (node.children) {
-              node.children = filterByTLD(node.children);
-            }
-
-            const lowerName = node.name.toLowerCase();
-            const matchesTLD = tlds.some(tld => lowerName.startsWith(`${tld}.`));
-
-            if (matchesTLD || (node.children && node.children.length > 0)) {
-              return node;
-            }
-            return null;
-          })
-          .filter((n): n is TreeNode => n !== null);
-      }
-
-      const filteredRoot = filterByTLD(root);
-      root.splice(0, root.length, ...filteredRoot);
-    }
-
-    if (hasLexiconCheck) {
-      root.splice(0, root.length, ...filterHasLexicon(root));
-    }
-    removeEmptyChildren(root);
-    sortNodesByName(root);
-    compressSingleChild(root);
-    propagateHasLexicon(root);
-
-    assignIds(root);
-
-    return root;
+    root.splice(0, root.length, ...filterByTLD(root));
   }
+
+  // ----------------------
+  // 整形
+  // ----------------------
+  function removeEmptyChildren(nodes: TreeNode[]) {
+    nodes.forEach(n => {
+      if (n.children?.length === 0) delete n.children;
+      else if (n.children) removeEmptyChildren(n.children);
+    });
+  }
+
+  function sortNodes(nodes: TreeNode[]) {
+    nodes.sort((a, b) => a.name.localeCompare(b.name));
+    nodes.forEach(n => n.children && sortNodes(n.children));
+  }
+
+  function assignIds(nodes: TreeNode[], prefix = "") {
+    nodes.forEach((n, i) => {
+      n.id = prefix ? `${prefix}-${i + 1}` : `${i + 1}`;
+      if (n.children) assignIds(n.children, n.id);
+    });
+  }
+
+  removeEmptyChildren(root);
+  sortNodes(root);
+  assignIds(root);
+
+  return root;
+}
+
 
   const loadData = async () => {
     setCollection([]);
