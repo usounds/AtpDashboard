@@ -97,7 +97,7 @@ const ATmosphere: React.FC = () => {
     setCursor(result3[0].cursor);
 
 
-    const nsid = await fetch('https://collectiondata.usounds.work/collection_lv2_view');
+    const nsid = await fetch('https://collectiondata.usounds.work/collection_lv2');
     if (!nsid.ok) {
       setIsLoading(false)
       throw new Error(`Error: ${nsid.statusText}`);
