@@ -68,10 +68,10 @@ const LexiconViewer = ({ domain }: DnsTxtRecordProps) => {
                 .replace(/^"|"$/g, "") // 前後の " を削除
                 .replace(/"/g, "");    // 中間の " も削除
 
-            // ドットも許可するように正規表現を修正
-            const didMatch = txtData.match(/did:[\w:.]+/);
+            // did= プレフィックスを必須とし、その後ろのDIDをキャプチャ
+            const didMatch = txtData.match(/did=(did:[\w:.]+)/);
 
-            return didMatch ? didMatch[0] : null;
+            return didMatch ? didMatch[1] : null;
         } catch (error) {
             console.error(`TXTレコードの取得に失敗しました (${subDomain}):`, error);
             return null;
