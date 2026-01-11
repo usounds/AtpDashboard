@@ -1,5 +1,5 @@
 {
-  "installCommand": "corepack enable pnpm && pnpm install",
+  "installCommand": "npm install -g pnpm@10.25.0 && pnpm install",
   "rewrites": [
     {
       "source": "/(.*)",
