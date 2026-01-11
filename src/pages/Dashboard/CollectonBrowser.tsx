@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import Checkbox from '../../components/Checkboxes/CheckBox';
 import { Collection } from '../../types/collection';
 import { useModeStore } from "../../zustand/preference";
+import { useCollectionStore } from "../../zustand/collectionStore";
 import { Tree, TreeApi, NodeApi } from 'react-arborist';
 import { FaFileCode, FaRegFolder, FaRegFolderOpen } from "react-icons/fa";
 import { BarLoader } from 'react-spinners';
@@ -26,11 +27,15 @@ type TreeNode = {
 };
 
 const ATmosphere: React.FC = () => {
-  const [collection, setCollection] = useState<Collection[]>([]);
+  const {
+    collection,
+    fetchCollection,
+    isLoading: isGlobalLoading,
+    error: globalError
+  } = useCollectionStore();
+
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [lexiconKeys, setLexiconKeys] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const exceptInvalidTLDs = useModeStore((state) => state.exceptInvalidTLDs);
   const setExceptInvalidTLDs = useModeStore((state) => state.setExceptInvalidTLDs);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
@@ -213,31 +218,17 @@ const ATmosphere: React.FC = () => {
     return root;
   }
 
-  const loadData = async () => {
-    setIsLoading(true);
-
-    try {
-      const collectionRes = await fetch('https://collectiondata.usounds.work/collection_count_view');
-      if (!collectionRes.ok) {
-        throw new Error(`Error: ${collectionRes.statusText}`);
-      }
-      const result1 = (await collectionRes.json()) as Collection[];
-      setCollection(result1);
-      setIsLoading(false);
-    } catch (err: any) {
-      setError(err.message);
-      setIsLoading(false);
-    }
-  };
-
   // Initial fetch
   useEffect(() => {
-    loadData();
-  }, []);
+    fetchCollection();
+  }, [fetchCollection]);
 
   // Compute tree whenever data or filters change
   useEffect(() => {
-    if (collection.length === 0) return;
+    if (collection.length === 0) {
+      setTree([]);
+      return;
+    }
 
     let filtered = [...collection];
 
@@ -294,7 +285,7 @@ const ATmosphere: React.FC = () => {
 
   return (
     <>
-      {error && <div className="my-2 bg-red-500 text-white p-2 rounded">{error}</div>}
+      {globalError && <div className="my-2 bg-red-500 text-white p-2 rounded">{globalError}</div>}
 
       <div className="mb-2">
         <div className="md:hidden mb-2">
@@ -394,7 +385,7 @@ const ATmosphere: React.FC = () => {
           />
         )}
 
-        {isLoading ? (
+        {isGlobalLoading ? (
           <div className='mt-2'>
             <BarLoader
               width="100%"

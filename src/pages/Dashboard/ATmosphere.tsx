@@ -9,6 +9,7 @@ import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
 import { MdDomain } from "react-icons/md";
 import { useModeStore } from "../../zustand/preference";
+import { useCollectionStore } from "../../zustand/collectionStore";
 import pslData from '../../data/publicSuffixList.json';
 
 const pslSet = new Set(pslData);
@@ -66,7 +67,12 @@ function epochUsToTimeAgo(cursor: number): string {
 }
 
 const ATmosphere: React.FC = () => {
-  const [collection, setCollection] = useState<Collection[]>([]);
+  const {
+    fetchCollection,
+    isLoading: isGlobalLoading
+  } = useCollectionStore();
+
+  const [filteredCollection, setFilteredCollection] = useState<Collection[]>([]);
   const [newCollection, setNewCollection] = useState<number>(0);
   const [did, setDid] = useState<number>(0);
   const [cursor, setCursor] = useState<number>(0);
@@ -77,19 +83,14 @@ const ATmosphere: React.FC = () => {
   const exceptCollectionWithTransaction = useModeStore((state) => state.exceptCollectionWithTransaction);
   const setExceptCollectionWithTransaction = useModeStore((state) => state.setExceptCollectionWithTransaction);
 
-  const loadData = async () => {
-    setCollection([])
+  const loadData = async (force: boolean = false) => {
     setNsidLv2(0)
     setDid(0)
     setNewCollection(0)
     setIsLoading(true)
 
-    const collection = await fetch('https://collectiondata.usounds.work/collection_count_view');
-    if (!collection.ok) {
-      setIsLoading(false)
-      throw new Error(`Error: ${collection.statusText}`);
-    }
-    const result1 = await collection.json() as Collection[];
+    await fetchCollection(force);
+    const result1 = useCollectionStore.getState().collection;
 
     const ret = []
 
@@ -120,7 +121,8 @@ const ATmosphere: React.FC = () => {
       }
     }
 
-    setCollection(ret);
+    setFilteredCollection(ret);
+    setFilteredCollection(ret);
     setNewCollection(newCollection)
 
     const earliest = ret.reduce((earliest: Collection | null, current: Collection) => {
@@ -202,8 +204,8 @@ const ATmosphere: React.FC = () => {
           label="Exclude collections with transaction key"
         />
       </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
-        <CardDataStats title="Total Collections" total={collection.length === 0 ? "Loading" : collection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={() => loadData(true)}>
+        <CardDataStats title="Total Collections" total={filteredCollection.length === 0 ? "Loading" : filteredCollection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
           <MdOutlineFolderCopy size={22} />
         </CardDataStats>
         <CardDataStats title="Total Sub Name Spaces" total={nsidLv2 === 0 ? "Loading" : nsidLv2.toLocaleString()} rate="">
@@ -212,7 +214,7 @@ const ATmosphere: React.FC = () => {
         <CardDataStats title="Total Users" total={did === 0 ? 'Loading' : did.toLocaleString()} rate="">
           <FiUsers size={22} />
         </CardDataStats>
-        <CardDataStats title="Cursor Delay in Minutes" total={isLoading ? "Loading" : cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={isLoading ? '' : epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={isLoading ? false : epochUsToTimeAgo(cursor) !== '0'}>
+        <CardDataStats title="Cursor Delay in Minutes" total={(isLoading || isGlobalLoading) ? "Loading" : cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={(isLoading || isGlobalLoading) ? '' : epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={(isLoading || isGlobalLoading) ? false : epochUsToTimeAgo(cursor) !== '0'}>
           <BiTachometer size={28} />
         </CardDataStats>
       </div>
@@ -224,7 +226,7 @@ const ATmosphere: React.FC = () => {
 
       <div className="mt-4 grid grid-cols-12 gap-4 md:mt-6 md:gap-6 2xl:mt-7.5 2xl:gap-7.5">
         <div className="col-span-12 xl:col-span-12 w-full">
-          <CollectionList collections={collection} />
+          <CollectionList collections={filteredCollection} />
         </div>
       </div>
     </>
