@@ -1,5 +1,6 @@
 {
-  "installCommand": "npm install -g pnpm@10.25.0 && pnpm install",
+  "installCommand": "npx -y pnpm@10.25.0 install",
+  "buildCommand": "npx -y pnpm@10.25.0 run build",
   "rewrites": [
     {
       "source": "/(.*)",
