@@ -1,5 +1,9 @@
 {
+  "installCommand": "corepack enable pnpm && pnpm install",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
