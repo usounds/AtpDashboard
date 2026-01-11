@@ -214,7 +214,6 @@ const ATmosphere: React.FC = () => {
   }
 
   const loadData = async () => {
-    setCollection([]);
     setIsLoading(true);
 
     try {
@@ -223,10 +222,7 @@ const ATmosphere: React.FC = () => {
         throw new Error(`Error: ${collectionRes.statusText}`);
       }
       const result1 = (await collectionRes.json()) as Collection[];
-
       setCollection(result1);
-      const treeData = await buildTreeFromCollections(result1);
-      setTree(treeData);
       setIsLoading(false);
     } catch (err: any) {
       setError(err.message);
@@ -234,53 +230,50 @@ const ATmosphere: React.FC = () => {
     }
   };
 
+  // Initial fetch
   useEffect(() => {
-    if (lexiconKeys.length > 0) {
-      loadData();
+    loadData();
+  }, []);
+
+  // Compute tree whenever data or filters change
+  useEffect(() => {
+    if (collection.length === 0) return;
+
+    let filtered = [...collection];
+
+    if (word.trim()) {
+      const keyword = word.trim().toLowerCase();
+      filtered = filtered.filter((item) =>
+        item.collection.toLowerCase().includes(keyword)
+      );
     }
-  }, [hasLexiconCheck, exceptInvalidTLDs, lexiconKeys]);
 
-  const handleSearch = () => {
-    try {
-      setIsLoading(true);
-      setError(null);
+    const toIsoDateString = (dateStr: string) => dateStr.replace(/\//g, '-');
 
-      let filtered = [...collection];
-
-      if (word.trim()) {
-        const keyword = word.trim().toLowerCase();
-        filtered = filtered.filter((item) =>
-          item.collection.toLowerCase().includes(keyword)
-        );
-      }
-
-      const toIsoDateString = (dateStr: string) => dateStr.replace(/\//g, '-');
-
-      if (firstFrom) {
-        const fromDate = new Date(toIsoDateString(firstFrom));
-        filtered = filtered.filter((item) => new Date(item.min) >= fromDate);
-      }
-      if (firstTo) {
-        const toDate = new Date(toIsoDateString(firstTo));
-        toDate.setHours(23, 59, 59, 999);
-        filtered = filtered.filter((item) => new Date(item.min) <= toDate);
-      }
-
-      if (lastFrom) {
-        const fromDate = new Date(lastFrom);
-        filtered = filtered.filter((item) => new Date(item.max) >= fromDate);
-      }
-      if (lastTo) {
-        const toDate = new Date(lastTo);
-        filtered = filtered.filter((item) => new Date(item.max) <= toDate);
-      }
-      buildTreeFromCollections(filtered).then((treeData) => setTree(treeData));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
+    if (firstFrom) {
+      const fromDate = new Date(toIsoDateString(firstFrom));
+      filtered = filtered.filter((item) => new Date(item.min) >= fromDate);
     }
-  };
+    if (firstTo) {
+      const toDate = new Date(toIsoDateString(firstTo));
+      toDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter((item) => new Date(item.min) <= toDate);
+    }
+
+    if (lastFrom) {
+      const fromDate = new Date(lastFrom);
+      filtered = filtered.filter((item) => new Date(item.max) >= fromDate);
+    }
+    if (lastTo) {
+      const toDate = new Date(lastTo);
+      filtered = filtered.filter((item) => new Date(item.max) <= toDate);
+    }
+
+    buildTreeFromCollections(filtered).then((treeData) => {
+      setTree(treeData);
+    });
+  }, [collection, hasLexiconCheck, exceptInvalidTLDs, lexiconKeys, word, firstFrom, firstTo, lastFrom, lastTo]);
+
 
   const handleClear = () => {
     setFirstFrom('');
@@ -289,7 +282,6 @@ const ATmosphere: React.FC = () => {
     setLastTo('');
     setWord('');
     setHasLexiconCheck(false);
-    buildTreeFromCollections(collection).then((treeData) => setTree(treeData));
   };
 
   const handleExpandAll = () => {
@@ -369,12 +361,6 @@ const ATmosphere: React.FC = () => {
               label="Exclude invalid TLDs"
             />
 
-            <button
-              onClick={handleSearch}
-              className="bg-meta-3 text-white px-4 py-2 rounded ml-2 "
-            >
-              Search
-            </button>
             <button
               onClick={handleClear}
               className="bg-black dark:bg-gray-700 text-white px-4 py-2 rounded"
