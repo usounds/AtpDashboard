@@ -3,7 +3,7 @@ import CardDataStats from '../../components/CardDataStats';
 import Checkbox from '../../components/Checkboxes/CheckBox';
 import CollectionList from '../../components/CollectionList';
 import WeekChart from '../../components/Charts/WeekChart';
-import { Collection, NSIDLv2 } from '../../types/collection';
+import { Collection } from '../../types/collection';
 import { FiUsers } from "react-icons/fi";
 import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
@@ -97,27 +97,27 @@ const ATmosphere: React.FC = () => {
     setCursor(result3[0].cursor);
 
 
-    const nsid = await fetch('https://collectiondata.usounds.work/collection_lv2');
-    if (!nsid.ok) {
-      setIsLoading(false)
-      throw new Error(`Error: ${nsid.statusText}`);
-    }
-    const result4 = await nsid.json() as NSIDLv2[]
+    // NSIDLv2 calculation from collection list (Lines 100-120 logic moved here)
+    const distinctNsidLv2 = new Set<string>();
 
-
-    const ret2 = []
-
-    for (const item of result4) {
-      if (exceptCollectionWithTransaction) {
-        if (item.nsidlv2 && !item.nsidlv2.startsWith('ge.shadowcaster')) {
-          ret2.push(item);
+    for (const item of ret) {
+      if (item.collection) {
+        const parts = item.collection.split('.');
+        if (parts.length >= 2) {
+          const nsid = parts[0] + '.' + parts[1];
+          // Check exclusion filter if enabled (already handled in 'ret' creation loop essentially, 
+          // but specifically for NSID logic we want to filter the prefix if needed)
+          if (exceptCollectionWithTransaction) {
+            if (!nsid.startsWith('ge.shadowcaster')) {
+              distinctNsidLv2.add(nsid);
+            }
+          } else {
+            distinctNsidLv2.add(nsid);
+          }
         }
-      } else {
-        ret2.push(item);
       }
     }
-
-    setNsidLv2(ret2.length);
+    setNsidLv2(distinctNsidLv2.size);
 
     const did = await fetch('https://collectiondata.usounds.work/unique_did_count_view');
     if (!did.ok) {
@@ -165,16 +165,16 @@ const ATmosphere: React.FC = () => {
         />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={loadData}>
-        <CardDataStats title="Total Collections"total={collection.length === 0 ? "Loading" : collection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
+        <CardDataStats title="Total Collections" total={collection.length === 0 ? "Loading" : collection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
           <MdOutlineFolderCopy size={22} />
         </CardDataStats>
         <CardDataStats title="Total Sub Name Spaces" total={nsidLv2 === 0 ? "Loading" : nsidLv2.toLocaleString()} rate="">
           <MdDomain size={22} />
         </CardDataStats>
-        <CardDataStats title="Total Users" total={did===0? 'Loading' : did.toLocaleString()} rate="">
+        <CardDataStats title="Total Users" total={did === 0 ? 'Loading' : did.toLocaleString()} rate="">
           <FiUsers size={22} />
         </CardDataStats>
-        <CardDataStats title="Cursor Delay in Minutes" total={isLoading? "Loading" :cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={isLoading ? '' : epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={isLoading ? false: epochUsToTimeAgo(cursor) !== '0'}>
+        <CardDataStats title="Cursor Delay in Minutes" total={isLoading ? "Loading" : cursor > 0 ? epochUsToTimeAgo(cursor) : '0'} rate={isLoading ? '' : epochUsToTimeAgo(cursor) !== '0' ? "Behind" : ""} levelDown={isLoading ? false : epochUsToTimeAgo(cursor) !== '0'}>
           <BiTachometer size={28} />
         </CardDataStats>
       </div>

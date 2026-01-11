@@ -109,6 +109,11 @@ const options: ApexOptions = {
       },
     },
     min: 0,
+    labels: {
+      formatter: function (val) {
+        return val.toFixed(0);
+      },
+    },
   },
 };
 
@@ -135,7 +140,7 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
   handleReset;
 
   const getMappedDailySummary = async (view: string): Promise<number[]> => {
-    const limit = range === '7 Days' ? 7 : 30;
+    const limit = range === '7 Days' ? 7 : range === '30 Days' ? 30 : 365;
     // APIからデータを取得
     const newResult = await fetch(`https://collectiondata.usounds.work/${view}?limit=${limit}`);
 
@@ -160,6 +165,19 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
       completeSummaryList.push(dayMap.get(d) ?? 0);
     }
 
+    // 365日表示の場合は30日ごとのバケットに集計
+    if (range === '365 Days') {
+      const bucketSize = 30;
+      const bucketed: number[] = [];
+      for (let i = 0; i < completeSummaryList.length; i += bucketSize) {
+        const slice = completeSummaryList.slice(i, i + bucketSize);
+        const sum = slice.reduce((a, b) => a + b, 0);
+        bucketed.push(sum);
+      }
+      // 逆順にして最新のバケットが先頭になるように
+      return bucketed.reverse();
+    }
+
     return completeSummaryList.reverse(); // 逆順にする
   };
 
@@ -167,8 +185,14 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
     const newResult = await getMappedDailySummary(newView);
     const activeResult = await getMappedDailySummary(activeView);
 
+    // カテゴリはバケット数に合わせて生成
     const categories = activeResult.map((_, index) => {
       const result = activeResult.length - index - 1;
+      // 30日バケットの場合は "-30", "-60" など、1日バケットの場合は "-1", "-2" ...
+      if (range === '365 Days') {
+        const days = (result + 1) * 30; // 1 バケット = 30日
+        return `-${days}`;
+      }
       return result === 0 ? '0' : `-${result}`;
     });
 
@@ -182,7 +206,7 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
       },
       yaxis: {
         ...prevOptions.yaxis,
-        max: maxValue, 
+        max: maxValue,
       },
     }));
 
@@ -242,6 +266,14 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
               onClick={() => setRange("30 Days")}
             >
               This Month
+            </button>
+            <button
+              className={`rounded py-1 px-3 text-xs font-medium 
+                      ${range === "365 Days" ? "text-black bg-white dark:bg-boxdark dark:text-white"
+                  : "text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark"}`}
+              onClick={() => setRange("365 Days")}
+            >
+              This Year
             </button>
           </div>
         </div>

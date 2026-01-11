@@ -85,7 +85,7 @@ const options: ApexOptions = {
   xaxis: {
     type: 'category',
     categories: [
-     
+
     ],
     axisBorder: {
       show: false,
@@ -102,6 +102,11 @@ const options: ApexOptions = {
     },
     min: 0,
     max: 10000,
+    labels: {
+      formatter: function (val) {
+        return val.toFixed(0);
+      },
+    },
   },
 };
 
@@ -121,7 +126,7 @@ const CollectionChart: React.FC = () => {
   const [currentOption, setCurrentOption] = useState<ApexOptions>(options);
 
   const loadData = async () => {
-    const limit = range === '7 Days' ? 7 : 30;
+    const limit = range === '7 Days' ? 7 : range === '30 Days' ? 30 : 365;
 
     const summary = await fetch('https://collectiondata.usounds.work/collection_daily_summary_view?limit=' + limit);
     if (!summary.ok) {
@@ -135,12 +140,12 @@ const CollectionChart: React.FC = () => {
       day === 1 ? 'Today' : `-${day - 1}`
     );
 
-    const updatedOptions = { 
-      ...options, 
-      xaxis: { 
-        ...options.xaxis, 
-        categories 
-      } 
+    const updatedOptions = {
+      ...options,
+      xaxis: {
+        ...options.xaxis,
+        categories
+      }
     };
 
     const data = reversedSummaryList.map(({ count }) =>
@@ -221,6 +226,14 @@ const CollectionChart: React.FC = () => {
               onClick={() => setRange("30 Days")}
             >
               This Month
+            </button>
+            <button
+              className={`rounded py-1 px-3 text-xs font-medium  
+                      ${range === "365 Days" ? "bg-white text-black dark:bg-boxdark dark:text-white"
+                  : "text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark"}`}
+              onClick={() => setRange("365 Days")}
+            >
+              This Year
             </button>
           </div>
         </div>
