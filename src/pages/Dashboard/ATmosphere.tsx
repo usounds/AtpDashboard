@@ -9,6 +9,49 @@ import { MdOutlineFolderCopy } from "react-icons/md";
 import { BiTachometer } from "react-icons/bi";
 import { MdDomain } from "react-icons/md";
 import { useModeStore } from "../../zustand/preference";
+import pslData from '../../data/publicSuffixList.json';
+
+const pslSet = new Set(pslData);
+
+function getPublicSuffix(domain: string): string {
+  const labels = domain.split('.');
+  let match = '';
+
+  for (let i = 0; i < labels.length; i++) {
+    const sub = labels.slice(i).join('.');
+
+    // Exception rule
+    if (pslSet.has('!' + sub)) {
+      return labels.slice(i + 1).join('.');
+    }
+
+    // Exact rule
+    if (pslSet.has(sub)) {
+      if (!match || sub.split('.').length > match.split('.').length) {
+        match = sub;
+      }
+    }
+
+    // Wildcard rule
+    const parent = labels.slice(i + 1).join('.');
+    if (parent && pslSet.has('*.' + parent)) {
+      if (!match || sub.split('.').length > match.split('.').length) {
+        match = sub;
+      }
+    }
+  }
+
+  return match || labels[labels.length - 1];
+}
+
+function getRegistrantNsid(nsid: string): string {
+  const parts = nsid.split('.');
+  const domain = [...parts].reverse().join('.');
+  const suffix = getPublicSuffix(domain);
+  const suffixParts = suffix.split('.').length;
+  const registrantPartsCount = Math.min(parts.length, suffixParts + 1);
+  return parts.slice(0, registrantPartsCount).join('.');
+}
 
 function epochUsToTimeAgo(cursor: number): string {
   const cursorDate = new Date(cursor / 1000); // UNIXタイムスタンプからDateオブジェクトを作成
@@ -102,18 +145,13 @@ const ATmosphere: React.FC = () => {
 
     for (const item of ret) {
       if (item.collection) {
-        const parts = item.collection.split('.');
-        if (parts.length >= 2) {
-          const nsid = parts[0] + '.' + parts[1];
-          // Check exclusion filter if enabled (already handled in 'ret' creation loop essentially, 
-          // but specifically for NSID logic we want to filter the prefix if needed)
-          if (exceptCollectionWithTransaction) {
-            if (!nsid.startsWith('ge.shadowcaster')) {
-              distinctNsidLv2.add(nsid);
-            }
-          } else {
+        const nsid = getRegistrantNsid(item.collection);
+        if (exceptCollectionWithTransaction) {
+          if (!nsid.startsWith('ge.shadowcaster')) {
             distinctNsidLv2.add(nsid);
           }
+        } else {
+          distinctNsidLv2.add(nsid);
         }
       }
     }

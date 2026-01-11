@@ -17,7 +17,8 @@
     "dev": "vite",
     "build": "vite build",
     "update": "pnpm dlx npm-check-updates && pnpm install",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "update:publicsuffix": "curl -s https://publicsuffix.org/list/public_suffix_list.dat | grep -vE '(^//|^$)' | grep -v '^$' | jq -R -s 'split(\"\\n\") | map(select(. != \"\"))' > src/data/publicSuffixList.json"
   },
   "author": {
     "name": "ATP Dashboard",
