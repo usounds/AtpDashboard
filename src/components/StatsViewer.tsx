@@ -86,6 +86,9 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
           </tr>
         </tbody>
       </table>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
+        Data may take up to 30 minutes to be reflected.
+      </p>
     </div>
   );
 };
