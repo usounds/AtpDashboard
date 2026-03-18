@@ -9,7 +9,7 @@ import { BarLoader } from 'react-spinners';
 import useColorMode from '../../hooks/useColorMode';
 import { GoDotFill } from "react-icons/go";
 import CollectionDetail from '../../components/CollectionDetail';
-import DatePickerOne from '../../components/Forms/DatePicker/DatePickerOne';
+import DatePickerRange from '../../components/Forms/DatePicker/DatePickerRange';
 import { VscExpandAll } from "react-icons/vsc";
 import { VscCollapseAll } from "react-icons/vsc";
 import { TLD_LIST } from "../../types/tlds";
@@ -40,10 +40,8 @@ const ATmosphere: React.FC = () => {
   const setExceptInvalidTLDs = useModeStore((state) => state.setExceptInvalidTLDs);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [firstFrom, setFirstFrom] = useState('');
-  const [firstTo, setFirstTo] = useState('');
-  const [lastFrom, setLastFrom] = useState('');
-  const [lastTo, setLastTo] = useState('');
+  const [firstRange, setFirstRange] = useState<[string, string]>(['', '']);
+  const [lastRange, setLastRange] = useState<[string, string]>(['', '']);
   const [word, setWord] = useState('');
   const [hasLexiconCheck, setHasLexiconCheck] = useState(false);
   const [colorMode,] = useColorMode();
@@ -241,36 +239,49 @@ const ATmosphere: React.FC = () => {
 
     const toIsoDateString = (dateStr: string) => dateStr.replace(/\//g, '-');
 
-    if (firstFrom) {
-      const fromDate = new Date(toIsoDateString(firstFrom));
-      filtered = filtered.filter((item) => new Date(item.min) >= fromDate);
-    }
-    if (firstTo) {
-      const toDate = new Date(toIsoDateString(firstTo));
-      toDate.setHours(23, 59, 59, 999);
-      filtered = filtered.filter((item) => new Date(item.min) <= toDate);
+    if (firstRange[0]) {
+      const fromDate = new Date(toIsoDateString(firstRange[0]));
+      if (firstRange[1]) {
+        const toDate = new Date(toIsoDateString(firstRange[1]));
+        toDate.setHours(23, 59, 59, 999);
+        filtered = filtered.filter((item) => {
+          const itemDate = new Date(item.min);
+          return itemDate >= fromDate && itemDate <= toDate;
+        });
+      } else {
+        filtered = filtered.filter((item) => {
+          const itemDate = new Date(item.min);
+          return itemDate >= fromDate;
+        });
+      }
     }
 
-    if (lastFrom) {
-      const fromDate = new Date(lastFrom);
-      filtered = filtered.filter((item) => new Date(item.max) >= fromDate);
-    }
-    if (lastTo) {
-      const toDate = new Date(lastTo);
-      filtered = filtered.filter((item) => new Date(item.max) <= toDate);
+    if (lastRange[0]) {
+      const fromDate = new Date(toIsoDateString(lastRange[0]));
+      if (lastRange[1]) {
+        const toDate = new Date(toIsoDateString(lastRange[1]));
+        toDate.setHours(23, 59, 59, 999);
+        filtered = filtered.filter((item) => {
+          const itemDate = new Date(item.max);
+          return itemDate >= fromDate && itemDate <= toDate;
+        });
+      } else {
+        filtered = filtered.filter((item) => {
+          const itemDate = new Date(item.max);
+          return itemDate >= fromDate;
+        });
+      }
     }
 
     buildTreeFromCollections(filtered).then((treeData) => {
       setTree(treeData);
     });
-  }, [collection, hasLexiconCheck, exceptInvalidTLDs, lexiconKeys, word, firstFrom, firstTo, lastFrom, lastTo]);
+  }, [collection, hasLexiconCheck, exceptInvalidTLDs, lexiconKeys, word, firstRange, lastRange]);
 
 
   const handleClear = () => {
-    setFirstFrom('');
-    setFirstTo('');
-    setLastFrom('');
-    setLastTo('');
+    setFirstRange(['', '']);
+    setLastRange(['', '']);
     setWord('');
     setHasLexiconCheck(false);
   };
@@ -297,82 +308,65 @@ const ATmosphere: React.FC = () => {
           </button>
         </div>
 
-        <div className={`${showFilters ? "block" : "hidden"} md:block`}>
-          <div className="flex flex-wrap gap-8 p-1 items-end border-gray-300 pb-2">
-            <div className="flex flex-col flex-grow min-w-[200px]">
-              <label className="font-semibold mb-1">Search Collections</label>
+        <div className={`${showFilters ? "block" : "hidden"} md:block bg-white dark:bg-gray-800 p-4 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 mb-4`}>
+          {/* 上段：検索と日付範囲（メインフィルタ） */}
+          <div className="flex flex-col lg:flex-row gap-6 mb-4">
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-sm font-semibold mb-2">Search Collections</label>
               <input
                 type="text"
                 value={word}
                 onChange={(e) => setWord(e.target.value)}
                 placeholder="Enter collection name"
-                className="border-b border-gray-400 outline-none px-1 py-1 w-full bg-transparent dark:bg-gray-800 dark:text-white"
+                className="w-full border-b-2 border-gray-300 dark:border-gray-600 focus:border-blue-500 outline-none px-2 py-2 bg-transparent transition-colors"
               />
             </div>
-
-            <div className="flex flex-col w-full md:w-auto">
-              <label className="font-semibold mb-1">First Indexed</label>
-              <div className="flex flex-wrap gap-2">
-                <div className="flex flex-col min-w-[110px] flex-1">
-                  <span className="text-sm text-gray-500 mb-1">From</span>
-                  <DatePickerOne value={firstFrom} onChange={setFirstFrom} />
-                </div>
-                <div className="flex flex-col min-w-[110px] flex-1">
-                  <span className="text-sm text-gray-500 mb-1">To</span>
-                  <DatePickerOne value={firstTo} onChange={setFirstTo} />
-                </div>
-              </div>
+            <div className="w-full lg:w-64">
+              <label className="block text-sm font-semibold mb-2">First Indexed</label>
+              <DatePickerRange value={firstRange} onChange={setFirstRange} />
             </div>
-
-            <div className="flex flex-col w-full md:w-auto">
-              <label className="font-semibold mb-1">Last Indexed</label>
-              <div className="flex flex-wrap gap-2">
-                <div className="flex flex-col min-w-[110px] flex-1">
-                  <span className="text-sm text-gray-500 mb-1">From</span>
-                  <DatePickerOne value={lastFrom} onChange={setLastFrom} />
-                </div>
-                <div className="flex flex-col min-w-[110px] flex-1">
-                  <span className="text-sm text-gray-500 mb-1">To</span>
-                  <DatePickerOne value={lastTo} onChange={setLastTo} />
-                </div>
-              </div>
+            <div className="w-full lg:w-64">
+              <label className="block text-sm font-semibold mb-2">Last Indexed</label>
+              <DatePickerRange value={lastRange} onChange={setLastRange} />
             </div>
           </div>
 
-          <div className="flex flex-wrap justify-center items-center gap-2 mt-3">
-            <Checkbox
-              checked={hasLexiconCheck}
-              onChange={setHasLexiconCheck}
-              label="Has lexicon"
-            />
-
-            <Checkbox
-              checked={exceptInvalidTLDs}
-              onChange={setExceptInvalidTLDs}
-              label="Exclude invalid TLDs"
-            />
-
-            <button
-              onClick={handleClear}
-              className="bg-black dark:bg-gray-700 text-white px-4 py-2 rounded"
-            >
-              Clear
-            </button>
-            <button
-              onClick={handleExpandAll}
-              className="px-2 py-1 rounded flex items-center gap-1"
-            >
-              <VscExpandAll />
-              <span>Expand All</span>
-            </button>
-            <button
-              onClick={handleCollapseAll}
-              className="px-2 py-1 rounded flex items-center gap-1 mr-2"
-            >
-              <VscCollapseAll />
-              <span>Collapse All</span>
-            </button>
-
+          {/* 下段：チェックボックスとアクションボタン */}
+          <div className="flex flex-col sm:flex-row justify-between items-center pt-3 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex flex-wrap gap-4 mb-3 sm:mb-0">
+              <Checkbox
+                checked={hasLexiconCheck}
+                onChange={setHasLexiconCheck}
+                label="Has lexicon"
+              />
+              <Checkbox
+                checked={exceptInvalidTLDs}
+                onChange={setExceptInvalidTLDs}
+                label="Exclude invalid TLDs"
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleExpandAll}
+                className="px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center gap-1.5 text-sm transition-colors cursor-pointer"
+              >
+                <VscExpandAll />
+                <span>Expand</span>
+              </button>
+              <button
+                onClick={handleCollapseAll}
+                className="px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center gap-1.5 text-sm transition-colors cursor-pointer"
+              >
+                <VscCollapseAll />
+                <span>Collapse</span>
+              </button>
+              <button
+                onClick={handleClear}
+                className="bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 px-4 py-1.5 rounded text-sm transition-colors ml-2 cursor-pointer border border-transparent dark:border-red-900/50"
+              >
+                Clear
+              </button>
+            </div>
           </div>
         </div>
 
