@@ -5,33 +5,23 @@ type CollectionState = {
     collection: Collection[];
     isLoading: boolean;
     error: string | null;
-    lastFetched: number | null;
 };
 
 type CollectionActions = {
-    fetchCollection: (force?: boolean) => Promise<void>;
+    fetchCollection: () => Promise<void>;
     setCollection: (collection: Collection[]) => void;
 };
-
-const CACHE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
 
 export const useCollectionStore = create<CollectionState & CollectionActions>((set, get) => ({
     collection: [],
     isLoading: false,
     error: null,
-    lastFetched: null,
 
-    fetchCollection: async (force = false) => {
-        const { lastFetched, isLoading } = get();
-        const now = Date.now();
+    fetchCollection: async () => {
+        const { isLoading } = get();
 
         // Skip if already loading
         if (isLoading) return;
-
-        // Skip if cache is still valid and not forced
-        if (!force && lastFetched && now - lastFetched < CACHE_THRESHOLD) {
-            return;
-        }
 
         set({ isLoading: true, error: null });
 
@@ -43,8 +33,7 @@ export const useCollectionStore = create<CollectionState & CollectionActions>((s
             const data = (await response.json()) as Collection[];
             set({
                 collection: data,
-                isLoading: false,
-                lastFetched: now
+                isLoading: false
             });
         } catch (err: any) {
             set({

@@ -83,13 +83,13 @@ const ATmosphere: React.FC = () => {
   const exceptCollectionWithTransaction = useModeStore((state) => state.exceptCollectionWithTransaction);
   const setExceptCollectionWithTransaction = useModeStore((state) => state.setExceptCollectionWithTransaction);
 
-  const loadData = async (force: boolean = false) => {
+  const loadData = async () => {
     setNsidLv2(0)
     setDid(0)
     setNewCollection(0)
     setIsLoading(true)
 
-    await fetchCollection(force);
+    await fetchCollection();
     const result1 = useCollectionStore.getState().collection;
 
     const ret = []
@@ -188,23 +188,37 @@ const ATmosphere: React.FC = () => {
 
   return (
     <>
-      <div className="mb-2">
-        Indexed from {earliestCollection?.min ? new Date(Date.parse(earliestCollection.min + 'Z')).toLocaleString() : "Unknown date"}
-        {cursor > 1 && " to " + new Date(cursor / 1000).toLocaleString() + "."}
-      </div>
+      {(false && earliestCollection) &&
+        <div className="mb-2">
+          Indexed from {earliestCollection?.min ? new Date(Date.parse(earliestCollection!.min + 'Z')).toLocaleString() : "Unknown date"}
+          {cursor > 1 && " to " + new Date(cursor / 1000).toLocaleString() + "."}
+        </div>
+      }
       {error &&
         <div className="my-2 bg-red-500">
           {error}
         </div>
       }
-      <div className="mb-2">
+      <div className="mb-4 flex items-center justify-between">
         <Checkbox
           checked={exceptCollectionWithTransaction}
           onChange={setExceptCollectionWithTransaction}
           label="Exclude collections with transaction key"
         />
+      <div className="relative group inline-block">
+          <button
+            onClick={() => loadData()}
+            className="rounded bg-primary px-4 py-2 font-medium text-white hover:bg-opacity-90 disabled:opacity-50"
+            disabled={isLoading || isGlobalLoading}
+          >
+            {isLoading || isGlobalLoading ? "Loading..." : "Reload Data"}
+          </button>
+          <div className="absolute top-full right-0 mt-2 invisible opacity-0 -translate-y-1 group-hover:visible group-hover:opacity-100 group-hover:translate-y-0 text-xs bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 px-3 py-2 rounded-md shadow-lg transition-all duration-200 whitespace-nowrap z-50 pointer-events-none">
+            Original data is updated every 5 minutes.
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5" onClick={() => loadData(true)}>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 xl:grid-cols-4 2xl:gap-7.5">
         <CardDataStats title="Total Collections" total={filteredCollection.length === 0 ? "Loading" : filteredCollection.length.toLocaleString()} rate={newCollection > 0 ? newCollection.toLocaleString() : ''} levelUp={newCollection > 0}>
           <MdOutlineFolderCopy size={22} />
         </CardDataStats>
