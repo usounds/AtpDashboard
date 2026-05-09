@@ -22,11 +22,11 @@ test('dry-run config does not require ClickHouse URL', () => {
   assert.equal(config.clickhouseUrl, 'http://localhost:8123');
 });
 
-test('snapshot query deduplicates by event_key and excludes lexicon store', () => {
+test('snapshot query uses PostgREST-compatible counts and excludes lexicon store', () => {
   const sql = buildSnapshotInsertQuery();
 
-  assert.match(sql, /uniqExact\(event_key\) AS total_count/);
-  assert.match(sql, /uniqExactIf\(event_key/);
+  assert.match(sql, /count\(\) AS total_count/);
+  assert.match(sql, /countIf\(isNotNull\(created_at\)/);
   assert.match(sql, /WHERE did != \{excluded_did:String\}/);
 });
 

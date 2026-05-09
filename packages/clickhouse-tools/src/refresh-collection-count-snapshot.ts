@@ -123,8 +123,8 @@ INSERT INTO atp_dashboard.collection_count_snapshot
 SELECT
   {refresh_id:UUID} AS refresh_id,
   collection,
-  uniqExact(event_key) AS total_count,
-  uniqExactIf(event_key, isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
+  count() AS total_count,
+  countIf(isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
   min(created_at) AS min_created_at,
   max(created_at) AS max_created_at,
   now64(3, 'UTC') AS refreshed_at

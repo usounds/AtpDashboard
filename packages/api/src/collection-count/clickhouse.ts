@@ -24,6 +24,13 @@ export type SnapshotRow = {
   refreshed_at: string;
 };
 
+export function toPostgrestTimestamp(value: string | null): string | null {
+  if (value == null) {
+    return null;
+  }
+  return value.replace(/(\.\d*?[1-9])0+Z$/, '$1').replace(/\.0+Z$/, '').replace(/Z$/, '');
+}
+
 export async function createClickHouseClient(config: CollectionCountApiConfig): Promise<ClickHouseQueryClient | null> {
   if (!config.clickhouseUrl) {
     return null;
@@ -113,8 +120,8 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
     collection: row.collection,
     count: Number(row.count),
     recent_count: Number(row.recent_count),
-    min: row.min,
-    max: row.max,
+    min: toPostgrestTimestamp(row.min),
+    max: toPostgrestTimestamp(row.max),
   }));
 }
 

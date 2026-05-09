@@ -69,7 +69,7 @@ test('serves collection_count_view from latest completed ClickHouse snapshot', a
             count: 42,
             recent_count: 7,
             min: '2026-05-01T00:00:00.000000Z',
-            max: '2026-05-09T00:00:00.000000Z',
+            max: '2026-05-09T00:00:00.123000Z',
             refresh_id: '00000000-0000-4000-8000-000000000001',
             refreshed_at: new Date().toISOString(),
           },
@@ -90,8 +90,8 @@ test('serves collection_count_view from latest completed ClickHouse snapshot', a
       collection: 'app.example.post',
       count: 42,
       recent_count: 7,
-      min: '2026-05-01T00:00:00.000000Z',
-      max: '2026-05-09T00:00:00.000000Z',
+      min: '2026-05-01T00:00:00',
+      max: '2026-05-09T00:00:00.123',
     },
   ]);
 });
