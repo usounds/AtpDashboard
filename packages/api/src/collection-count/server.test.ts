@@ -701,11 +701,13 @@ test('serves MCP get_daily_users as active and new user time series', async () =
         label: 'New users',
         role: 'secondary',
         color_hint: 'green',
-        optional: true,
+        interpretation_hint: 'Compare with active users to comment on acquisition spikes, dips, and whether new-user movement appears to align with overall activity.',
       },
     ],
     preferred_rendering: ['mermaid_xychart', 'markdown_table'],
   });
+  assert.match(parsedToolText.result.response_guidance, /also plot new users/);
+  assert.match(parsedToolText.result.response_guidance, /may proactively add concise analysis/);
   assert.deepEqual(parsedToolText.result.rows, [
     {
       date: '2026-05-03',

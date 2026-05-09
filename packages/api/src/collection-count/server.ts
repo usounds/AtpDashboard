@@ -752,7 +752,7 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
             label: 'New users',
             role: 'secondary',
             color_hint: 'green',
-            optional: true,
+            interpretation_hint: 'Compare with active users to comment on acquisition spikes, dips, and whether new-user movement appears to align with overall activity.',
           },
         ],
         preferred_rendering: ['mermaid_xychart', 'markdown_table'],
@@ -766,7 +766,7 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
         new_total: totals.new_sum,
       },
       response_guidance:
-        'For graph or trend requests, render a compact line chart from chart_spec and rows. Prefer Mermaid xyChart-beta when supported, using date as the x-axis and active users as the primary y-axis; include new users as an optional secondary series only when useful or requested. Also include a compact Daily Users table when it helps readability. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket. Describe obvious increases, decreases, peaks, dips, and short-term trends only when grounded in the returned numbers.',
+        'For graph or trend requests, render compact line charts from chart_spec and rows. Prefer Mermaid xyChart-beta when supported, using date as the x-axis; plot active users as the primary series and also plot new users, either as a second line when scale remains readable or as a separate companion chart when the values would be compressed. Also include a compact Daily Users table when it helps readability. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket. The assistant may proactively add concise analysis without waiting for an explicit request: call out peaks, dips, increases, decreases, active/new alignment or divergence, and short-term trend hypotheses, as long as every observation is grounded in the returned numbers and clearly avoids unsupported causation.',
     },
     cache,
   };
