@@ -500,7 +500,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_daily_users',
           description:
-            '指定した直近日数で日別ユーザー推移を返します。Daily Users の表として、各日の active DID 数と new DID 数を date/day_offset/active/new の行で返します。「この1週間のユーザーの推移」「Daily Users」「Active/New users」の質問ではこの tool を優先してください。',
+            '指定した直近日数で rolling 24h バケットのユーザー推移を返します。Daily Users の表として、各24時間バケットの active DID 数と new DID 数を date/day_offset/active/new の行で返します。「この1週間のユーザーの推移」「Daily Users」「Active/New users」の質問ではこの tool を優先してください。',
           inputSchema: mcpDailyUsersToolInputSchema(),
         },
         {
@@ -727,10 +727,10 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
         timezone: 'UTC',
       },
       columns: [
-        { key: 'date', description: 'UTC date for the row.' },
-        { key: 'day_offset', description: 'Days relative to the latest indexed date. 0 is the latest day.' },
-        { key: 'active', description: 'Unique DIDs observed on that date.' },
-        { key: 'new', description: 'DIDs first observed on that date.' },
+        { key: 'date', description: 'UTC date of the rolling 24-hour bucket end.' },
+        { key: 'day_offset', description: 'Rolling 24-hour buckets relative to the latest indexed event. 0 is the latest 24h bucket.' },
+        { key: 'active', description: 'Unique DIDs observed in that rolling 24-hour bucket.' },
+        { key: 'new', description: 'DIDs first observed in that rolling 24-hour bucket.' },
       ],
       returned_day_count: rows.length,
       rows,
@@ -741,7 +741,7 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
         new_total: totals.new_sum,
       },
       response_guidance:
-        'Answer user questions with a compact Daily Users table. Treat active as daily unique DID count and new as first-observed DID count.',
+        'Answer user questions with a compact Daily Users table. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket.',
     },
     cache,
   };

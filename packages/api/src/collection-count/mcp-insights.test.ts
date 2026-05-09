@@ -96,9 +96,11 @@ test('reads daily users as active and new DID series', async () => {
 
   assert.equal(capturedQueryParams.days, 7);
   assert.match(capturedQuery, /uniqExact\(did\) AS active/);
-  assert.match(capturedQuery, /toDate\(min\(created_at\)\) AS first_seen_day/);
-  assert.match(capturedQuery, /dateDiff\('day', latest_day, calendar_day\)/);
-  assert.match(capturedQuery, /ORDER BY calendar_day ASC/);
+  assert.match(capturedQuery, /SELECT max\(created_at\)/);
+  assert.match(capturedQuery, /toUInt16\(intDiv\(dateDiff\('second', created_at, latest_at\), 86400\)\) AS bucket_index/);
+  assert.match(capturedQuery, /min\(created_at\) AS first_seen_at/);
+  assert.match(capturedQuery, /first_seen_at > latest_at - toIntervalDay\(lookback_days\)/);
+  assert.match(capturedQuery, /ORDER BY bucket_end_at ASC/);
   assert.deepEqual(rows, [
     {
       date: '2026-05-03',

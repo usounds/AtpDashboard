@@ -322,50 +322,51 @@ export async function readDailyUsersFromClickHouse(
 WITH
   {days:UInt16} AS lookback_days,
   (
-    SELECT toDate(max(created_at))
+    SELECT max(created_at)
     FROM atp_dashboard.collection_events
     WHERE isNotNull(created_at)
-  ) AS latest_day,
-  latest_day - toIntervalDay(lookback_days - 1) AS range_start_day
+  ) AS latest_at
 SELECT
-  formatDateTime(calendar_day, '%Y-%m-%d', 'UTC') AS date,
-  toInt16(dateDiff('day', latest_day, calendar_day)) AS day_offset,
+  formatDateTime(bucket_end_at, '%Y-%m-%d', 'UTC') AS date,
+  -toInt16(bucket_index) AS day_offset,
   coalesce(active.active, 0) AS active,
   coalesce(new_users.new, 0) AS new
 FROM
 (
-  SELECT latest_day - toIntervalDay(toUInt16(arrayJoin(range(lookback_days)))) AS calendar_day
+  SELECT
+    toUInt16(arrayJoin(range(lookback_days))) AS bucket_index,
+    latest_at - toIntervalDay(bucket_index) AS bucket_end_at
 ) days
 LEFT JOIN
 (
   SELECT
-    toDate(created_at) AS calendar_day,
+    toUInt16(intDiv(dateDiff('second', created_at, latest_at), 86400)) AS bucket_index,
     uniqExact(did) AS active
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
-    AND toDate(created_at) >= range_start_day
-    AND toDate(created_at) <= latest_day
-  GROUP BY calendar_day
-) active USING calendar_day
+    AND created_at > latest_at - toIntervalDay(lookback_days)
+    AND created_at <= latest_at
+  GROUP BY bucket_index
+) active USING bucket_index
 LEFT JOIN
 (
   SELECT
-    first_seen_day AS calendar_day,
+    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), 86400)) AS bucket_index,
     count() AS new
   FROM
   (
     SELECT
       did,
-      toDate(min(created_at)) AS first_seen_day
+      min(created_at) AS first_seen_at
     FROM atp_dashboard.collection_events
     WHERE isNotNull(created_at)
     GROUP BY did
   )
-  WHERE first_seen_day >= range_start_day
-    AND first_seen_day <= latest_day
-  GROUP BY first_seen_day
-) new_users USING calendar_day
-ORDER BY calendar_day ASC
+  WHERE first_seen_at > latest_at - toIntervalDay(lookback_days)
+    AND first_seen_at <= latest_at
+  GROUP BY bucket_index
+) new_users USING bucket_index
+ORDER BY bucket_end_at ASC
 `,
       query_params: {
         days: params.days,
