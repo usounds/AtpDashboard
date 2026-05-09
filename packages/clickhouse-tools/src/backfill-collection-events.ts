@@ -57,9 +57,9 @@ type ClickHouseClientLike = {
   close?: () => Promise<void>;
 };
 
-export const DEFAULT_CHECKPOINT_NAME = 'collection_events_backfill';
+export const DEFAULT_CHECKPOINT_NAME = 'collection_events_backfill_v2_unique_index';
 export const NULL_CREATED_AT_ORDER_NOTE =
-  'Backfill order is "createdAt" ASC NULLS FIRST, then did, collection, rkey. Resume predicates are exclusive; replay is safe because event_key is deterministic.';
+  'Backfill order is did, collection, rkey, then "createdAt" ASC NULLS LAST to follow unique_collection_index. Resume predicates are exclusive; replay is safe because event_key is deterministic.';
 
 export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
   const options: BackfillCliOptions = {
@@ -168,26 +168,55 @@ export function getLastWatermark(rows: CollectionSourceRow[]): BackfillWatermark
 export function buildBatchQuery(watermark: BackfillWatermark | null, limit: number): { sql: string; params: unknown[] } {
   const select = `
 SELECT
-  did,
-  collection,
-  rkey,
-  CASE WHEN "createdAt" IS NULL THEN NULL ELSE to_char("createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "createdAt"
-FROM public.collection`;
+  c.did,
+  c.collection,
+  c.rkey,
+  CASE WHEN c."createdAt" IS NULL THEN NULL ELSE to_char(c."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "createdAt"
+FROM public.collection c`;
   const orderLimit = `
-ORDER BY "createdAt" ASC NULLS FIRST, did ASC, collection ASC, rkey ASC
+ORDER BY c.did ASC, c.collection ASC, c.rkey ASC, c."createdAt" ASC NULLS LAST
 LIMIT $${watermark ? 5 : 1}`;
 
   if (!watermark) {
     return { sql: `${select}${orderLimit}`, params: [limit] };
   }
 
-  const sql = `${select}
+  if (watermark.createdAt === null) {
+    const sql = `${select}
 WHERE (
-  ($1::timestamptz IS NULL AND "createdAt" IS NULL AND (did, collection, rkey) > ($2::text, $3::text, $4::text))
-  OR ($1::timestamptz IS NULL AND "createdAt" IS NOT NULL)
-  OR ($1::timestamptz IS NOT NULL AND "createdAt" > $1::timestamptz)
-  OR ($1::timestamptz IS NOT NULL AND "createdAt" = $1::timestamptz AND (did, collection, rkey) > ($2::text, $3::text, $4::text))
+  (c.did, c.collection, c.rkey) > ($2::text, $3::text, $4::text)
 )${orderLimit}`;
+
+    return {
+      sql,
+      params: [watermark.createdAt, watermark.did, watermark.collection, watermark.rkey, limit],
+    };
+  }
+
+  const unionSelect = `
+SELECT
+  c.did,
+  c.collection,
+  c.rkey,
+  CASE WHEN c."createdAt" IS NULL THEN NULL ELSE to_char(c."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "createdAt",
+  c."createdAt" AS created_at_sort
+FROM public.collection c`;
+  const sql = `
+SELECT did, collection, rkey, "createdAt"
+FROM (
+  (${unionSelect}
+   WHERE (c.did, c.collection, c.rkey, c."createdAt") > ($2::text, $3::text, $4::text, $1::timestamptz)
+   ORDER BY c.did ASC, c.collection ASC, c.rkey ASC, c."createdAt" ASC
+   LIMIT $5)
+  UNION ALL
+  (${unionSelect}
+   WHERE (c.did, c.collection, c.rkey) = ($2::text, $3::text, $4::text)
+     AND c."createdAt" IS NULL
+   ORDER BY c.did ASC, c.collection ASC, c.rkey ASC, c."createdAt" ASC
+   LIMIT $5)
+) s
+ORDER BY did ASC, collection ASC, rkey ASC, created_at_sort ASC NULLS LAST
+LIMIT $5`;
 
   return {
     sql,

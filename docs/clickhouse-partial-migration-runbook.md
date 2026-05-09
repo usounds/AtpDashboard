@@ -324,14 +324,14 @@ psql "$POSTGRES_URL" -c "SELECT name, holder, acquired_at, expires_at FROM publi
 期限切れlockのみ解除:
 
 ```bash
-psql "$POSTGRES_URL" -c "DELETE FROM public.clickhouse_sync_locks WHERE name = 'collection_events_backfill' AND expires_at < now();"
+psql "$POSTGRES_URL" -c "DELETE FROM public.clickhouse_sync_locks WHERE name = 'collection_events_backfill_v2_unique_index' AND expires_at < now();"
 ```
 
 期限内lockの手動解除は、該当プロセス停止とowner承認がある場合だけ行う。
 
 ```bash
 sudo systemctl stop atpdashboard-clickhouse-sync.service
-psql "$POSTGRES_URL" -c "DELETE FROM public.clickhouse_sync_locks WHERE name = 'collection_events_backfill';"
+psql "$POSTGRES_URL" -c "DELETE FROM public.clickhouse_sync_locks WHERE name = 'collection_events_backfill_v2_unique_index';"
 ```
 
 ## バックフィル再開
@@ -339,7 +339,7 @@ psql "$POSTGRES_URL" -c "DELETE FROM public.clickhouse_sync_locks WHERE name = '
 checkpoint確認:
 
 ```bash
-psql "$POSTGRES_URL" -c "SELECT * FROM public.clickhouse_sync_checkpoints WHERE name = 'collection_events_backfill';"
+psql "$POSTGRES_URL" -c "SELECT * FROM public.clickhouse_sync_checkpoints WHERE name = 'collection_events_backfill_v2_unique_index';"
 ```
 
 dry-run:

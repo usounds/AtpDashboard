@@ -108,7 +108,8 @@ lock運用:
 
 checkpoint境界:
 
-- watermarkは `"createdAt" ASC NULLS FIRST, did ASC, collection ASC, rkey ASC`。
+- watermarkは `did ASC, collection ASC, rkey ASC, "createdAt" ASC NULLS LAST`。
+- この順序は既存Postgres index `unique_collection_index (did, collection, rkey, "createdAt")` に合わせる。
 - 再開条件はexclusiveである。
 - checkpoint更新はClickHouse insert成功後にだけ行う。
 - 同一 `createdAt` 行を取りこぼさないため、`createdAt` 単独watermarkに戻してはいけない。

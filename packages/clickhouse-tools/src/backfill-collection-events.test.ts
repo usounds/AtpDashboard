@@ -49,7 +49,26 @@ test('maps null createdAt to null ClickHouse timestamp and sentinel key', () => 
   assert.equal(row.created_at_key, '<NULL>');
 });
 
-test('batch query uses exclusive tuple watermark and NULL boundary handling', () => {
+test('batch query uses unique index order and exclusive tuple watermark', () => {
+  const { sql, params } = buildBatchQuery(
+    {
+      createdAt: '2026-05-09T00:00:00.000001Z',
+      createdAtKey: '2026-05-09T00:00:00.000001Z',
+      did: 'did:plc:a',
+      collection: 'app.a',
+      rkey: 'r1',
+    },
+    500,
+  );
+
+  assert.match(sql, /UNION ALL/);
+  assert.match(sql, /\(c\.did, c\.collection, c\.rkey, c\."createdAt"\) > \(\$2::text, \$3::text, \$4::text, \$1::timestamptz\)/);
+  assert.match(sql, /c\."createdAt" IS NULL/);
+  assert.match(sql, /ORDER BY did ASC, collection ASC, rkey ASC, created_at_sort ASC NULLS LAST/);
+  assert.deepEqual(params, ['2026-05-09T00:00:00.000001Z', 'did:plc:a', 'app.a', 'r1', 500]);
+});
+
+test('batch query advances to next key after NULL createdAt watermark', () => {
   const { sql, params } = buildBatchQuery(
     {
       createdAt: null,
@@ -61,8 +80,9 @@ test('batch query uses exclusive tuple watermark and NULL boundary handling', ()
     500,
   );
 
-  assert.match(sql, /NULLS FIRST/);
-  assert.match(sql, /\(did, collection, rkey\) > \(\$2::text, \$3::text, \$4::text\)/);
+  assert.doesNotMatch(sql, /UNION ALL/);
+  assert.match(sql, /\(c\.did, c\.collection, c\.rkey\) > \(\$2::text, \$3::text, \$4::text\)/);
+  assert.match(sql, /ORDER BY c\.did ASC, c\.collection ASC, c\.rkey ASC, c\."createdAt" ASC NULLS LAST/);
   assert.deepEqual(params, [null, 'did:plc:a', 'app.a', 'r1', 500]);
 });
 
