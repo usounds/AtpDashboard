@@ -306,12 +306,43 @@ test('reports forced fallback in status response', async () => {
   assert.equal(body.fallback_reason, 'forced_fallback');
 });
 
-function createFakeClickHouse(params: { refreshRows: unknown[]; snapshotRows: unknown[] }): ClickHouseQueryClient {
+test('serves daily summary routes from ClickHouse', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: createFakeClickHouse({
+        refreshRows: [],
+        snapshotRows: [],
+        dailyRows: [
+          { day: 1, count: 10 },
+          { day: 2, count: 8 },
+        ],
+      }),
+    },
+  );
+
+  const response = await app.request('/api/analytics/active_collection_summary_view?limit=2');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
+  assert.deepEqual(body, [
+    { day: 1, count: 10 },
+    { day: 2, count: 8 },
+  ]);
+});
+
+function createFakeClickHouse(params: { refreshRows: unknown[]; snapshotRows: unknown[]; dailyRows?: unknown[] }): ClickHouseQueryClient {
   return {
     async query(queryParams) {
       const rows = queryParams.query.includes('collection_count_refresh_manifest')
         ? params.refreshRows
-        : params.snapshotRows;
+        : queryParams.query.includes('collection_count_snapshot')
+          ? params.snapshotRows
+          : (params.dailyRows ?? []);
       return {
         async json<T>() {
           return rows as T;

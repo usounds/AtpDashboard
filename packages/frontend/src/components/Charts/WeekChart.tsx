@@ -2,6 +2,7 @@ import { ApexOptions } from 'apexcharts';
 import React, { useState, useEffect } from 'react';
 import ReactApexChart from 'react-apexcharts';
 import { DailySummary } from '../../types/collection';
+import { resolveAnalyticsEndpoint } from '../../config/endpoints';
 
 interface WeekChartProps {
   newView: string;
@@ -142,7 +143,7 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
   const getMappedDailySummary = async (view: string): Promise<number[]> => {
     const limit = range === '7 Days' ? 7 : range === '30 Days' ? 30 : 365;
     // APIからデータを取得
-    const newResult = await fetch(`https://collectiondata.usounds.work/${view}?limit=${limit}`);
+    const newResult = await fetch(`${resolveAnalyticsEndpoint(view)}?limit=${limit}`);
 
     // エラーチェック
     if (!newResult.ok) {

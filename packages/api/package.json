@@ -9,8 +9,8 @@
     "test": "node --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@clickhouse/client": "^1.14.0",
-    "@hono/node-server": "^1.19.7",
-    "hono": "^4.11.4"
+    "@clickhouse/client": "^1.18.4",
+    "@hono/node-server": "^2.0.2",
+    "hono": "^4.12.18"
   }
 }

@@ -11,6 +11,12 @@ import {
 } from './clickhouse.ts';
 import { readCollectionCountFromPostgrest, type FetchLike } from './fallback.ts';
 import {
+  DAILY_SUMMARY_ROUTES,
+  parseDailySummaryLimit,
+  readDailySummaryFromClickHouse,
+  type DailySummaryKind,
+} from './daily-summary.ts';
+import {
   createRuntimeStatus,
   isCircuitOpen,
   recordClickHouseFailure,
@@ -118,6 +124,30 @@ export function createCollectionCountApp(
     return c.json(result.result.rows);
   });
 
+  for (const [routeName, kind] of Object.entries(DAILY_SUMMARY_ROUTES)) {
+    app.get(getPublicRoute(config, `/${routeName}`), async (c) => {
+      const limit = parseDailySummaryLimit(c.req.query('limit'));
+      try {
+        const rows = await resolveDailySummary({
+          config,
+          clickhouseClient,
+          kind,
+          limit,
+          getClickHouseClient: async () => {
+            clickhouseClient ??= await createClickHouseClient(config);
+            return clickhouseClient ?? null;
+          },
+        });
+        c.header('X-Data-Source', 'clickhouse');
+        return c.json(rows);
+      } catch (error) {
+        console.error('[atpdashboard-api] daily summary failed', sanitizeError(error));
+        c.header('X-Data-Source', 'unavailable');
+        return c.json({ error: 'unavailable' }, 503);
+      }
+    });
+  }
+
   app.get(getPublicRoute(config, '/status'), (c) =>
     c.json({
       mode: config.forceCollectionCountFallback ? 'fallback' : 'clickhouse',
@@ -144,6 +174,20 @@ export function createCollectionCountApp(
   });
 
   return app;
+}
+
+async function resolveDailySummary(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  kind: DailySummaryKind;
+  limit: number;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}) {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+  return readDailySummaryFromClickHouse(client, params.config, params.kind, params.limit);
 }
 
 async function resolveCollectionCount(params: {
