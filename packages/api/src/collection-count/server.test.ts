@@ -582,6 +582,12 @@ test('serves MCP tools/list and tools/call', async () => {
   );
   assert.equal(Object.hasOwn(listBody.result.tools[0].inputSchema.properties, 'limit'), false);
   assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'limit'), false);
+  assert.match(listBody.result.tools[0].description, /生まれたNSID/);
+  assert.match(listBody.result.tools[0].description, /namespace group として解釈/);
+  assert.match(listBody.result.tools[1].description, /生まれたLexicon/);
+  assert.match(listBody.result.tools[1].description, /この tool を優先/);
+  assert.match(listBody.result.tools[1].inputSchema.properties.start_date.description, /start_date と end_date を同じ日/);
+  assert.match(listBody.result.tools[1].inputSchema.properties.end_date.description, /namespace group として扱います/);
   assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'namespace_prefix'), true);
   assert.equal(Object.hasOwn(listBody.result.tools[3].inputSchema.properties, 'limit'), true);
   assert.equal(callResponse.status, 200);

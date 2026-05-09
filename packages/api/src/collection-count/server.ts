@@ -443,13 +443,13 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_new_collections',
           description:
-            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全groupを返し、sample_nsids や record URL は返しません。特定namespace配下の全NSIDが必要な場合は get_collections_for_namespace を使ってください。',
+            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。「YYYY年M月D日に生まれたNSID」「生まれたLexicon」「new NSID/new Lexicon」のような質問は、明示的に個別NSID一覧を求められない限り namespace group として解釈して回答してください。全groupを返し、sample_nsids や record URL は返しません。特定namespace配下の全NSIDが必要な場合は get_collections_for_namespace を使ってください。',
           inputSchema: mcpNewCollectionToolInputSchema(),
         },
         {
           name: 'get_new_collection_groups',
           description:
-            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。sample_nsids や record URL は返しません。',
+            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。「YYYY年M月D日に生まれたNSID」「生まれたLexicon」「new NSID/new Lexicon」のような質問は、この tool を優先し、明示的に個別NSID一覧を求められない限り namespace group として解釈して回答してください。sample_nsids や record URL は返しません。',
           inputSchema: mcpNewCollectionToolInputSchema(),
         },
         {
@@ -827,11 +827,12 @@ function mcpNewCollectionToolInputSchema(): Record<string, unknown> {
       start_date: {
         type: 'string',
         description:
-          '集計開始日。YYYY-MM-DD、YYYY/MM/DD、YYYY年M月D日。例: 「2026年5月1日から10日まで」は start_date=2026-05-01, end_date=2026-05-10。',
+          '集計開始日。YYYY-MM-DD、YYYY/MM/DD、YYYY年M月D日。「2026年5月7日に生まれたNSID/Lexicon」のような日付指定は start_date と end_date を同じ日にし、明示的に個別NSID一覧を求められない限り namespace group として扱います。例: 「2026年5月1日から10日まで」は start_date=2026-05-01, end_date=2026-05-10。',
       },
       end_date: {
         type: 'string',
-        description: '集計終了日。この日全体を含みます。YYYY-MM-DD、YYYY/MM/DD、YYYY年M月D日。',
+        description:
+          '集計終了日。この日全体を含みます。YYYY-MM-DD、YYYY/MM/DD、YYYY年M月D日。「2026年5月7日に生まれたNSID/Lexicon」のような日付指定は start_date と end_date を同じ日にし、明示的に個別NSID一覧を求められない限り namespace group として扱います。',
       },
     },
   };
