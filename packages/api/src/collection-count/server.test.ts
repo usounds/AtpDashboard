@@ -898,6 +898,9 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
   assert.equal(capturedQueryParams.namespace_prefix, 'app.chavatar');
   assert.equal(parsedToolText.tool, 'get_collections_for_namespace');
   assert.equal(parsedToolText.intent, 'observed_nsids_under_namespace_prefix');
+  assert.equal(parsedToolText.raw_record_display_policy.raw_record_json_inline_forbidden, true);
+  assert.match(parsedToolText.raw_record_display_policy.instruction, /Do not display raw record JSON inline/);
+  assert.match(parsedToolText.raw_record_display_policy.pds_ls_instruction, /pds\.ls/);
   assert.deepEqual(parsedToolText.parameters, { namespace_prefix: 'app.chavatar' });
   assert.equal(parsedToolText.result.returned_nsid_count, 2);
   assert.deepEqual(
@@ -907,7 +910,9 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
   assert.deepEqual(parsedToolText.result.nsids[1].latest_record, {
     created_at: '2026-05-07T15:47:24.712000Z',
     at_uri: 'at://did:plc:schedule/app.chavatar.schedules/self',
+    pds_ls_url: 'https://pds.ls/at://did:plc:schedule/app.chavatar.schedules/self',
     get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aschedule&collection=app.chavatar.schedules&rkey=self',
+    guidance: 'Do not fetch or paste raw record JSON inline. Send the user to pds_ls_url to inspect actual data.',
   });
 });
 
@@ -962,6 +967,9 @@ test('serves MCP get_latest_record_for_collection with pds.ls guidance only', as
   assert.equal(fetched, false);
   assert.equal(parsedToolText.tool, 'get_latest_record_for_collection');
   assert.equal(parsedToolText.intent, 'guide_to_latest_record_on_pds_ls');
+  assert.equal(parsedToolText.raw_record_display_policy.raw_record_json_inline_forbidden, true);
+  assert.match(parsedToolText.raw_record_display_policy.instruction, /Never fetch and paste/);
+  assert.match(parsedToolText.raw_record_display_policy.pds_ls_instruction, /実データ/);
   assert.equal(parsedToolText.collection, 'app.bsky.feed.like');
   assert.equal(parsedToolText.found, true);
   assert.deepEqual(parsedToolText.latest_record, {
@@ -972,7 +980,7 @@ test('serves MCP get_latest_record_for_collection with pds.ls guidance only', as
   });
   assert.equal(
     parsedToolText.guidance,
-    'Open https://pds.ls/at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a to inspect the record outside the LLM conversation.',
+    'Do not display the raw record JSON inline in chat. Open https://pds.ls/at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a on pds.ls to inspect the actual record data outside the LLM conversation. If asked for 実データ, provide this pds.ls URL, not pasted JSON.',
   );
   assert.equal(Object.hasOwn(parsedToolText, 'record_json'), false);
   assert.equal(Object.hasOwn(parsedToolText, 'get_record_error'), false);

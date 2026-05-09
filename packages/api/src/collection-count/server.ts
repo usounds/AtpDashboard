@@ -67,6 +67,14 @@ type JsonRpcRequest = {
 type McpInsightTool = 'get_new_collections' | 'get_new_collection_groups' | 'get_active_collections' | 'get_collections_for_namespace';
 type McpTool = McpInsightTool | 'get_latest_record_for_collection';
 
+const RAW_RECORD_DISPLAY_POLICY = {
+  raw_record_json_inline_forbidden: true,
+  instruction:
+    'Do not display raw record JSON inline in chat. Never fetch and paste the real record body into the LLM response. To inspect actual data, direct the user to the pds.ls URL.',
+  pds_ls_instruction:
+    'Guide the user to open pds.ls for actual record data. If the user asks for 実データ, answer with the pds.ls endpoint URL instead of expanding JSON in chat.',
+};
+
 type McpInsightResult = {
   value: NewCollectionRow[] | ActiveCollectionRow[] | NamespaceCollectionRow[];
   cacheKey: string;
@@ -447,7 +455,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_collections_for_namespace',
           description:
-            '指定した namespace prefix 配下で観測済みの ATProto collection/NSID をすべて列挙します。例: app.chavatar について聞かれたら namespace_prefix=app.chavatar で呼び、app.chavatar.* 配下のNSID一覧を返します。',
+            '指定した namespace prefix 配下で観測済みの ATProto collection/NSID をすべて列挙します。実データのJSON本文は絶対にチャットへ展開しないでください。latest_record の pds_ls_url をユーザーに案内してください。例: app.chavatar について聞かれたら namespace_prefix=app.chavatar で呼び、app.chavatar.* 配下のNSID一覧を返します。',
           inputSchema: mcpNamespaceCollectionToolInputSchema(),
         },
         {
@@ -458,7 +466,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_latest_record_for_collection',
           description:
-            '指定した ATProto collection/NSID の record created_at が最新のrecordを探し、実データは取得せず pds.ls の確認URLへ案内します。',
+            '指定した ATProto collection/NSID の record created_at が最新のrecordを探します。実データのJSON本文は絶対に取得・表示・チャット展開しないでください。必ず pds.ls の確認URLだけをユーザーに案内してください。',
           inputSchema: mcpLatestRecordToolInputSchema(),
         },
       ],
@@ -561,14 +569,17 @@ async function resolveLatestCollectionRecord(params: {
     return {
       tool: 'get_latest_record_for_collection',
       intent: 'guide_to_latest_record_on_pds_ls',
+      raw_record_display_policy: RAW_RECORD_DISPLAY_POLICY,
       collection: params.collection,
       found: false,
       latest_record: null,
+      guidance: 'No record pointer was found. Do not try to fetch raw record JSON inline; ask the user for another collection or date range.',
     };
   }
   return {
     tool: 'get_latest_record_for_collection',
     intent: 'guide_to_latest_record_on_pds_ls',
+    raw_record_display_policy: RAW_RECORD_DISPLAY_POLICY,
     collection: params.collection,
     found: true,
     latest_record: {
@@ -577,7 +588,7 @@ async function resolveLatestCollectionRecord(params: {
       at_uri: pointer.at_uri,
       pds_ls_url: pointer.pds_ls_url,
     },
-    guidance: `Open ${pointer.pds_ls_url} to inspect the record outside the LLM conversation.`,
+    guidance: `Do not display the raw record JSON inline in chat. Open ${pointer.pds_ls_url} on pds.ls to inspect the actual record data outside the LLM conversation. If asked for 実データ, provide this pds.ls URL, not pasted JSON.`,
   };
 }
 
@@ -620,6 +631,7 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
     return {
       tool: 'get_collections_for_namespace',
       intent: 'observed_nsids_under_namespace_prefix',
+      raw_record_display_policy: RAW_RECORD_DISPLAY_POLICY,
       parameters: {
         namespace_prefix: result.namespacePrefix,
       },
@@ -667,7 +679,9 @@ function formatNamespaceCollectionsResult(result: McpInsightResult): Record<stri
       latest_record: {
         created_at: row.latest_record_created_at,
         at_uri: row.latest_record_at_uri,
+        pds_ls_url: buildPdsLsUrlForMcp(row.latest_record_at_uri),
         get_record_url: row.latest_record_get_record_url,
+        guidance: 'Do not fetch or paste raw record JSON inline. Send the user to pds_ls_url to inspect actual data.',
       },
     })),
   };
@@ -793,6 +807,10 @@ function getNamespacePrefix(collection: string): string {
     return collection;
   }
   return `${parts[0]}.${parts[1]}.*`;
+}
+
+function buildPdsLsUrlForMcp(atUri: string): string {
+  return `https://pds.ls/${atUri}`;
 }
 
 function mcpNewCollectionToolInputSchema(): Record<string, unknown> {
