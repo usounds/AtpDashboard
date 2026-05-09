@@ -365,6 +365,115 @@ test('serves daily summary routes from ClickHouse', async () => {
   ]);
 });
 
+test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
+  let queryCount = 0;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          queryCount += 1;
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.new',
+                  first_seen_at: '2026-05-09T00:00:00.000000Z',
+                  event_count: 3,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/mcp/new_collections?days=7&limit=30');
+  const second = await app.request('/api/analytics/mcp/new_collections?days=7&limit=30');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('X-Cache'), 'MISS');
+  assert.equal(second.headers.get('X-Cache'), 'HIT');
+  assert.equal(queryCount, 1);
+  assert.deepEqual(body, [
+    {
+      collection: 'app.example.new',
+      first_seen_at: '2026-05-09T00:00:00.000000Z',
+      event_count: 3,
+    },
+  ]);
+});
+
+test('serves MCP tools/list and tools/call', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.active',
+                  event_count: 9,
+                  first_seen_at: '2026-05-08T00:00:00.000000Z',
+                  last_seen_at: '2026-05-09T00:00:00.000000Z',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const listResponse = await app.request('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  });
+  const listBody = await listResponse.json();
+
+  const callResponse = await app.request('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'get_active_collections',
+        arguments: { days: 7, limit: 30 },
+      },
+    }),
+  });
+  const callBody = await callResponse.json();
+  const parsedToolText = JSON.parse(callBody.result.content[0].text);
+
+  assert.equal(listResponse.status, 200);
+  assert.deepEqual(
+    listBody.result.tools.map((tool: { name: string }) => tool.name),
+    ['get_new_collections', 'get_active_collections'],
+  );
+  assert.equal(callResponse.status, 200);
+  assert.deepEqual(parsedToolText.data, [
+    {
+      collection: 'app.example.active',
+      event_count: 9,
+      first_seen_at: '2026-05-08T00:00:00.000000Z',
+      last_seen_at: '2026-05-09T00:00:00.000000Z',
+    },
+  ]);
+});
+
 function createFakeClickHouse(params: { refreshRows: unknown[]; snapshotRows: unknown[]; dailyRows?: unknown[] }): ClickHouseQueryClient {
   return {
     async query(queryParams) {

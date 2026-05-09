@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { loadCollectionCountApiConfig, getPublicRoute, type CollectionCountApiConfig, type FallbackReason } from './config.ts';
@@ -16,6 +16,19 @@ import {
   readDailySummaryFromClickHouse,
   type DailySummaryKind,
 } from './daily-summary.ts';
+import {
+  MCP_READ_CACHE_TTL_MS,
+  buildMcpCacheKey,
+  parseMcpDays,
+  parseMcpLimit,
+  readActiveCollectionsFromClickHouse,
+  readNewCollectionsFromClickHouse,
+  readThroughMcpCache,
+  type ActiveCollectionRow,
+  type McpCacheEntry,
+  type McpCacheStatus,
+  type NewCollectionRow,
+} from './mcp-insights.ts';
 import {
   createRuntimeStatus,
   isCircuitOpen,
@@ -36,6 +49,24 @@ type CacheEntry = {
   result: CollectionCountResult;
 };
 
+type JsonRpcRequest = {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: {
+    name?: string;
+    arguments?: Record<string, unknown>;
+  };
+};
+
+type McpInsightTool = 'get_new_collections' | 'get_active_collections';
+
+type McpInsightResult = {
+  value: NewCollectionRow[] | ActiveCollectionRow[];
+  cacheKey: string;
+  cacheStatus: McpCacheStatus;
+};
+
 export type CollectionCountAppDependencies = {
   clickhouse?: ClickHouseQueryClient | null;
   fetch?: FetchLike;
@@ -52,25 +83,30 @@ export function createCollectionCountApp(
   const fetchImpl = dependencies.fetch ?? fetch;
   let clickhouseClient: ClickHouseQueryClient | null | undefined = dependencies.clickhouse;
   let cache: CacheEntry | null = null;
+  const mcpReadCache = new Map<string, McpCacheEntry<unknown>>();
 
   app.use('*', secureHeaders());
-  app.use(
-    `${config.publicBasePath}/*`,
-    cors({
-      origin: '*',
-      allowMethods: ['GET', 'OPTIONS'],
-      allowHeaders: ['Content-Type', 'X-Disable-Fallback'],
-      exposeHeaders: [
-        'X-Data-Source',
-        'X-Fallback-Reason',
-        'X-Snapshot-Refresh-Id',
-        'X-Snapshot-Refreshed-At',
-        'X-Snapshot-Age-Seconds',
-      ],
-      maxAge: 600,
-    }),
-  );
-  app.use(`${config.publicBasePath}/*`, async (c, next) => {
+  const publicCors = cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'X-Disable-Fallback'],
+    exposeHeaders: [
+      'X-Data-Source',
+      'X-Fallback-Reason',
+      'X-Snapshot-Refresh-Id',
+      'X-Snapshot-Refreshed-At',
+      'X-Snapshot-Age-Seconds',
+      'X-Cache',
+      'X-Cache-Key',
+      'X-Cache-Ttl-Seconds',
+    ],
+    maxAge: 600,
+  });
+
+  app.use(`${config.publicBasePath}/*`, publicCors);
+  app.use('/api/mcp', publicCors);
+
+  const rateLimiter = async (c: Context, next: Next) => {
     const rateLimit = checkRateLimit(rateLimitBuckets, getClientKey(c.req.raw, config), config);
     c.header('X-RateLimit-Limit', String(config.rateLimitRequestsPerMinute));
     c.header('X-RateLimit-Remaining', String(rateLimit.remaining));
@@ -78,7 +114,9 @@ export function createCollectionCountApp(
       return c.json({ error: 'rate_limited' }, 429);
     }
     return next();
-  });
+  };
+  app.use(`${config.publicBasePath}/*`, rateLimiter);
+  app.use('/api/mcp', rateLimiter);
 
   app.get('/healthz', (c) =>
     c.json({
@@ -143,6 +181,83 @@ export function createCollectionCountApp(
     });
   }
 
+  app.get(getPublicRoute(config, '/mcp/new_collections'), async (c) => {
+    try {
+      const days = parseMcpDays(c.req.query('days'));
+      const limit = parseMcpLimit(c.req.query('limit'));
+      const result = await resolveMcpInsight({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'get_new_collections',
+        days,
+        limit,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setMcpCacheHeaders(c, result);
+      return c.json(result.value);
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP new_collections failed', sanitizeError(error));
+      return c.json({ error: 'unavailable' }, 503);
+    }
+  });
+
+  app.get(getPublicRoute(config, '/mcp/active_collections'), async (c) => {
+    try {
+      const days = parseMcpDays(c.req.query('days'));
+      const limit = parseMcpLimit(c.req.query('limit'));
+      const result = await resolveMcpInsight({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'get_active_collections',
+        days,
+        limit,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setMcpCacheHeaders(c, result);
+      return c.json(result.value);
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP active_collections failed', sanitizeError(error));
+      return c.json({ error: 'unavailable' }, 503);
+    }
+  });
+
+  app.post('/api/mcp', async (c) => {
+    let payload: JsonRpcRequest;
+    try {
+      payload = await c.req.json<JsonRpcRequest>();
+    } catch {
+      return c.json(jsonRpcError(null, -32700, 'Parse error'), 400);
+    }
+
+    try {
+      const response = await handleMcpJsonRpc({
+        payload,
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      if (response == null) {
+        return new Response(null, { status: 204 });
+      }
+      return c.json(response);
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP request failed', sanitizeError(error));
+      return c.json(jsonRpcError(payload.id ?? null, -32603, 'Internal error'), 500);
+    }
+  });
+
   app.get(getPublicRoute(config, '/status'), (c) =>
     c.json({
       mode: config.forceCollectionCountFallback ? 'fallback' : 'clickhouse',
@@ -158,7 +273,7 @@ export function createCollectionCountApp(
       last_snapshot_refreshed_at: runtimeStatus.lastSnapshotRefreshedAt,
       last_snapshot_age_seconds: runtimeStatus.lastSnapshotAgeSeconds,
       last_success_at: runtimeStatus.lastSuccessAt,
-      mcp: 'deferred',
+      mcp: 'enabled',
     }),
   );
 
@@ -169,6 +284,170 @@ export function createCollectionCountApp(
   });
 
   return app;
+}
+
+async function resolveMcpInsight(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  mcpReadCache: Map<string, McpCacheEntry<unknown>>;
+  tool: McpInsightTool;
+  days: number;
+  limit: number;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<McpInsightResult> {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+
+  const cacheKey = buildMcpCacheKey(params.tool, { days: params.days, limit: params.limit });
+  const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () => {
+    if (params.tool === 'get_new_collections') {
+      return readNewCollectionsFromClickHouse(client, params.config, params);
+    }
+    return readActiveCollectionsFromClickHouse(client, params.config, params);
+  });
+
+  return {
+    value: cached.value as NewCollectionRow[] | ActiveCollectionRow[],
+    cacheKey,
+    cacheStatus: cached.status,
+  };
+}
+
+function setMcpCacheHeaders(c: { header: (name: string, value: string) => void }, result: McpInsightResult): void {
+  c.header('X-Data-Source', 'clickhouse');
+  c.header('X-Cache', result.cacheStatus);
+  c.header('X-Cache-Key', result.cacheKey);
+  c.header('X-Cache-Ttl-Seconds', String(Math.floor(MCP_READ_CACHE_TTL_MS / 1000)));
+}
+
+async function handleMcpJsonRpc(params: {
+  payload: JsonRpcRequest;
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  mcpReadCache: Map<string, McpCacheEntry<unknown>>;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<Record<string, unknown> | null> {
+  const { payload } = params;
+  const id = payload.id ?? null;
+
+  if (!payload.id && payload.method?.startsWith('notifications/')) {
+    return null;
+  }
+
+  if (payload.method === 'initialize') {
+    return jsonRpcResult(id, {
+      protocolVersion: '2024-11-05',
+      capabilities: {
+        tools: {},
+      },
+      serverInfo: {
+        name: 'atpdashboard-analytics',
+        version: '0.1.0',
+      },
+    });
+  }
+
+  if (payload.method === 'tools/list') {
+    return jsonRpcResult(id, {
+      tools: [
+        {
+          name: 'get_new_collections',
+          description: '指定した直近日数で初めて観測された ATProto collection/NSID を返します。',
+          inputSchema: mcpCollectionToolInputSchema(),
+        },
+        {
+          name: 'get_active_collections',
+          description: '指定した直近日数で event_count が多い ATProto collection/NSID を返します。unique_did は重いため返しません。',
+          inputSchema: mcpCollectionToolInputSchema(),
+        },
+      ],
+    });
+  }
+
+  if (payload.method === 'tools/call') {
+    const tool = payload.params?.name;
+    if (tool !== 'get_new_collections' && tool !== 'get_active_collections') {
+      return jsonRpcError(id, -32602, 'Unknown tool');
+    }
+
+    const args = payload.params?.arguments ?? {};
+    const days = parseMcpDays(args.days as string | number | undefined);
+    const limit = parseMcpLimit(args.limit as string | number | undefined);
+    const result = await resolveMcpInsight({
+      config: params.config,
+      clickhouseClient: params.clickhouseClient,
+      mcpReadCache: params.mcpReadCache,
+      tool,
+      days,
+      limit,
+      getClickHouseClient: params.getClickHouseClient,
+    });
+
+    return jsonRpcResult(id, {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              cache: {
+                status: result.cacheStatus,
+                key: result.cacheKey,
+                ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+              },
+              data: result.value,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    });
+  }
+
+  return jsonRpcError(id, -32601, 'Method not found');
+}
+
+function mcpCollectionToolInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      days: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 14,
+        default: 7,
+        description: '直近何日分を見るか。1から14まで。',
+      },
+      limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 100,
+        default: 30,
+        description: '返すcollection数。1から100まで。',
+      },
+    },
+  };
+}
+
+function jsonRpcResult(id: JsonRpcRequest['id'], result: unknown): Record<string, unknown> {
+  return {
+    jsonrpc: '2.0',
+    id,
+    result,
+  };
+}
+
+function jsonRpcError(id: JsonRpcRequest['id'], code: number, message: string): Record<string, unknown> {
+  return {
+    jsonrpc: '2.0',
+    id,
+    error: {
+      code,
+      message,
+    },
+  };
 }
 
 async function resolveDailySummary(params: {

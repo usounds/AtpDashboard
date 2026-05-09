@@ -73,10 +73,10 @@ function buildActiveSummaryQuery(field: 'collection' | 'did', excludeLexiconStor
 WITH
   {limit:UInt32} AS limit_days,
   (
-    SELECT toDate(max(created_at))
+    SELECT max(created_at)
     FROM atp_dashboard.collection_events
     WHERE isNotNull(created_at)
-  ) AS latest_day
+  ) AS latest_at
 SELECT
   day,
   coalesce(count, 0) AS count
@@ -87,11 +87,12 @@ FROM
 LEFT JOIN
 (
   SELECT
-    toUInt16(dateDiff('day', toDate(created_at), latest_day) + 1) AS day,
+    toUInt16(intDiv(dateDiff('second', created_at, latest_at), 86400) + 1) AS day,
     uniqExact(${field}) AS count
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
-    AND toDate(created_at) >= latest_day - toIntervalDay(limit_days - 1)
+    AND created_at > latest_at - toIntervalDay(limit_days)
+    AND created_at <= latest_at
     ${excludeLexiconStore ? 'AND did != {excluded_did:String}' : ''}
   GROUP BY day
 ) summary USING day
@@ -104,10 +105,10 @@ function buildNewSummaryQuery(field: 'collection' | 'did', excludeLexiconStore: 
 WITH
   {limit:UInt32} AS limit_days,
   (
-    SELECT toDate(max(created_at))
+    SELECT max(created_at)
     FROM atp_dashboard.collection_events
     WHERE isNotNull(created_at)
-  ) AS latest_day
+  ) AS latest_at
 SELECT
   day,
   coalesce(count, 0) AS count
@@ -118,19 +119,20 @@ FROM
 LEFT JOIN
 (
   SELECT
-    toUInt16(dateDiff('day', first_day, latest_day) + 1) AS day,
+    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), 86400) + 1) AS day,
     count() AS count
   FROM
   (
     SELECT
       ${field},
-      min(toDate(created_at)) AS first_day
+      min(created_at) AS first_seen_at
     FROM atp_dashboard.collection_events
     WHERE isNotNull(created_at)
       ${excludeLexiconStore ? 'AND did != {excluded_did:String}' : ''}
     GROUP BY ${field}
   )
-  WHERE first_day >= latest_day - toIntervalDay(limit_days - 1)
+  WHERE first_seen_at > latest_at - toIntervalDay(limit_days)
+    AND first_seen_at <= latest_at
   GROUP BY day
 ) summary USING day
 ORDER BY day ASC

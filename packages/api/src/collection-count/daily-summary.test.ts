@@ -14,7 +14,9 @@ test('active collection summary excludes lexicon store and counts distinct colle
 
   assert.match(sql, /uniqExact\(collection\) AS count/);
   assert.match(sql, /toUInt16\(arrayJoin\(range\(1, limit_days \+ 1\)\)\) AS day/);
-  assert.match(sql, /toUInt16\(dateDiff\('day', toDate\(created_at\), latest_day\) \+ 1\) AS day/);
+  assert.match(sql, /SELECT max\(created_at\)/);
+  assert.match(sql, /toUInt16\(intDiv\(dateDiff\('second', created_at, latest_at\), 86400\) \+ 1\) AS day/);
+  assert.match(sql, /created_at > latest_at - toIntervalDay\(limit_days\)/);
   assert.match(sql, /did != \{excluded_did:String\}/);
   assert.match(sql, /ORDER BY day ASC/);
 });
@@ -29,7 +31,9 @@ test('active did summary counts distinct dids without lexicon exclusion', () => 
 test('new collection summary groups by first seen collection day', () => {
   const sql = buildDailySummaryQuery('new_collection');
 
-  assert.match(sql, /min\(toDate\(created_at\)\) AS first_day/);
+  assert.match(sql, /min\(created_at\) AS first_seen_at/);
+  assert.match(sql, /toUInt16\(intDiv\(dateDiff\('second', first_seen_at, latest_at\), 86400\) \+ 1\) AS day/);
+  assert.match(sql, /first_seen_at > latest_at - toIntervalDay\(limit_days\)/);
   assert.match(sql, /GROUP BY collection/);
   assert.match(sql, /count\(\) AS count/);
 });
