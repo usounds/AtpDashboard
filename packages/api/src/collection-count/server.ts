@@ -19,7 +19,7 @@ import {
 import {
   MCP_READ_CACHE_TTL_MS,
   buildMcpCacheKey,
-  parseMcpDays,
+  parseMcpDateRange,
   parseMcpLimit,
   readLatestCollectionRecordPointerFromClickHouse,
   readActiveCollectionsFromClickHouse,
@@ -29,6 +29,7 @@ import {
   type LatestCollectionRecordPointer,
   type McpCacheEntry,
   type McpCacheStatus,
+  type McpDateRange,
   type NewCollectionRow,
 } from './mcp-insights.ts';
 import {
@@ -61,14 +62,14 @@ type JsonRpcRequest = {
   };
 };
 
-type McpInsightTool = 'get_new_collections' | 'get_active_collections';
+type McpInsightTool = 'get_new_collections' | 'get_new_collection_groups' | 'get_active_collections';
 type McpTool = McpInsightTool | 'get_latest_record_for_collection';
 
 type McpInsightResult = {
   value: NewCollectionRow[] | ActiveCollectionRow[];
   cacheKey: string;
   cacheStatus: McpCacheStatus;
-  days: number;
+  dateRange: McpDateRange;
   limit?: number;
   tool: McpInsightTool;
 };
@@ -189,13 +190,17 @@ export function createCollectionCountApp(
 
   app.get(getPublicRoute(config, '/mcp/new_collections'), async (c) => {
     try {
-      const days = parseMcpDays(c.req.query('days'));
+      const dateRange = parseMcpDateRange({
+        days: c.req.query('days'),
+        startDate: c.req.query('start_date'),
+        endDate: c.req.query('end_date'),
+      });
       const result = await resolveMcpInsight({
         config,
         clickhouseClient,
         mcpReadCache,
         tool: 'get_new_collections',
-        days,
+        dateRange,
         getClickHouseClient: async () => {
           clickhouseClient ??= await createClickHouseClient(config);
           return clickhouseClient ?? null;
@@ -209,16 +214,42 @@ export function createCollectionCountApp(
     }
   });
 
+  app.get(getPublicRoute(config, '/mcp/new_collection_groups'), async (c) => {
+    try {
+      const dateRange = parseMcpDateRange({
+        days: c.req.query('days'),
+        startDate: c.req.query('start_date'),
+        endDate: c.req.query('end_date'),
+      });
+      const result = await resolveMcpInsight({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'get_new_collection_groups',
+        dateRange,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setMcpCacheHeaders(c, result);
+      return c.json(formatNewCollectionGroupsResult(result));
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP new_collection_groups failed', sanitizeError(error));
+      return c.json({ error: 'unavailable' }, 503);
+    }
+  });
+
   app.get(getPublicRoute(config, '/mcp/active_collections'), async (c) => {
     try {
-      const days = parseMcpDays(c.req.query('days'));
+      const dateRange = parseMcpDateRange({ days: c.req.query('days') });
       const limit = parseMcpLimit(c.req.query('limit'));
       const result = await resolveMcpInsight({
         config,
         clickhouseClient,
         mcpReadCache,
         tool: 'get_active_collections',
-        days,
+        dateRange,
         limit,
         getClickHouseClient: async () => {
           clickhouseClient ??= await createClickHouseClient(config);
@@ -296,7 +327,7 @@ async function resolveMcpInsight(params: {
   clickhouseClient: ClickHouseQueryClient | null | undefined;
   mcpReadCache: Map<string, McpCacheEntry<unknown>>;
   tool: McpInsightTool;
-  days: number;
+  dateRange: McpDateRange;
   limit?: number;
   getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
 }): Promise<McpInsightResult> {
@@ -305,13 +336,13 @@ async function resolveMcpInsight(params: {
     throw new Error('ClickHouse client is not configured');
   }
 
-  const cacheKey = buildMcpCacheKey(params.tool, { days: params.days, limit: params.limit });
+  const cacheKey = buildMcpCacheKey(params.tool, { ...params.dateRange, limit: params.limit });
   const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () => {
-    if (params.tool === 'get_new_collections') {
-      return readNewCollectionsFromClickHouse(client, params.config, { days: params.days });
+    if (params.tool === 'get_new_collections' || params.tool === 'get_new_collection_groups') {
+      return readNewCollectionsFromClickHouse(client, params.config, params.dateRange);
     }
     return readActiveCollectionsFromClickHouse(client, params.config, {
-      days: params.days,
+      days: params.dateRange.days,
       limit: params.limit ?? parseMcpLimit(undefined),
     });
   });
@@ -320,7 +351,7 @@ async function resolveMcpInsight(params: {
     value: cached.value as NewCollectionRow[] | ActiveCollectionRow[],
     cacheKey,
     cacheStatus: cached.status,
-    days: params.days,
+    dateRange: params.dateRange,
     limit: params.limit,
     tool: params.tool,
   };
@@ -367,7 +398,13 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_new_collections',
           description:
-            '指定した直近日数で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全NSID一覧は返さず、全groupごとの最初に見られたNSID、sample_nsids、最新sampleを返します。',
+            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全NSID一覧は返さず、全groupごとの最初に見られたNSID、sample_nsids、最新sampleを返します。',
+          inputSchema: mcpNewCollectionToolInputSchema(),
+        },
+        {
+          name: 'get_new_collection_groups',
+          description:
+            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。sample_nsids や record URL は返しません。',
           inputSchema: mcpNewCollectionToolInputSchema(),
         },
         {
@@ -387,7 +424,12 @@ async function handleMcpJsonRpc(params: {
 
   if (payload.method === 'tools/call') {
     const tool = payload.params?.name as McpTool | undefined;
-    if (tool !== 'get_new_collections' && tool !== 'get_active_collections' && tool !== 'get_latest_record_for_collection') {
+    if (
+      tool !== 'get_new_collections' &&
+      tool !== 'get_new_collection_groups' &&
+      tool !== 'get_active_collections' &&
+      tool !== 'get_latest_record_for_collection'
+    ) {
       return jsonRpcError(id, -32602, 'Unknown tool');
     }
 
@@ -416,14 +458,23 @@ async function handleMcpJsonRpc(params: {
       });
     }
 
-    const days = parseMcpDays(args.days as string | number | undefined);
+    let dateRange: McpDateRange;
+    try {
+      dateRange = parseMcpDateRange({
+        days: args.days as string | number | undefined,
+        startDate: (args.start_date ?? args.startDate) as string | undefined,
+        endDate: (args.end_date ?? args.endDate) as string | undefined,
+      });
+    } catch (error) {
+      return jsonRpcError(id, -32602, error instanceof Error ? error.message : 'Invalid params');
+    }
     const limit = tool === 'get_active_collections' ? parseMcpLimit(args.limit as string | number | undefined) : undefined;
     const result = await resolveMcpInsight({
       config: params.config,
       clickhouseClient: params.clickhouseClient,
       mcpReadCache: params.mcpReadCache,
       tool,
-      days,
+      dateRange,
       limit,
       getClickHouseClient: params.getClickHouseClient,
     });
@@ -578,10 +629,50 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
   if (result.tool === 'get_new_collections') {
     return formatNewCollectionsToolResult(result, cache);
   }
+  if (result.tool === 'get_new_collection_groups') {
+    return {
+      tool: 'get_new_collection_groups',
+      intent: 'newly_observed_namespace_groups_compact',
+      result: formatNewCollectionGroupsResult(result),
+      cache,
+    };
+  }
 
   return {
     cache,
     data: result.value,
+  };
+}
+
+function formatNewCollectionGroupsResult(result: McpInsightResult): Record<string, unknown> {
+  const rows = result.value as NewCollectionRow[];
+  const groups = summarizeNamespaceGroups(rows).map(
+    ({ namespace_prefix, group_first_seen_at, first_seen_nsid_in_group, collection_count, event_count_since_group_first_seen }) => ({
+      namespace_prefix,
+      collection_count,
+      group_first_seen_at,
+      first_seen_nsid_in_group,
+      event_count_since_group_first_seen,
+    }),
+  );
+
+  return {
+    ...formatDateRangeParameters(result.dateRange),
+    returned_nsid_count: rows.length,
+    returned_group_count: groups.length,
+    namespace_groups: groups,
+  };
+}
+
+function formatDateRangeParameters(dateRange: McpDateRange): Record<string, unknown> {
+  if (dateRange.startDate != null && dateRange.endDate != null) {
+    return {
+      start_date: dateRange.startDate,
+      end_date: dateRange.endDate,
+    };
+  }
+  return {
+    lookback_days: dateRange.days,
   };
 }
 
@@ -591,9 +682,7 @@ function formatNewCollectionsToolResult(result: McpInsightResult, cache: Record<
   return {
     tool: 'get_new_collections',
     intent: 'newly_observed_namespace_groups',
-    parameters: {
-      lookback_days: result.days,
-    },
+    parameters: formatDateRangeParameters(result.dateRange),
     result: {
       primary_view: 'namespace_groups',
       primary_order: ['collection_count desc', 'group_first_seen_at desc', 'event_count_since_group_first_seen desc', 'namespace_prefix asc'],
@@ -699,7 +788,16 @@ function mcpNewCollectionToolInputSchema(): Record<string, unknown> {
         minimum: 1,
         maximum: 14,
         default: 7,
-        description: '直近何日分を見るか。1から14まで。',
+        description: '直近何日分を見るか。1から14まで。start_date/end_date を指定する場合は省略できます。',
+      },
+      start_date: {
+        type: 'string',
+        description:
+          '集計開始日。YYYY-MM-DD、YYYY/MM/DD、YYYY年M月D日。例: 「2026年5月1日から10日まで」は start_date=2026-05-01, end_date=2026-05-10。',
+      },
+      end_date: {
+        type: 'string',
+        description: '集計終了日。この日全体を含みます。YYYY-MM-DD、YYYY/MM/DD、YYYY年M月D日。',
       },
     },
   };

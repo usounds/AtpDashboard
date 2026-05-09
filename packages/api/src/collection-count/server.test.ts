@@ -416,6 +416,116 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
   ]);
 });
 
+test('serves compact new collection groups HTTP endpoint', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'cash.attoshi.utxo',
+                  first_seen_at: '2026-05-09T11:45:23.006000Z',
+                  event_count: 83,
+                  latest_record_created_at: '2026-05-09T11:49:23.006000Z',
+                  latest_record_did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
+                  latest_record_rkey: '3lv4ouczo2b2a',
+                },
+                {
+                  collection: 'cash.attoshi.tx',
+                  first_seen_at: '2026-05-09T11:45:22.006000Z',
+                  event_count: 42,
+                  latest_record_created_at: '2026-05-09T11:48:22.006000Z',
+                  latest_record_did: 'did:plc:tx',
+                  latest_record_rkey: 'tx-rkey',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/mcp/new_collection_groups?days=3');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(body, {
+    lookback_days: 3,
+    returned_nsid_count: 2,
+    returned_group_count: 1,
+    namespace_groups: [
+      {
+        namespace_prefix: 'cash.attoshi.*',
+        collection_count: 2,
+        group_first_seen_at: '2026-05-09T11:45:22.006000Z',
+        first_seen_nsid_in_group: 'cash.attoshi.tx',
+        event_count_since_group_first_seen: 125,
+      },
+    ],
+  });
+});
+
+test('serves compact new collection groups HTTP endpoint for explicit date range', async () => {
+  let capturedQueryParams: Record<string, unknown> = {};
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(queryParams) {
+          capturedQueryParams = queryParams.query_params ?? {};
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.new',
+                  first_seen_at: '2026-05-10T03:00:00.000000Z',
+                  event_count: 1,
+                  latest_record_created_at: '2026-05-10T03:00:00.000000Z',
+                  latest_record_did: 'did:plc:example',
+                  latest_record_rkey: 'r1',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/mcp/new_collection_groups?start_date=2026-05-01&end_date=2026-05-10');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(capturedQueryParams.has_explicit_date_range, 1);
+  assert.equal(capturedQueryParams.start_at, '2026-05-01 00:00:00.000000');
+  assert.equal(capturedQueryParams.end_exclusive_at, '2026-05-11 00:00:00.000000');
+  assert.deepEqual(body, {
+    start_date: '2026-05-01',
+    end_date: '2026-05-10',
+    returned_nsid_count: 1,
+    returned_group_count: 1,
+    namespace_groups: [
+      {
+        namespace_prefix: 'app.example.*',
+        collection_count: 1,
+        group_first_seen_at: '2026-05-10T03:00:00.000000Z',
+        first_seen_nsid_in_group: 'app.example.new',
+        event_count_since_group_first_seen: 1,
+      },
+    ],
+  });
+});
+
 test('serves MCP tools/list and tools/call', async () => {
   const app = createCollectionCountApp(
     {
@@ -468,10 +578,11 @@ test('serves MCP tools/list and tools/call', async () => {
   assert.equal(listResponse.status, 200);
   assert.deepEqual(
     listBody.result.tools.map((tool: { name: string }) => tool.name),
-    ['get_new_collections', 'get_active_collections', 'get_latest_record_for_collection'],
+    ['get_new_collections', 'get_new_collection_groups', 'get_active_collections', 'get_latest_record_for_collection'],
   );
   assert.equal(Object.hasOwn(listBody.result.tools[0].inputSchema.properties, 'limit'), false);
-  assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'limit'), true);
+  assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'limit'), false);
+  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'limit'), true);
   assert.equal(callResponse.status, 200);
   assert.equal(Object.hasOwn(parsedToolText, 'summary'), false);
   assert.equal(Object.hasOwn(parsedToolText, 'display_hint'), false);
@@ -667,6 +778,91 @@ test('serves all MCP get_new_collections namespace groups', async () => {
     new Set(parsedToolText.result.namespace_groups.map((group: { namespace_prefix: string }) => group.namespace_prefix)),
     new Set(rows.map((row) => row.collection.replace(/\.record$/, '.*'))),
   );
+});
+
+test('serves compact MCP get_new_collection_groups without samples or record pointers', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'cash.attoshi.utxo',
+                  first_seen_at: '2026-05-09T11:45:23.006000Z',
+                  event_count: 83,
+                  latest_record_created_at: '2026-05-09T11:49:23.006000Z',
+                  latest_record_did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
+                  latest_record_rkey: '3lv4ouczo2b2a',
+                },
+                {
+                  collection: 'cash.attoshi.tx',
+                  first_seen_at: '2026-05-09T11:45:22.006000Z',
+                  event_count: 42,
+                  latest_record_created_at: '2026-05-09T11:48:22.006000Z',
+                  latest_record_did: 'did:plc:tx',
+                  latest_record_rkey: 'tx-rkey',
+                },
+                {
+                  collection: 'app.example.new',
+                  first_seen_at: '2026-05-09T11:45:24.006000Z',
+                  event_count: 1,
+                  latest_record_created_at: '2026-05-09T11:46:24.006000Z',
+                  latest_record_did: 'did:plc:new',
+                  latest_record_rkey: 'new-rkey',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'get_new_collection_groups',
+        arguments: { days: 3 },
+      },
+    }),
+  });
+  const body = await response.json();
+  const parsedToolText = JSON.parse(body.result.content[0].text);
+
+  assert.equal(response.status, 200);
+  assert.equal(parsedToolText.tool, 'get_new_collection_groups');
+  assert.equal(parsedToolText.intent, 'newly_observed_namespace_groups_compact');
+  assert.equal(parsedToolText.result.returned_nsid_count, 3);
+  assert.equal(parsedToolText.result.returned_group_count, 2);
+  assert.deepEqual(parsedToolText.result.namespace_groups, [
+    {
+      namespace_prefix: 'cash.attoshi.*',
+      collection_count: 2,
+      group_first_seen_at: '2026-05-09T11:45:22.006000Z',
+      first_seen_nsid_in_group: 'cash.attoshi.tx',
+      event_count_since_group_first_seen: 125,
+    },
+    {
+      namespace_prefix: 'app.example.*',
+      collection_count: 1,
+      group_first_seen_at: '2026-05-09T11:45:24.006000Z',
+      first_seen_nsid_in_group: 'app.example.new',
+      event_count_since_group_first_seen: 1,
+    },
+  ]);
+  assert.equal(Object.hasOwn(parsedToolText.result.namespace_groups[0], 'sample_nsids'), false);
+  assert.equal(Object.hasOwn(parsedToolText.result.namespace_groups[0], 'latest_record'), false);
 });
 
 test('serves MCP get_latest_record_for_collection with record JSON', async () => {

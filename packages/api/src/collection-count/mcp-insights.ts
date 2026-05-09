@@ -12,6 +12,14 @@ const DEFAULT_GET_RECORD_SERVICE = 'https://slingshot.microcosm.blue';
 
 export type McpCacheStatus = 'HIT' | 'MISS';
 
+export type McpDateRange = {
+  days: number;
+  startDate?: string;
+  endDate?: string;
+  startDateTime?: string;
+  endExclusiveDateTime?: string;
+};
+
 export type McpCacheEntry<T> = {
   expiresAt: number;
   value?: T;
@@ -74,11 +82,42 @@ export function parseMcpLimit(value: string | number | undefined): number {
   return parseBoundedInteger(value, DEFAULT_LIMIT, 1, MAX_LIMIT);
 }
 
-export function buildMcpCacheKey(tool: string, params: { days: number; limit?: number }): string {
-  if (params.limit == null) {
-    return `${tool}:days=${params.days}`;
+export function parseMcpDateRange(params: {
+  days?: string | number;
+  startDate?: string;
+  endDate?: string;
+}): McpDateRange {
+  const hasStartDate = params.startDate != null && params.startDate.trim() !== '';
+  const hasEndDate = params.endDate != null && params.endDate.trim() !== '';
+  if (!hasStartDate && !hasEndDate) {
+    return { days: parseMcpDays(params.days) };
   }
-  return `${tool}:days=${params.days}:limit=${params.limit}`;
+  if (!hasStartDate || !hasEndDate) {
+    throw new Error('start_date and end_date must be provided together');
+  }
+
+  const startDate = parseMcpDateOnly(params.startDate);
+  const endDate = parseMcpDateOnly(params.endDate);
+  if (startDate > endDate) {
+    throw new Error('start_date must be before or equal to end_date');
+  }
+
+  return {
+    days: parseMcpDays(params.days),
+    startDate,
+    endDate,
+    startDateTime: `${startDate} 00:00:00.000000`,
+    endExclusiveDateTime: `${addUtcDays(endDate, 1)} 00:00:00.000000`,
+  };
+}
+
+export function buildMcpCacheKey(tool: string, params: McpDateRange & { limit?: number }): string {
+  const rangeKey =
+    params.startDate != null && params.endDate != null ? `start=${params.startDate}:end=${params.endDate}` : `days=${params.days}`;
+  if (params.limit == null) {
+    return `${tool}:${rangeKey}`;
+  }
+  return `${tool}:${rangeKey}:limit=${params.limit}`;
 }
 
 export async function readThroughMcpCache<T>(
@@ -110,18 +149,30 @@ export async function readThroughMcpCache<T>(
 export async function readNewCollectionsFromClickHouse(
   client: ClickHouseQueryClient,
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
-  params: { days: number },
+  params: McpDateRange,
 ): Promise<NewCollectionRow[]> {
+  const hasExplicitDateRange = params.startDateTime != null && params.endExclusiveDateTime != null;
   const result = await withTimeout(
     client.query({
       query: `
 WITH
   {days:UInt16} AS lookback_days,
+  {has_explicit_date_range:Bool} AS has_explicit_date_range,
   (
     SELECT max(created_at)
     FROM atp_dashboard.collection_events
     WHERE isNotNull(created_at)
-  ) AS latest_at
+  ) AS latest_at,
+  if(
+    has_explicit_date_range,
+    parseDateTime64BestEffort({start_at:String}, 6, 'UTC'),
+    latest_at - toIntervalDay(lookback_days)
+  ) AS range_start_at,
+  if(
+    has_explicit_date_range,
+    parseDateTime64BestEffort({end_exclusive_at:String}, 6, 'UTC'),
+    latest_at
+  ) AS range_end_at
 SELECT
   collection,
   formatDateTime(first_seen_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
@@ -134,7 +185,7 @@ FROM
   SELECT
     collection,
     min(created_at) AS first_seen_created_at,
-    countIf(created_at > latest_at - toIntervalDay(lookback_days) AND created_at <= latest_at) AS event_count,
+    countIf(created_at >= range_start_at AND created_at < range_end_at) AS event_count,
     max(created_at) AS latest_record_created_at,
     argMax(did, tuple(created_at, event_key)) AS latest_record_did,
     argMax(rkey, tuple(created_at, event_key)) AS latest_record_rkey
@@ -143,12 +194,15 @@ FROM
     AND did != {excluded_did:String}
   GROUP BY collection
 )
-WHERE first_seen_created_at > latest_at - toIntervalDay(lookback_days)
-  AND first_seen_created_at <= latest_at
+WHERE first_seen_created_at >= range_start_at
+  AND first_seen_created_at < range_end_at
 ORDER BY first_seen_created_at DESC, event_count DESC, collection ASC
 `,
       query_params: {
         days: params.days,
+        has_explicit_date_range: hasExplicitDateRange ? 1 : 0,
+        start_at: params.startDateTime ?? '1970-01-01 00:00:00.000000',
+        end_exclusive_at: params.endExclusiveDateTime ?? '1970-01-01 00:00:00.000000',
         excluded_did: LEXICON_STORE_DID,
       },
       format: 'JSONEachRow',
@@ -264,6 +318,36 @@ function parseBoundedInteger(value: string | number | undefined, fallback: numbe
     throw new Error(`Value must be an integer between ${min} and ${max}`);
   }
   return parsed;
+}
+
+function parseMcpDateOnly(value: string | undefined): string {
+  const raw = value?.trim() ?? '';
+  const match = raw.match(/^(\d{4})(?:-|\/|年)(\d{1,2})(?:-|\/|月)(\d{1,2})日?$/);
+  if (!match) {
+    throw new Error('date values must be YYYY-MM-DD, YYYY/MM/DD, or YYYY年M月D日');
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw new Error('date values must be valid calendar dates');
+  }
+  return formatUtcDate(date);
+}
+
+function addUtcDays(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return formatUtcDate(date);
+}
+
+function formatUtcDate(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function buildAtUri(did: string, collection: string, rkey: string): string {
