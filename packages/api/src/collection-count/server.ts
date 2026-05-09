@@ -486,7 +486,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_new_collection_groups',
           description:
-            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。「YYYY年M月D日に生まれたNSID」「生まれたLexicon」「new NSID/new Lexicon」のような質問は、この tool を優先し、明示的に個別NSID一覧を求められない限り namespace group として解釈して回答してください。sample_nsids や record URL は返しません。',
+            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。first_seen_nsid_in_group は、その namespace group 内で期間内に最初に観測された代表の実NSIDであり、グループ内NSIDの完全一覧ではありません。「YYYY年M月D日に生まれたNSID」「生まれたLexicon」「new NSID/new Lexicon」のような質問は、この tool を優先し、明示的に個別NSID一覧を求められない限り namespace group として解釈して回答してください。sample_nsids や record URL は返しません。',
           inputSchema: mcpNewCollectionToolInputSchema(),
         },
         {
@@ -895,6 +895,18 @@ function formatNewCollectionGroupsResult(result: McpInsightResult): Record<strin
     ...formatDateRangeParameters(result.dateRange ?? { days: 0 }),
     returned_nsid_count: rows.length,
     returned_group_count: groups.length,
+    field_descriptions: {
+      namespace_prefix: 'Namespace group prefix for newly observed ATProto collection/NSID rows in this result.',
+      collection_count: 'Number of newly observed NSIDs in this namespace group for the requested period.',
+      group_first_seen_at:
+        'Earliest first_seen_at timestamp among the newly observed NSIDs in this namespace group for the requested period.',
+      first_seen_nsid_in_group:
+        'Representative literal NSID first observed earliest within this namespace group for the requested period. This is not the complete list of NSIDs in the group.',
+      event_count_since_group_first_seen:
+        'Sum of observed events for the newly observed NSIDs in this namespace group since each NSID was first seen.',
+    },
+    response_guidance:
+      'When presenting namespace_groups, describe first_seen_nsid_in_group as the representative NSID first observed within that group during the requested period, not as the full NSID list. Use collection_count to state how many NSIDs the group contains.',
     namespace_groups: groups,
   };
 }

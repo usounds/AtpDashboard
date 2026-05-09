@@ -37,6 +37,20 @@ const postgrestRows = [
   },
 ];
 
+const newCollectionGroupsFieldDescriptions = {
+  namespace_prefix: 'Namespace group prefix for newly observed ATProto collection/NSID rows in this result.',
+  collection_count: 'Number of newly observed NSIDs in this namespace group for the requested period.',
+  group_first_seen_at:
+    'Earliest first_seen_at timestamp among the newly observed NSIDs in this namespace group for the requested period.',
+  first_seen_nsid_in_group:
+    'Representative literal NSID first observed earliest within this namespace group for the requested period. This is not the complete list of NSIDs in the group.',
+  event_count_since_group_first_seen:
+    'Sum of observed events for the newly observed NSIDs in this namespace group since each NSID was first seen.',
+};
+
+const newCollectionGroupsResponseGuidance =
+  'When presenting namespace_groups, describe first_seen_nsid_in_group as the representative NSID first observed within that group during the requested period, not as the full NSID list. Use collection_count to state how many NSIDs the group contains.';
+
 test('serves healthz outside analytics base path', async () => {
   const app = createCollectionCountApp(baseConfig);
 
@@ -407,6 +421,8 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
     lookback_days: 7,
     returned_nsid_count: 1,
     returned_group_count: 1,
+    field_descriptions: newCollectionGroupsFieldDescriptions,
+    response_guidance: newCollectionGroupsResponseGuidance,
     namespace_groups: [
       {
         namespace_prefix: 'app.example.*',
@@ -463,6 +479,8 @@ test('serves compact new collection groups HTTP endpoint', async () => {
     lookback_days: 3,
     returned_nsid_count: 2,
     returned_group_count: 1,
+    field_descriptions: newCollectionGroupsFieldDescriptions,
+    response_guidance: newCollectionGroupsResponseGuidance,
     namespace_groups: [
       {
         namespace_prefix: 'cash.attoshi.*',
@@ -527,6 +545,8 @@ test('serves compact new collection groups HTTP endpoint for explicit date range
     end_date: '2026-05-10',
     returned_nsid_count: 1,
     returned_group_count: 1,
+    field_descriptions: newCollectionGroupsFieldDescriptions,
+    response_guidance: newCollectionGroupsResponseGuidance,
     namespace_groups: [
       {
         namespace_prefix: 'app.example.*',
@@ -969,6 +989,11 @@ test('serves compact MCP get_new_collection_groups without samples or record poi
   assert.equal(parsedToolText.intent, 'newly_observed_namespace_groups_compact');
   assert.equal(parsedToolText.result.returned_nsid_count, 3);
   assert.equal(parsedToolText.result.returned_group_count, 2);
+  assert.match(
+    parsedToolText.result.field_descriptions.first_seen_nsid_in_group,
+    /Representative literal NSID first observed earliest within this namespace group/,
+  );
+  assert.match(parsedToolText.result.response_guidance, /not as the full NSID list/);
   assert.deepEqual(parsedToolText.result.namespace_groups, [
     {
       namespace_prefix: 'cash.attoshi.*',
