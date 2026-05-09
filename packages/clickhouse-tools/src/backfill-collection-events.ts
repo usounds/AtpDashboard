@@ -32,6 +32,7 @@ export type BackfillCliOptions = {
   batchSize: number;
   maxRuntimeMinutes: number | null;
   maxRows: number | null;
+  rescanDays: number | null;
   confirmProduction: boolean;
   checkpointName: string;
   lockName: string;
@@ -69,6 +70,7 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
     batchSize: 50_000,
     maxRuntimeMinutes: null,
     maxRows: null,
+    rescanDays: null,
     confirmProduction: false,
     checkpointName: DEFAULT_CHECKPOINT_NAME,
     lockName: DEFAULT_CHECKPOINT_NAME,
@@ -91,6 +93,8 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
       options.maxRuntimeMinutes = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--max-rows') {
       options.maxRows = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--rescan-days') {
+      options.rescanDays = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--resume-from') {
       options.resumeFrom = parseWatermark(readNext(argv, ++index, arg));
     } else if (arg === '--checkpoint-name') {
@@ -108,6 +112,9 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
   }
   if (options.limit == null && options.maxRows == null && options.maxRuntimeMinutes == null) {
     throw new Error('Refusing unbounded run. Provide --limit, --max-rows, or --max-runtime-minutes.');
+  }
+  if (options.rescanDays != null && options.limit == null && options.maxRows == null) {
+    throw new Error('Refusing unbounded rescan. Provide --limit or --max-rows with --rescan-days.');
   }
   return options;
 }
@@ -224,6 +231,23 @@ LIMIT $5`;
   };
 }
 
+export function buildRecentRescanQuery(rescanDays: number, limit: number): { sql: string; params: unknown[] } {
+  return {
+    sql: `
+SELECT
+  c.did,
+  c.collection,
+  c.rkey,
+  CASE WHEN c."createdAt" IS NULL THEN NULL ELSE to_char(c."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "createdAt"
+FROM public.collection c
+WHERE c."createdAt" IS NOT NULL
+  AND c."createdAt" >= now() - ($1::int * interval '1 day')
+ORDER BY c."createdAt" ASC, c.did ASC, c.collection ASC, c.rkey ASC
+LIMIT $2`,
+    params: [rescanDays, limit],
+  };
+}
+
 export async function runBackfill(
   options: BackfillCliOptions,
   clients: { pg: PgClientLike; clickhouse: ClickHouseClientLike },
@@ -239,6 +263,30 @@ export async function runBackfill(
   }
 
   try {
+    if (options.rescanDays != null) {
+      const effectiveLimit = options.maxRows ?? options.limit ?? options.batchSize;
+      const { sql, params } = buildRecentRescanQuery(options.rescanDays, effectiveLimit);
+      const result = await clients.pg.query<CollectionSourceRow>(sql, params);
+      rowsRead += result.rows.length;
+
+      if (!options.dryRun && result.rows.length > 0) {
+        const eventRows = buildCollectionEventRows(result.rows);
+        await clients.clickhouse.insert({
+          table: 'atp_dashboard.collection_events',
+          values: eventRows,
+          format: 'JSONEachRow',
+        });
+        rowsInserted += eventRows.length;
+      }
+
+      return {
+        rowsRead,
+        rowsInserted,
+        finalWatermark: watermark,
+        dryRun: options.dryRun,
+      };
+    }
+
     while (true) {
       if (options.maxRuntimeMinutes != null && Date.now() - startedAt >= options.maxRuntimeMinutes * 60_000) {
         break;

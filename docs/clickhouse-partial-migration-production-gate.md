@@ -145,10 +145,11 @@ curl -i https://collectiondata.usounds.work/api/analytics/collection_count_view
 
 本番既定化判定では、遅延到着データの扱いを明示する。
 
-現時点の同期workerはcheckpoint以降を読む上限付きimportであり、`--rescan-days 7` は未実装である。そのため本番既定化へ進むには、次のどちらかが必要である。
+同期workerはcheckpoint以降を読む上限付きimportに加えて、直近窓を `createdAt` 基準で再投入する `--rescan-days` を持つ。checkpoint順で拾えない新着行を吸収するため、本番既定化へ進むには次を満たすこと。
 
-1. `--rescan-days 7` 相当を実装し、7日窓の重複再投入が `event_key` により二重計上されないことをTask 11で検証する。
-2. 24時間観測中はcheckpoint同期に加えて、手動reconciliationでPostgRESTとの差分0を証明する。
+1. checkpoint同期に加えて `--rescan-days 1` 以上の直近窓再走査を定期実行する。
+2. 本番既定化前の24時間観測では、`--rescan-days 7` 相当の再走査または手動reconciliationでPostgRESTとの差分0を証明する。
+3. 再走査の重複投入が `event_key` により二重計上されないことをテストと比較レポートで確認する。
 
 この条件を満たせない場合、MVP検証は可能でも本番既定化は不可とする。
 

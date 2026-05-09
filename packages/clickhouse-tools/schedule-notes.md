@@ -72,12 +72,7 @@ CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
 
 ### 1. 重複許容の差分同期
 
-現行workerは checkpoint 以降を読む、上限付きのバックフィルである。本番既定化判定では、遅延到着を吸収するための追加検証として、7日再走査相当の運用を要求する。
-
-現時点のCLIには `--rescan-days` は未実装であるため、本番既定化判定では次のどちらかを満たすこと。
-
-- `--rescan-days 7` 相当の再走査実装が追加され、Task 11で検証済みである。
-- 24時間観測中は checkpoint同期に加え、手動の限定再バックフィルまたは全量突合を別手順で実施し、比較差分が0である。
+checkpoint同期だけでは、checkpointより前に並ぶDID/collection/rkeyの新着行を次回実行で拾えないため、直近窓の再走査を併用する。再走査は `event_key` により重複投入しても集計で二重計上されない。
 
 checkpoint同期の推奨実行例:
 
@@ -88,6 +83,20 @@ POSTGRES_URL=postgres://sync_user:REDACTED@127.0.0.1:5432/atpdashboard \
   pnpm backfill:collection-events -- \
     --confirm-production \
     --max-runtime-minutes 10 \
+    --max-rows 500000 \
+    --batch-size 50000 \
+    --lock-ttl-seconds 900
+```
+
+直近窓の再走査推奨実行例:
+
+```bash
+POSTGRES_URL=postgres://sync_user:REDACTED@127.0.0.1:5432/atpdashboard \
+  CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
+  CLICKHOUSE_DATABASE=atp_dashboard \
+  pnpm backfill:collection-events -- \
+    --confirm-production \
+    --rescan-days 1 \
     --max-rows 500000 \
     --batch-size 50000 \
     --lock-ttl-seconds 900
@@ -246,6 +255,7 @@ cronで運用する場合も、最初はコメントアウトした状態でレ�
 
 ```cron
 # */10 * * * * cd /srv/AtpDashboard && set -a && . /etc/atpdashboard/clickhouse.env && set +a && pnpm backfill:collection-events -- --confirm-production --max-runtime-minutes 10 --max-rows 500000 --batch-size 50000 --lock-ttl-seconds 900
+# */10 * * * * cd /srv/AtpDashboard && set -a && . /etc/atpdashboard/clickhouse.env && set +a && pnpm backfill:collection-events -- --confirm-production --rescan-days 1 --max-rows 500000 --batch-size 50000 --lock-ttl-seconds 900
 # */15 * * * * cd /srv/AtpDashboard && set -a && . /etc/atpdashboard/clickhouse.env && set +a && pnpm refresh:collection-count -- --confirm-production --stale-running-minutes 60 --recent-hours 72
 # */30 * * * * cd /srv/AtpDashboard && pnpm compare:collection-count -- --clickhouse-only --postgres-url https://collectiondata.usounds.work/collection_count_view --clickhouse-url https://collectiondata.usounds.work/api/analytics/collection_count_view --json-out reports/collection-count-compare-latest.json --markdown-out reports/collection-count-compare-latest.md
 ```

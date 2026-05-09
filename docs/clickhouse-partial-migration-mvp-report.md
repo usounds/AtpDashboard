@@ -41,7 +41,7 @@ MVPに含めていないもの:
 
 - 本番既定経路への切替
 - 24時間本番観測
-- `--rescan-days 7` 相当の遅延到着再走査
+- `--rescan-days 7` 相当を含む本番24時間観測
 - MCP endpoint実装
 - 他PostgREST viewの移行
 - 日次bucketや週次推移read model
@@ -215,7 +215,7 @@ Production Default:
 | ClickHouse serving ratio | 未実施 |
 | PostgREST read load削減見込み | 未実測 |
 | 追加月額コスト | 未実測 |
-| `--rescan-days 7` 相当 | 未実装 |
+| `--rescan-days 7` 相当 | CLI実装済み、Production Default前の24時間観測は未実施 |
 
 ## 撤退条件
 

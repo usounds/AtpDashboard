@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildBatchQuery,
   buildCollectionEventRows,
+  buildRecentRescanQuery,
   getLastWatermark,
   loadBackfillConfig,
   parseBackfillCliOptions,
@@ -16,6 +17,8 @@ test('requires dry-run or confirm-production', () => {
   assert.throws(() => parseBackfillCliOptions(['--dry-run']), /Refusing unbounded run/);
   assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '1']).dryRun, true);
   assert.equal(parseBackfillCliOptions(['--', '--dry-run', '--limit', '1']).limit, 1);
+  assert.throws(() => parseBackfillCliOptions(['--dry-run', '--max-runtime-minutes', '1', '--rescan-days', '1']), /unbounded rescan/);
+  assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--rescan-days', '1']).rescanDays, 1);
 });
 
 test('dry-run config does not require ClickHouse URL', () => {
@@ -101,6 +104,77 @@ test('last watermark is taken from final row', () => {
   });
 });
 
+test('recent rescan query reads by createdAt window without checkpoint tuple', () => {
+  const { sql, params } = buildRecentRescanQuery(1, 1000);
+
+  assert.match(sql, /c\."createdAt" >= now\(\) - \(\$1::int \* interval '1 day'\)/);
+  assert.match(sql, /ORDER BY c\."createdAt" ASC, c\.did ASC, c\.collection ASC, c\.rkey ASC/);
+  assert.doesNotMatch(sql, /clickhouse_sync_checkpoints/);
+  assert.deepEqual(params, [1, 1000]);
+});
+
+test('rescan mode inserts recent rows without moving checkpoint', async () => {
+  const operations: string[] = [];
+  const pg = {
+    async connect() {},
+    async end() {},
+    async query<T>(sql: string): Promise<{ rows: T[] }> {
+      if (sql.includes('clickhouse_sync_checkpoints') && sql.includes('SELECT')) {
+        operations.push('read-checkpoint');
+        return {
+          rows: [
+            {
+              watermark_created_at: '2026-05-09T00:00:00.000001Z',
+              watermark_created_at_key: '2026-05-09T00:00:00.000001Z',
+              watermark_did: 'did:plc:checkpoint',
+              watermark_collection: 'app.checkpoint',
+              watermark_rkey: 'r0',
+            },
+          ] as T[],
+        };
+      }
+      if (sql.includes('FROM public.collection')) {
+        operations.push('read-recent-source');
+        return {
+          rows: [
+            { did: 'did:plc:recent', collection: 'app.recent', rkey: 'r1', createdAt: '2026-05-09T16:15:00.000001Z' },
+          ] as T[],
+        };
+      }
+      if (sql.includes('public.clickhouse_sync_checkpoints') && sql.includes('ON CONFLICT (name) DO UPDATE')) {
+        operations.push('write-checkpoint');
+      }
+      return { rows: [{ ok: true }] as T[] };
+    },
+  };
+  const clickhouse = {
+    async insert() {
+      operations.push('insert-clickhouse');
+    },
+  };
+
+  const result = await runBackfill(
+    {
+      dryRun: false,
+      limit: 1000,
+      resumeFrom: null,
+      batchSize: 1000,
+      maxRuntimeMinutes: null,
+      maxRows: null,
+      rescanDays: 1,
+      confirmProduction: true,
+      checkpointName: 'test',
+      lockName: 'test',
+      lockTtlSeconds: 60,
+    },
+    { pg, clickhouse },
+  );
+
+  assert.equal(result.rowsRead, 1);
+  assert.equal(result.rowsInserted, 1);
+  assert.deepEqual(operations, ['read-checkpoint', 'read-recent-source', 'insert-clickhouse']);
+});
+
 test('runBackfill updates checkpoint only after ClickHouse insert succeeds', async () => {
   const queries: string[] = [];
   const operations: string[] = [];
@@ -142,6 +216,7 @@ test('runBackfill updates checkpoint only after ClickHouse insert succeeds', asy
     batchSize: 2,
     maxRuntimeMinutes: null,
     maxRows: null,
+    rescanDays: null,
     confirmProduction: true,
     checkpointName: 'test',
     lockName: 'test',
@@ -187,6 +262,7 @@ test('dry-run reads rows but does not insert or checkpoint', async () => {
       batchSize: 1,
       maxRuntimeMinutes: null,
       maxRows: null,
+      rescanDays: null,
       confirmProduction: false,
       checkpointName: 'test',
       lockName: 'test',
