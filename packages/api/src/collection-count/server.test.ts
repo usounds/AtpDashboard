@@ -395,25 +395,28 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
     },
   );
 
-  const first = await app.request('/api/analytics/mcp/new_collections?days=7');
-  const second = await app.request('/api/analytics/mcp/new_collections?days=7');
+  const first = await app.request('/api/analytics/mcp/new_collection_groups?days=7');
+  const second = await app.request('/api/analytics/mcp/new_collection_groups?days=7');
   const body = await second.json();
 
   assert.equal(first.status, 200);
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
-  assert.deepEqual(body, [
-    {
-      collection: 'app.example.new',
-      first_seen_at: '2026-05-09T00:00:00.000000Z',
-      event_count: 3,
-      latest_record_created_at: '2026-05-09T00:30:00.000000Z',
-      latest_record_at_uri: 'at://did:plc:example/app.example.new/r1',
-      latest_record_get_record_url:
-        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.new&rkey=r1',
-    },
-  ]);
+  assert.deepEqual(body, {
+    lookback_days: 7,
+    returned_nsid_count: 1,
+    returned_group_count: 1,
+    namespace_groups: [
+      {
+        namespace_prefix: 'app.example.*',
+        collection_count: 1,
+        group_first_seen_at: '2026-05-09T00:00:00.000000Z',
+        first_seen_nsid_in_group: 'app.example.new',
+        event_count_since_group_first_seen: 3,
+      },
+    ],
+  });
 });
 
 test('serves compact new collection groups HTTP endpoint', async () => {
@@ -470,6 +473,16 @@ test('serves compact new collection groups HTTP endpoint', async () => {
       },
     ],
   });
+});
+
+test('does not serve removed new_collections HTTP endpoint', async () => {
+  const app = createCollectionCountApp(baseConfig);
+
+  const response = await app.request('/api/analytics/mcp/new_collections?days=7');
+  const body = await response.json();
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(body, { error: 'not_found' });
 });
 
 test('serves compact new collection groups HTTP endpoint for explicit date range', async () => {
@@ -578,18 +591,24 @@ test('serves MCP tools/list and tools/call', async () => {
   assert.equal(listResponse.status, 200);
   assert.deepEqual(
     listBody.result.tools.map((tool: { name: string }) => tool.name),
-    ['get_new_collections', 'get_new_collection_groups', 'get_collections_for_namespace', 'get_active_collections', 'get_latest_record_for_collection'],
+    [
+      'get_new_collection_groups',
+      'get_collections_for_namespace',
+      'get_active_collections',
+      'get_daily_users',
+      'get_latest_record_for_collection',
+    ],
   );
   assert.equal(Object.hasOwn(listBody.result.tools[0].inputSchema.properties, 'limit'), false);
-  assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'limit'), false);
   assert.match(listBody.result.tools[0].description, /生まれたNSID/);
-  assert.match(listBody.result.tools[0].description, /namespace group として解釈/);
-  assert.match(listBody.result.tools[1].description, /生まれたLexicon/);
-  assert.match(listBody.result.tools[1].description, /この tool を優先/);
-  assert.match(listBody.result.tools[1].inputSchema.properties.start_date.description, /start_date と end_date を同じ日/);
-  assert.match(listBody.result.tools[1].inputSchema.properties.end_date.description, /namespace group として扱います/);
-  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'namespace_prefix'), true);
-  assert.equal(Object.hasOwn(listBody.result.tools[3].inputSchema.properties, 'limit'), true);
+  assert.match(listBody.result.tools[0].description, /この tool を優先/);
+  assert.match(listBody.result.tools[0].inputSchema.properties.start_date.description, /start_date と end_date を同じ日/);
+  assert.match(listBody.result.tools[0].inputSchema.properties.end_date.description, /namespace group として扱います/);
+  assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'namespace_prefix'), true);
+  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'limit'), true);
+  assert.equal(Object.hasOwn(listBody.result.tools[3].inputSchema.properties, 'days'), true);
+  assert.match(listBody.result.tools[3].description, /Daily Users/);
+  assert.match(listBody.result.tools[3].description, /ユーザー推移/);
   assert.equal(callResponse.status, 200);
   assert.equal(Object.hasOwn(parsedToolText, 'summary'), false);
   assert.equal(Object.hasOwn(parsedToolText, 'display_hint'), false);
@@ -603,7 +622,88 @@ test('serves MCP tools/list and tools/call', async () => {
   ]);
 });
 
-test('serves MCP get_new_collections with namespace-group-first response shape', async () => {
+test('serves MCP get_daily_users as active and new user table', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [
+                {
+                  date: '2026-05-03',
+                  day_offset: -6,
+                  active: 4021,
+                  new: 350,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  active: 4265,
+                  new: 410,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'get_daily_users',
+        arguments: { days: 7 },
+      },
+    }),
+  });
+  const body = await response.json();
+  const parsedToolText = JSON.parse(body.result.content[0].text);
+
+  assert.equal(response.status, 200);
+  assert.equal(parsedToolText.tool, 'get_daily_users');
+  assert.equal(parsedToolText.intent, 'daily_users_active_and_new_table');
+  assert.deepEqual(parsedToolText.parameters, { lookback_days: 7 });
+  assert.equal(parsedToolText.result.primary_view, 'daily_users_table');
+  assert.deepEqual(parsedToolText.result.period, {
+    start_date: '2026-05-03',
+    end_date: '2026-05-09',
+    days: 2,
+    timezone: 'UTC',
+  });
+  assert.deepEqual(parsedToolText.result.rows, [
+    {
+      date: '2026-05-03',
+      day_offset: -6,
+      active: 4021,
+      new: 350,
+    },
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      active: 4265,
+      new: 410,
+    },
+  ]);
+  assert.deepEqual(parsedToolText.result.summary, {
+    active_peak: 4265,
+    new_peak: 410,
+    active_average: 4143,
+    new_total: 760,
+  });
+});
+
+test('rejects removed MCP get_new_collections tool', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -661,53 +761,13 @@ test('serves MCP get_new_collections with namespace-group-first response shape',
     }),
   });
   const body = await response.json();
-  const parsedToolText = JSON.parse(body.result.content[0].text);
 
   assert.equal(response.status, 200);
-  assert.equal(parsedToolText.tool, 'get_new_collections');
-  assert.equal(parsedToolText.intent, 'newly_observed_namespace_groups');
-  assert.deepEqual(parsedToolText.parameters, { lookback_days: 3 });
-  assert.equal(Object.hasOwn(parsedToolText, 'display_hint'), false);
-  assert.equal(Object.hasOwn(parsedToolText, 'summary'), false);
-  assert.equal(Object.hasOwn(parsedToolText.result, 'newly_observed_nsids'), false);
-  assert.equal(Object.hasOwn(parsedToolText.result, 'is_truncated'), false);
-  assert.equal(parsedToolText.result.primary_view, 'namespace_groups');
-  assert.deepEqual(parsedToolText.result.primary_order, [
-    'collection_count desc',
-    'group_first_seen_at desc',
-    'event_count_since_group_first_seen desc',
-    'namespace_prefix asc',
-  ]);
-  assert.equal(parsedToolText.result.returned_nsid_count, 3);
-  assert.equal(parsedToolText.result.returned_group_count, 2);
-  assert.equal(parsedToolText.result.full_nsid_list_omitted, true);
-  assert.equal(Object.hasOwn(parsedToolText.result, 'recent_newly_observed_sample'), false);
-  assert.deepEqual(parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'), {
-    namespace_prefix: 'cash.attoshi.*',
-    group_first_seen_at: '2026-05-09T11:45:22.006000Z',
-    first_seen_nsid_in_group: 'cash.attoshi.tx',
-    collection_count: 2,
-    event_count_since_group_first_seen: 125,
-  });
-  assert.equal(
-    Object.hasOwn(
-      parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'),
-      'sample_nsids',
-    ),
-    false,
-  );
-  assert.equal(
-    Object.hasOwn(
-      parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'),
-      'nsid_first_seen_at',
-    ),
-    false,
-  );
-  assert.equal(Object.hasOwn(parsedToolText.result, 'top_by_event_count'), false);
-  assert.equal(Object.hasOwn(parsedToolText.result, 'latest_first_seen'), false);
+  assert.equal(body.error.code, -32602);
+  assert.equal(body.error.message, 'Unknown tool');
 });
 
-test('serves all MCP get_new_collections namespace groups', async () => {
+test('serves all MCP get_new_collection_groups namespace groups', async () => {
   const rows = Array.from({ length: 12 }, (_, index) => ({
     collection: `app.group${String(index).padStart(2, '0')}.record`,
     first_seen_at: `2026-05-09T11:${String(index).padStart(2, '0')}:00.000000Z`,
@@ -742,7 +802,7 @@ test('serves all MCP get_new_collections namespace groups', async () => {
       id: 1,
       method: 'tools/call',
       params: {
-        name: 'get_new_collections',
+        name: 'get_new_collection_groups',
         arguments: { days: 3 },
       },
     }),

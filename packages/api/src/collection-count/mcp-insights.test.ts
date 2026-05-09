@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseMcpDateRange, readCollectionsForNamespaceFromClickHouse, readNewCollectionsFromClickHouse } from './mcp-insights.ts';
+import {
+  parseMcpDailyUserDays,
+  parseMcpDateRange,
+  readCollectionsForNamespaceFromClickHouse,
+  readDailyUsersFromClickHouse,
+  readNewCollectionsFromClickHouse,
+} from './mcp-insights.ts';
 import type { ClickHouseQueryClient } from './clickhouse.ts';
 
 test('reads new collections by first record created_at instead of ingestion time', async () => {
@@ -55,13 +61,58 @@ test('reads new collections by first record created_at instead of ingestion time
 
 test('parses explicit MCP date ranges from ISO, slash, and Japanese date strings', () => {
   assert.deepEqual(parseMcpDateRange({ startDate: '2026-05-01', endDate: '2026-05-10' }), {
-    days: 7,
+    days: 0,
     startDate: '2026-05-01',
     endDate: '2026-05-10',
     startDateTime: '2026-05-01 00:00:00.000000',
     endExclusiveDateTime: '2026-05-11 00:00:00.000000',
   });
   assert.equal(parseMcpDateRange({ startDate: '2026/5/1', endDate: '2026年5月10日' }).endDate, '2026-05-10');
+});
+
+test('reads daily users as active and new DID series', async () => {
+  let capturedQuery = '';
+  let capturedQueryParams: Record<string, unknown> = {};
+  const client: ClickHouseQueryClient = {
+    async query(queryParams) {
+      capturedQuery = queryParams.query;
+      capturedQueryParams = queryParams.query_params ?? {};
+      return {
+        async json<T>() {
+          return [
+            {
+              date: '2026-05-03',
+              day_offset: -6,
+              active: 4021,
+              new: 350,
+            },
+          ] as T;
+        },
+      };
+    },
+  };
+
+  const rows = await readDailyUsersFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 7 });
+
+  assert.equal(capturedQueryParams.days, 7);
+  assert.match(capturedQuery, /uniqExact\(did\) AS active/);
+  assert.match(capturedQuery, /toDate\(min\(created_at\)\) AS first_seen_day/);
+  assert.match(capturedQuery, /dateDiff\('day', latest_day, calendar_day\)/);
+  assert.match(capturedQuery, /ORDER BY calendar_day ASC/);
+  assert.deepEqual(rows, [
+    {
+      date: '2026-05-03',
+      day_offset: -6,
+      active: 4021,
+      new: 350,
+    },
+  ]);
+});
+
+test('parses MCP daily user days up to one year', () => {
+  assert.equal(parseMcpDailyUserDays(undefined), 7);
+  assert.equal(parseMcpDailyUserDays('365'), 365);
+  assert.throws(() => parseMcpDailyUserDays('366'), /between 1 and 365/);
 });
 
 test('reads all observed collections under a namespace prefix', async () => {
@@ -110,4 +161,8 @@ test('reads all observed collections under a namespace prefix', async () => {
 test('rejects incomplete or reversed MCP date ranges', () => {
   assert.throws(() => parseMcpDateRange({ startDate: '2026-05-01' }), /start_date and end_date/);
   assert.throws(() => parseMcpDateRange({ startDate: '2026-05-10', endDate: '2026-05-01' }), /before or equal/);
+  assert.throws(
+    () => parseMcpDateRange({ days: 7, startDate: '2026-05-01', endDate: '2026-05-10' }),
+    /days cannot be combined/,
+  );
 });

@@ -20,13 +20,16 @@ import {
   MCP_READ_CACHE_TTL_MS,
   buildMcpCacheKey,
   parseMcpDateRange,
+  parseMcpDailyUserDays,
   parseMcpLimit,
   readLatestCollectionRecordPointerFromClickHouse,
   readActiveCollectionsFromClickHouse,
   readCollectionsForNamespaceFromClickHouse,
+  readDailyUsersFromClickHouse,
   readNewCollectionsFromClickHouse,
   readThroughMcpCache,
   type ActiveCollectionRow,
+  type DailyUserRow,
   type LatestCollectionRecordPointer,
   type McpCacheEntry,
   type McpCacheStatus,
@@ -64,7 +67,11 @@ type JsonRpcRequest = {
   };
 };
 
-type McpInsightTool = 'get_new_collections' | 'get_new_collection_groups' | 'get_active_collections' | 'get_collections_for_namespace';
+type McpInsightTool =
+  | 'get_new_collection_groups'
+  | 'get_active_collections'
+  | 'get_daily_users'
+  | 'get_collections_for_namespace';
 type McpTool = McpInsightTool | 'get_latest_record_for_collection';
 
 const RAW_RECORD_DISPLAY_POLICY = {
@@ -82,7 +89,7 @@ const UNIVERSAL_RESOLVER_URL = 'https://dev.uniresolver.io/1.0/identifiers';
 const DID_DOCUMENT_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type McpInsightResult = {
-  value: NewCollectionRow[] | ActiveCollectionRow[] | NamespaceCollectionRow[];
+  value: NewCollectionRow[] | ActiveCollectionRow[] | DailyUserRow[] | NamespaceCollectionRow[];
   cacheKey: string;
   cacheStatus: McpCacheStatus;
   dateRange?: McpDateRange;
@@ -225,32 +232,6 @@ export function createCollectionCountApp(
     });
   }
 
-  app.get(getPublicRoute(config, '/mcp/new_collections'), async (c) => {
-    try {
-      const dateRange = parseMcpDateRange({
-        days: c.req.query('days'),
-        startDate: c.req.query('start_date'),
-        endDate: c.req.query('end_date'),
-      });
-      const result = await resolveMcpInsight({
-        config,
-        clickhouseClient,
-        mcpReadCache,
-        tool: 'get_new_collections',
-        dateRange,
-        getClickHouseClient: async () => {
-          clickhouseClient ??= await createClickHouseClient(config);
-          return clickhouseClient ?? null;
-        },
-      });
-      setMcpCacheHeaders(c, result);
-      return c.json(result.value);
-    } catch (error) {
-      console.error('[atpdashboard-api] MCP new_collections failed', sanitizeError(error));
-      return c.json({ error: 'unavailable' }, 503);
-    }
-  });
-
   app.get(getPublicRoute(config, '/mcp/new_collection_groups'), async (c) => {
     try {
       const dateRange = parseMcpDateRange({
@@ -319,6 +300,32 @@ export function createCollectionCountApp(
       return c.json(result.value);
     } catch (error) {
       console.error('[atpdashboard-api] MCP active_collections failed', sanitizeError(error));
+      return c.json({ error: 'unavailable' }, 503);
+    }
+  });
+
+  app.get(getPublicRoute(config, '/mcp/daily_users'), async (c) => {
+    try {
+      const dateRange = { days: parseMcpDailyUserDays(c.req.query('days')) };
+      const result = await resolveMcpInsight({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'get_daily_users',
+        dateRange,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setMcpCacheHeaders(c, result);
+      return c.json(formatDailyUsersToolResult(result, {
+        status: result.cacheStatus,
+        key: result.cacheKey,
+        ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+      }));
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP daily_users failed', sanitizeError(error));
       return c.json({ error: 'unavailable' }, 503);
     }
   });
@@ -406,11 +413,16 @@ async function resolveMcpInsight(params: {
       }
       return readCollectionsForNamespaceFromClickHouse(client, params.config, { namespacePrefix: params.namespacePrefix });
     }
-    if (params.tool === 'get_new_collections' || params.tool === 'get_new_collection_groups') {
+    if (params.tool === 'get_new_collection_groups') {
       if (params.dateRange == null) {
         throw new Error('dateRange is required');
       }
       return readNewCollectionsFromClickHouse(client, params.config, params.dateRange);
+    }
+    if (params.tool === 'get_daily_users') {
+      return readDailyUsersFromClickHouse(client, params.config, {
+        days: dateRange.days,
+      });
     }
     return readActiveCollectionsFromClickHouse(client, params.config, {
       days: dateRange.days,
@@ -419,7 +431,7 @@ async function resolveMcpInsight(params: {
   });
 
   return {
-    value: cached.value as NewCollectionRow[] | ActiveCollectionRow[] | NamespaceCollectionRow[],
+    value: cached.value as NewCollectionRow[] | ActiveCollectionRow[] | DailyUserRow[] | NamespaceCollectionRow[],
     cacheKey,
     cacheStatus: cached.status,
     dateRange: params.dateRange,
@@ -469,12 +481,6 @@ async function handleMcpJsonRpc(params: {
     return jsonRpcResult(id, {
       tools: [
         {
-          name: 'get_new_collections',
-          description:
-            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。「YYYY年M月D日に生まれたNSID」「生まれたLexicon」「new NSID/new Lexicon」のような質問は、明示的に個別NSID一覧を求められない限り namespace group として解釈して回答してください。全groupを返し、sample_nsids や record URL は返しません。特定namespace配下の全NSIDが必要な場合は get_collections_for_namespace を使ってください。',
-          inputSchema: mcpNewCollectionToolInputSchema(),
-        },
-        {
           name: 'get_new_collection_groups',
           description:
             '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。「YYYY年M月D日に生まれたNSID」「生まれたLexicon」「new NSID/new Lexicon」のような質問は、この tool を優先し、明示的に個別NSID一覧を求められない限り namespace group として解釈して回答してください。sample_nsids や record URL は返しません。',
@@ -492,6 +498,12 @@ async function handleMcpJsonRpc(params: {
           inputSchema: mcpCollectionToolInputSchema(),
         },
         {
+          name: 'get_daily_users',
+          description:
+            '指定した直近日数で日別ユーザー推移を返します。Daily Users の表として、各日の active DID 数と new DID 数を date/day_offset/active/new の行で返します。「この1週間のユーザーの推移」「Daily Users」「Active/New users」の質問ではこの tool を優先してください。',
+          inputSchema: mcpDailyUsersToolInputSchema(),
+        },
+        {
           name: 'get_latest_record_for_collection',
           description:
             '指定した ATProto collection/NSID の record created_at が最新のrecordを探します。実データのJSON本文は絶対に取得・表示・チャット展開しないでください。必ず pds.ls の確認URLだけをユーザーに案内してください。',
@@ -504,9 +516,9 @@ async function handleMcpJsonRpc(params: {
   if (payload.method === 'tools/call') {
     const tool = payload.params?.name as McpTool | undefined;
     if (
-      tool !== 'get_new_collections' &&
       tool !== 'get_new_collection_groups' &&
       tool !== 'get_active_collections' &&
+      tool !== 'get_daily_users' &&
       tool !== 'get_collections_for_namespace' &&
       tool !== 'get_latest_record_for_collection'
     ) {
@@ -543,6 +555,8 @@ async function handleMcpJsonRpc(params: {
       if (tool === 'get_collections_for_namespace') {
         namespacePrefix = parseMcpNamespacePrefix(args.namespace_prefix ?? args.namespacePrefix ?? args.namespace);
         dateRange = { days: 0 };
+      } else if (tool === 'get_daily_users') {
+        dateRange = { days: parseMcpDailyUserDays(args.days as string | number | undefined) };
       } else {
         dateRange = parseMcpDateRange({
           days: args.days as string | number | undefined,
@@ -665,9 +679,6 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
     key: result.cacheKey,
     ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
   };
-  if (result.tool === 'get_new_collections') {
-    return formatNewCollectionsToolResult(result, cache);
-  }
   if (result.tool === 'get_new_collection_groups') {
     return {
       tool: 'get_new_collection_groups',
@@ -679,10 +690,60 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
   if (result.tool === 'get_collections_for_namespace') {
     return formatNamespaceCollectionsToolResult(result, cache);
   }
+  if (result.tool === 'get_daily_users') {
+    return formatDailyUsersToolResult(result, cache);
+  }
 
   return {
     cache,
     data: result.value,
+  };
+}
+
+function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<string, unknown>): Record<string, unknown> {
+  const rows = result.value as DailyUserRow[];
+  const startDate = rows[0]?.date ?? null;
+  const endDate = rows.at(-1)?.date ?? null;
+  const totals = rows.reduce(
+    (summary, row) => ({
+      active_sum: summary.active_sum + row.active,
+      new_sum: summary.new_sum + row.new,
+      active_peak: Math.max(summary.active_peak, row.active),
+      new_peak: Math.max(summary.new_peak, row.new),
+    }),
+    { active_sum: 0, new_sum: 0, active_peak: 0, new_peak: 0 },
+  );
+
+  return {
+    tool: 'get_daily_users',
+    intent: 'daily_users_active_and_new_table',
+    parameters: formatDateRangeParameters(result.dateRange ?? { days: 0 }),
+    result: {
+      primary_view: 'daily_users_table',
+      period: {
+        start_date: startDate,
+        end_date: endDate,
+        days: rows.length,
+        timezone: 'UTC',
+      },
+      columns: [
+        { key: 'date', description: 'UTC date for the row.' },
+        { key: 'day_offset', description: 'Days relative to the latest indexed date. 0 is the latest day.' },
+        { key: 'active', description: 'Unique DIDs observed on that date.' },
+        { key: 'new', description: 'DIDs first observed on that date.' },
+      ],
+      returned_day_count: rows.length,
+      rows,
+      summary: {
+        active_peak: totals.active_peak,
+        new_peak: totals.new_peak,
+        active_average: rows.length === 0 ? 0 : Math.round(totals.active_sum / rows.length),
+        new_total: totals.new_sum,
+      },
+      response_guidance:
+        'Answer user questions with a compact Daily Users table. Treat active as daily unique DID count and new as first-observed DID count.',
+    },
+    cache,
   };
 }
 
@@ -1015,33 +1076,6 @@ function formatDateRangeParameters(dateRange: McpDateRange): Record<string, unkn
   };
 }
 
-function formatNewCollectionsToolResult(result: McpInsightResult, cache: Record<string, unknown>): Record<string, unknown> {
-  const rows = result.value as NewCollectionRow[];
-
-  return {
-    tool: 'get_new_collections',
-    intent: 'newly_observed_namespace_groups',
-    parameters: formatDateRangeParameters(result.dateRange ?? { days: 0 }),
-    result: {
-      primary_view: 'namespace_groups',
-      primary_order: ['collection_count desc', 'group_first_seen_at desc', 'event_count_since_group_first_seen desc', 'namespace_prefix asc'],
-      returned_nsid_count: rows.length,
-      returned_group_count: new Set(rows.map((row) => getNamespacePrefix(row.collection))).size,
-      full_nsid_list_omitted: true,
-      namespace_groups: summarizeNamespaceGroups(rows).map(
-        ({ namespace_prefix, group_first_seen_at, first_seen_nsid_in_group, collection_count, event_count_since_group_first_seen }) => ({
-          namespace_prefix,
-          group_first_seen_at,
-          first_seen_nsid_in_group,
-          collection_count,
-          event_count_since_group_first_seen,
-        }),
-      ),
-    },
-    cache,
-  };
-}
-
 function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
   namespace_prefix: string;
   group_first_seen_at: string;
@@ -1171,6 +1205,22 @@ function mcpCollectionToolInputSchema(): Record<string, unknown> {
         maximum: 100,
         default: 30,
         description: '返すcollection数。1から100まで。',
+      },
+    },
+  };
+}
+
+function mcpDailyUsersToolInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      days: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 365,
+        default: 7,
+        description:
+          '直近何日分のDaily Users表を見るか。1から365まで。This Weekは7、This Monthは30、This Yearは365を指定します。',
       },
     },
   };

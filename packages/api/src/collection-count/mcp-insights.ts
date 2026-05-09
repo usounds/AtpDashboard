@@ -4,6 +4,7 @@ import type { ClickHouseQueryClient } from './clickhouse.ts';
 export const MCP_READ_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const MAX_DAYS = 14;
+const MAX_DAILY_USER_DAYS = 365;
 const MAX_LIMIT = 100;
 const DEFAULT_DAYS = 7;
 const DEFAULT_LIMIT = 30;
@@ -53,6 +54,13 @@ export type ActiveCollectionRow = {
   last_seen_at: string;
 };
 
+export type DailyUserRow = {
+  date: string;
+  day_offset: number;
+  active: number;
+  new: number;
+};
+
 export type LatestCollectionRecordPointer = {
   collection: string;
   created_at: string;
@@ -79,6 +87,13 @@ type RawActiveCollectionRow = {
   last_seen_at: string;
 };
 
+type RawDailyUserRow = {
+  date: string;
+  day_offset: string | number;
+  active: string | number;
+  new: string | number;
+};
+
 type RawNamespaceCollectionRow = {
   collection: string;
   first_seen_at: string;
@@ -100,6 +115,10 @@ export function parseMcpDays(value: string | number | undefined): number {
   return parseBoundedInteger(value, DEFAULT_DAYS, 1, MAX_DAYS);
 }
 
+export function parseMcpDailyUserDays(value: string | number | undefined): number {
+  return parseBoundedInteger(value, DEFAULT_DAYS, 1, MAX_DAILY_USER_DAYS);
+}
+
 export function parseMcpLimit(value: string | number | undefined): number {
   return parseBoundedInteger(value, DEFAULT_LIMIT, 1, MAX_LIMIT);
 }
@@ -114,6 +133,9 @@ export function parseMcpDateRange(params: {
   if (!hasStartDate && !hasEndDate) {
     return { days: parseMcpDays(params.days) };
   }
+  if (params.days != null && params.days !== '') {
+    throw new Error('days cannot be combined with start_date/end_date');
+  }
   if (!hasStartDate || !hasEndDate) {
     throw new Error('start_date and end_date must be provided together');
   }
@@ -125,7 +147,7 @@ export function parseMcpDateRange(params: {
   }
 
   return {
-    days: parseMcpDays(params.days),
+    days: 0,
     startDate,
     endDate,
     startDateTime: `${startDate} 00:00:00.000000`,
@@ -229,7 +251,7 @@ ORDER BY first_seen_created_at DESC, event_count DESC, collection ASC
       format: 'JSONEachRow',
     }),
     config.clickhouseTimeoutMs,
-    'ClickHouse MCP new_collections query timed out',
+    'ClickHouse MCP new collection groups query timed out',
   );
   const rows = await result.json<RawNewCollectionRow[]>();
   return rows.map((row) => ({
@@ -286,6 +308,79 @@ LIMIT {row_limit:UInt16}
     event_count: Number(row.event_count),
     first_seen_at: row.first_seen_at,
     last_seen_at: row.last_seen_at,
+  }));
+}
+
+export async function readDailyUsersFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: { days: number },
+): Promise<DailyUserRow[]> {
+  const result = await withTimeout(
+    client.query({
+      query: `
+WITH
+  {days:UInt16} AS lookback_days,
+  (
+    SELECT toDate(max(created_at))
+    FROM atp_dashboard.collection_events
+    WHERE isNotNull(created_at)
+  ) AS latest_day,
+  latest_day - toIntervalDay(lookback_days - 1) AS range_start_day
+SELECT
+  formatDateTime(calendar_day, '%Y-%m-%d', 'UTC') AS date,
+  toInt16(dateDiff('day', latest_day, calendar_day)) AS day_offset,
+  coalesce(active.active, 0) AS active,
+  coalesce(new_users.new, 0) AS new
+FROM
+(
+  SELECT latest_day - toIntervalDay(toUInt16(arrayJoin(range(lookback_days)))) AS calendar_day
+) days
+LEFT JOIN
+(
+  SELECT
+    toDate(created_at) AS calendar_day,
+    uniqExact(did) AS active
+  FROM atp_dashboard.collection_events
+  WHERE isNotNull(created_at)
+    AND toDate(created_at) >= range_start_day
+    AND toDate(created_at) <= latest_day
+  GROUP BY calendar_day
+) active USING calendar_day
+LEFT JOIN
+(
+  SELECT
+    first_seen_day AS calendar_day,
+    count() AS new
+  FROM
+  (
+    SELECT
+      did,
+      toDate(min(created_at)) AS first_seen_day
+    FROM atp_dashboard.collection_events
+    WHERE isNotNull(created_at)
+    GROUP BY did
+  )
+  WHERE first_seen_day >= range_start_day
+    AND first_seen_day <= latest_day
+  GROUP BY first_seen_day
+) new_users USING calendar_day
+ORDER BY calendar_day ASC
+`,
+      query_params: {
+        days: params.days,
+      },
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse MCP daily_users query timed out',
+  );
+  const rows = await result.json<RawDailyUserRow[]>();
+  return rows.map((row) => ({
+    date: row.date,
+    day_offset: Number(row.day_offset),
+    active: Number(row.active),
+    new: Number(row.new),
   }));
 }
 
