@@ -578,11 +578,12 @@ test('serves MCP tools/list and tools/call', async () => {
   assert.equal(listResponse.status, 200);
   assert.deepEqual(
     listBody.result.tools.map((tool: { name: string }) => tool.name),
-    ['get_new_collections', 'get_new_collection_groups', 'get_active_collections', 'get_latest_record_for_collection'],
+    ['get_new_collections', 'get_new_collection_groups', 'get_collections_for_namespace', 'get_active_collections', 'get_latest_record_for_collection'],
   );
   assert.equal(Object.hasOwn(listBody.result.tools[0].inputSchema.properties, 'limit'), false);
   assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'limit'), false);
-  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'limit'), true);
+  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'namespace_prefix'), true);
+  assert.equal(Object.hasOwn(listBody.result.tools[3].inputSchema.properties, 'limit'), true);
   assert.equal(callResponse.status, 200);
   assert.equal(Object.hasOwn(parsedToolText, 'summary'), false);
   assert.equal(Object.hasOwn(parsedToolText, 'display_hint'), false);
@@ -674,49 +675,21 @@ test('serves MCP get_new_collections with namespace-group-first response shape',
   assert.equal(parsedToolText.result.returned_nsid_count, 3);
   assert.equal(parsedToolText.result.returned_group_count, 2);
   assert.equal(parsedToolText.result.full_nsid_list_omitted, true);
-  assert.deepEqual(parsedToolText.result.recent_newly_observed_sample[0], {
-    collection: 'cash.attoshi.utxo',
-    nsid_first_seen_at: '2026-05-09T11:45:23.006000Z',
-    event_count_since_nsid_first_seen: 83,
-    latest_record: {
-      created_at: '2026-05-09T11:49:23.006000Z',
-      at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/cash.attoshi.utxo/3lv4ouczo2b2a',
-      get_record_url:
-        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a',
-    },
-  });
-  assert.equal(Object.hasOwn(parsedToolText.result.recent_newly_observed_sample[0], 'first_seen_at'), false);
-  assert.equal(Object.hasOwn(parsedToolText.result.recent_newly_observed_sample[0], 'event_count'), false);
+  assert.equal(Object.hasOwn(parsedToolText.result, 'recent_newly_observed_sample'), false);
   assert.deepEqual(parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'), {
     namespace_prefix: 'cash.attoshi.*',
     group_first_seen_at: '2026-05-09T11:45:22.006000Z',
     first_seen_nsid_in_group: 'cash.attoshi.tx',
     collection_count: 2,
     event_count_since_group_first_seen: 125,
-    sample_nsids: [
-      {
-        collection: 'cash.attoshi.utxo',
-        nsid_first_seen_at: '2026-05-09T11:45:23.006000Z',
-        event_count_since_nsid_first_seen: 83,
-        latest_record: {
-          created_at: '2026-05-09T11:49:23.006000Z',
-          at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/cash.attoshi.utxo/3lv4ouczo2b2a',
-          get_record_url:
-            'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a',
-        },
-      },
-      {
-        collection: 'cash.attoshi.tx',
-        nsid_first_seen_at: '2026-05-09T11:45:22.006000Z',
-        event_count_since_nsid_first_seen: 42,
-        latest_record: {
-          created_at: '2026-05-09T11:48:22.006000Z',
-          at_uri: 'at://did:plc:tx/cash.attoshi.tx/tx-rkey',
-          get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Atx&collection=cash.attoshi.tx&rkey=tx-rkey',
-        },
-      },
-    ],
   });
+  assert.equal(
+    Object.hasOwn(
+      parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'),
+      'sample_nsids',
+    ),
+    false,
+  );
   assert.equal(
     Object.hasOwn(
       parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'),
@@ -863,6 +836,79 @@ test('serves compact MCP get_new_collection_groups without samples or record poi
   ]);
   assert.equal(Object.hasOwn(parsedToolText.result.namespace_groups[0], 'sample_nsids'), false);
   assert.equal(Object.hasOwn(parsedToolText.result.namespace_groups[0], 'latest_record'), false);
+});
+
+test('serves MCP get_collections_for_namespace with all observed child NSIDs', async () => {
+  let capturedQueryParams: Record<string, unknown> = {};
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          capturedQueryParams = params.query_params ?? {};
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.chavatar.avatar',
+                  first_seen_at: '2026-04-29T00:36:59.668000Z',
+                  last_seen_at: '2026-05-07T15:40:00.000000Z',
+                  event_count: 12,
+                  latest_record_created_at: '2026-05-07T15:40:00.000000Z',
+                  latest_record_did: 'did:plc:avatar',
+                  latest_record_rkey: 'avatar-rkey',
+                },
+                {
+                  collection: 'app.chavatar.schedules',
+                  first_seen_at: '2026-05-07T15:47:24.712000Z',
+                  last_seen_at: '2026-05-07T15:47:24.712000Z',
+                  event_count: 1,
+                  latest_record_created_at: '2026-05-07T15:47:24.712000Z',
+                  latest_record_did: 'did:plc:schedule',
+                  latest_record_rkey: 'self',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'get_collections_for_namespace',
+        arguments: { namespace_prefix: 'app.chavatar.*' },
+      },
+    }),
+  });
+  const body = await response.json();
+  const parsedToolText = JSON.parse(body.result.content[0].text);
+
+  assert.equal(response.status, 200);
+  assert.equal(capturedQueryParams.namespace_prefix, 'app.chavatar');
+  assert.equal(parsedToolText.tool, 'get_collections_for_namespace');
+  assert.equal(parsedToolText.intent, 'observed_nsids_under_namespace_prefix');
+  assert.deepEqual(parsedToolText.parameters, { namespace_prefix: 'app.chavatar' });
+  assert.equal(parsedToolText.result.returned_nsid_count, 2);
+  assert.deepEqual(
+    parsedToolText.result.nsids.map((row: { collection: string }) => row.collection),
+    ['app.chavatar.avatar', 'app.chavatar.schedules'],
+  );
+  assert.deepEqual(parsedToolText.result.nsids[1].latest_record, {
+    created_at: '2026-05-07T15:47:24.712000Z',
+    at_uri: 'at://did:plc:schedule/app.chavatar.schedules/self',
+    get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aschedule&collection=app.chavatar.schedules&rkey=self',
+  });
 });
 
 test('serves MCP get_latest_record_for_collection with record JSON', async () => {

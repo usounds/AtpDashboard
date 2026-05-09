@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseMcpDateRange, readNewCollectionsFromClickHouse } from './mcp-insights.ts';
+import { parseMcpDateRange, readCollectionsForNamespaceFromClickHouse, readNewCollectionsFromClickHouse } from './mcp-insights.ts';
 import type { ClickHouseQueryClient } from './clickhouse.ts';
 
 test('reads new collections by first record created_at instead of ingestion time', async () => {
@@ -62,6 +62,49 @@ test('parses explicit MCP date ranges from ISO, slash, and Japanese date strings
     endExclusiveDateTime: '2026-05-11 00:00:00.000000',
   });
   assert.equal(parseMcpDateRange({ startDate: '2026/5/1', endDate: '2026年5月10日' }).endDate, '2026-05-10');
+});
+
+test('reads all observed collections under a namespace prefix', async () => {
+  let capturedQuery = '';
+  let capturedQueryParams: Record<string, unknown> = {};
+  const client: ClickHouseQueryClient = {
+    async query(queryParams) {
+      capturedQuery = queryParams.query;
+      capturedQueryParams = queryParams.query_params ?? {};
+      return {
+        async json<T>() {
+          return [
+            {
+              collection: 'app.chavatar.schedules',
+              first_seen_at: '2026-05-07T15:47:24.712000Z',
+              last_seen_at: '2026-05-07T15:47:24.712000Z',
+              event_count: 1,
+              latest_record_created_at: '2026-05-07T15:47:24.712000Z',
+              latest_record_did: 'did:plc:example',
+              latest_record_rkey: 'self',
+            },
+          ] as T;
+        },
+      };
+    },
+  };
+
+  const rows = await readCollectionsForNamespaceFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { namespacePrefix: 'app.chavatar' });
+
+  assert.equal(capturedQueryParams.namespace_prefix, 'app.chavatar');
+  assert.match(capturedQuery, /startsWith\(collection, concat\(\{namespace_prefix:String\}, '\.'\)\)/);
+  assert.deepEqual(rows, [
+    {
+      collection: 'app.chavatar.schedules',
+      first_seen_at: '2026-05-07T15:47:24.712000Z',
+      last_seen_at: '2026-05-07T15:47:24.712000Z',
+      event_count: 1,
+      latest_record_created_at: '2026-05-07T15:47:24.712000Z',
+      latest_record_at_uri: 'at://did:plc:example/app.chavatar.schedules/self',
+      latest_record_get_record_url:
+        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.chavatar.schedules&rkey=self',
+    },
+  ]);
 });
 
 test('rejects incomplete or reversed MCP date ranges', () => {

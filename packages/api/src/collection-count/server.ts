@@ -23,6 +23,7 @@ import {
   parseMcpLimit,
   readLatestCollectionRecordPointerFromClickHouse,
   readActiveCollectionsFromClickHouse,
+  readCollectionsForNamespaceFromClickHouse,
   readNewCollectionsFromClickHouse,
   readThroughMcpCache,
   type ActiveCollectionRow,
@@ -30,6 +31,7 @@ import {
   type McpCacheEntry,
   type McpCacheStatus,
   type McpDateRange,
+  type NamespaceCollectionRow,
   type NewCollectionRow,
 } from './mcp-insights.ts';
 import {
@@ -62,15 +64,16 @@ type JsonRpcRequest = {
   };
 };
 
-type McpInsightTool = 'get_new_collections' | 'get_new_collection_groups' | 'get_active_collections';
+type McpInsightTool = 'get_new_collections' | 'get_new_collection_groups' | 'get_active_collections' | 'get_collections_for_namespace';
 type McpTool = McpInsightTool | 'get_latest_record_for_collection';
 
 type McpInsightResult = {
-  value: NewCollectionRow[] | ActiveCollectionRow[];
+  value: NewCollectionRow[] | ActiveCollectionRow[] | NamespaceCollectionRow[];
   cacheKey: string;
   cacheStatus: McpCacheStatus;
-  dateRange: McpDateRange;
+  dateRange?: McpDateRange;
   limit?: number;
+  namespacePrefix?: string;
   tool: McpInsightTool;
 };
 
@@ -240,6 +243,28 @@ export function createCollectionCountApp(
     }
   });
 
+  app.get(getPublicRoute(config, '/mcp/collections_for_namespace'), async (c) => {
+    try {
+      const namespacePrefix = parseMcpNamespacePrefix(c.req.query('namespace_prefix') ?? c.req.query('namespace'));
+      const result = await resolveMcpInsight({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'get_collections_for_namespace',
+        namespacePrefix,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setMcpCacheHeaders(c, result);
+      return c.json(formatNamespaceCollectionsResult(result));
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP collections_for_namespace failed', sanitizeError(error));
+      return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, 503);
+    }
+  });
+
   app.get(getPublicRoute(config, '/mcp/active_collections'), async (c) => {
     try {
       const dateRange = parseMcpDateRange({ days: c.req.query('days') });
@@ -327,8 +352,9 @@ async function resolveMcpInsight(params: {
   clickhouseClient: ClickHouseQueryClient | null | undefined;
   mcpReadCache: Map<string, McpCacheEntry<unknown>>;
   tool: McpInsightTool;
-  dateRange: McpDateRange;
+  dateRange?: McpDateRange;
   limit?: number;
+  namespacePrefix?: string;
   getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
 }): Promise<McpInsightResult> {
   const client = params.clickhouseClient ?? (await params.getClickHouseClient());
@@ -336,23 +362,34 @@ async function resolveMcpInsight(params: {
     throw new Error('ClickHouse client is not configured');
   }
 
-  const cacheKey = buildMcpCacheKey(params.tool, { ...params.dateRange, limit: params.limit });
+  const dateRange = params.dateRange ?? { days: 0 };
+  const cacheKey = buildMcpCacheKey(params.tool, { ...dateRange, limit: params.limit, namespacePrefix: params.namespacePrefix });
   const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () => {
+    if (params.tool === 'get_collections_for_namespace') {
+      if (params.namespacePrefix == null) {
+        throw new Error('namespace_prefix is required');
+      }
+      return readCollectionsForNamespaceFromClickHouse(client, params.config, { namespacePrefix: params.namespacePrefix });
+    }
     if (params.tool === 'get_new_collections' || params.tool === 'get_new_collection_groups') {
+      if (params.dateRange == null) {
+        throw new Error('dateRange is required');
+      }
       return readNewCollectionsFromClickHouse(client, params.config, params.dateRange);
     }
     return readActiveCollectionsFromClickHouse(client, params.config, {
-      days: params.dateRange.days,
+      days: dateRange.days,
       limit: params.limit ?? parseMcpLimit(undefined),
     });
   });
 
   return {
-    value: cached.value as NewCollectionRow[] | ActiveCollectionRow[],
+    value: cached.value as NewCollectionRow[] | ActiveCollectionRow[] | NamespaceCollectionRow[],
     cacheKey,
     cacheStatus: cached.status,
     dateRange: params.dateRange,
     limit: params.limit,
+    namespacePrefix: params.namespacePrefix,
     tool: params.tool,
   };
 }
@@ -398,7 +435,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_new_collections',
           description:
-            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全NSID一覧は返さず、全groupごとの最初に見られたNSID、sample_nsids、最新sampleを返します。',
+            '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全groupを返し、sample_nsids や record URL は返しません。特定namespace配下の全NSIDが必要な場合は get_collections_for_namespace を使ってください。',
           inputSchema: mcpNewCollectionToolInputSchema(),
         },
         {
@@ -406,6 +443,12 @@ async function handleMcpJsonRpc(params: {
           description:
             '指定した直近日数または日付範囲で初めて観測された ATProto collection/NSID を namespace group だけの短い一覧で返します。sample_nsids や record URL は返しません。',
           inputSchema: mcpNewCollectionToolInputSchema(),
+        },
+        {
+          name: 'get_collections_for_namespace',
+          description:
+            '指定した namespace prefix 配下で観測済みの ATProto collection/NSID をすべて列挙します。例: app.chavatar について聞かれたら namespace_prefix=app.chavatar で呼び、app.chavatar.* 配下のNSID一覧を返します。',
+          inputSchema: mcpNamespaceCollectionToolInputSchema(),
         },
         {
           name: 'get_active_collections',
@@ -428,6 +471,7 @@ async function handleMcpJsonRpc(params: {
       tool !== 'get_new_collections' &&
       tool !== 'get_new_collection_groups' &&
       tool !== 'get_active_collections' &&
+      tool !== 'get_collections_for_namespace' &&
       tool !== 'get_latest_record_for_collection'
     ) {
       return jsonRpcError(id, -32602, 'Unknown tool');
@@ -459,12 +503,18 @@ async function handleMcpJsonRpc(params: {
     }
 
     let dateRange: McpDateRange;
+    let namespacePrefix: string | undefined;
     try {
-      dateRange = parseMcpDateRange({
-        days: args.days as string | number | undefined,
-        startDate: (args.start_date ?? args.startDate) as string | undefined,
-        endDate: (args.end_date ?? args.endDate) as string | undefined,
-      });
+      if (tool === 'get_collections_for_namespace') {
+        namespacePrefix = parseMcpNamespacePrefix(args.namespace_prefix ?? args.namespacePrefix ?? args.namespace);
+        dateRange = { days: 0 };
+      } else {
+        dateRange = parseMcpDateRange({
+          days: args.days as string | number | undefined,
+          startDate: (args.start_date ?? args.startDate) as string | undefined,
+          endDate: (args.end_date ?? args.endDate) as string | undefined,
+        });
+      }
     } catch (error) {
       return jsonRpcError(id, -32602, error instanceof Error ? error.message : 'Invalid params');
     }
@@ -474,8 +524,9 @@ async function handleMcpJsonRpc(params: {
       clickhouseClient: params.clickhouseClient,
       mcpReadCache: params.mcpReadCache,
       tool,
-      dateRange,
+      dateRange: tool === 'get_collections_for_namespace' ? undefined : dateRange,
       limit,
+      namespacePrefix,
       getClickHouseClient: params.getClickHouseClient,
     });
 
@@ -620,6 +671,17 @@ function parseMcpCollection(value: unknown): string {
   return value.trim();
 }
 
+function parseMcpNamespacePrefix(value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('namespace_prefix must be a non-empty string');
+  }
+  const normalized = value.trim().replace(/\.\*$/, '');
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)+$/.test(normalized)) {
+    throw new Error('namespace_prefix must be a dot-separated namespace such as app.chavatar');
+  }
+  return normalized;
+}
+
 function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> {
   const cache = {
     status: result.cacheStatus,
@@ -634,6 +696,17 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
       tool: 'get_new_collection_groups',
       intent: 'newly_observed_namespace_groups_compact',
       result: formatNewCollectionGroupsResult(result),
+      cache,
+    };
+  }
+  if (result.tool === 'get_collections_for_namespace') {
+    return {
+      tool: 'get_collections_for_namespace',
+      intent: 'observed_nsids_under_namespace_prefix',
+      parameters: {
+        namespace_prefix: result.namespacePrefix,
+      },
+      result: formatNamespaceCollectionsResult(result),
       cache,
     };
   }
@@ -657,10 +730,29 @@ function formatNewCollectionGroupsResult(result: McpInsightResult): Record<strin
   );
 
   return {
-    ...formatDateRangeParameters(result.dateRange),
+    ...formatDateRangeParameters(result.dateRange ?? { days: 0 }),
     returned_nsid_count: rows.length,
     returned_group_count: groups.length,
     namespace_groups: groups,
+  };
+}
+
+function formatNamespaceCollectionsResult(result: McpInsightResult): Record<string, unknown> {
+  const rows = result.value as NamespaceCollectionRow[];
+  return {
+    namespace_prefix: result.namespacePrefix,
+    returned_nsid_count: rows.length,
+    nsids: rows.map((row) => ({
+      collection: row.collection,
+      first_seen_at: row.first_seen_at,
+      last_seen_at: row.last_seen_at,
+      event_count: row.event_count,
+      latest_record: {
+        created_at: row.latest_record_created_at,
+        at_uri: row.latest_record_at_uri,
+        get_record_url: row.latest_record_get_record_url,
+      },
+    })),
   };
 }
 
@@ -682,15 +774,22 @@ function formatNewCollectionsToolResult(result: McpInsightResult, cache: Record<
   return {
     tool: 'get_new_collections',
     intent: 'newly_observed_namespace_groups',
-    parameters: formatDateRangeParameters(result.dateRange),
+    parameters: formatDateRangeParameters(result.dateRange ?? { days: 0 }),
     result: {
       primary_view: 'namespace_groups',
       primary_order: ['collection_count desc', 'group_first_seen_at desc', 'event_count_since_group_first_seen desc', 'namespace_prefix asc'],
       returned_nsid_count: rows.length,
       returned_group_count: new Set(rows.map((row) => getNamespacePrefix(row.collection))).size,
       full_nsid_list_omitted: true,
-      namespace_groups: summarizeNamespaceGroups(rows),
-      recent_newly_observed_sample: rows.slice(0, Math.min(10, rows.length)).map(formatNewCollectionRowForMcp),
+      namespace_groups: summarizeNamespaceGroups(rows).map(
+        ({ namespace_prefix, group_first_seen_at, first_seen_nsid_in_group, collection_count, event_count_since_group_first_seen }) => ({
+          namespace_prefix,
+          group_first_seen_at,
+          first_seen_nsid_in_group,
+          collection_count,
+          event_count_since_group_first_seen,
+        }),
+      ),
     },
     cache,
   };
@@ -822,6 +921,19 @@ function mcpCollectionToolInputSchema(): Record<string, unknown> {
         description: '返すcollection数。1から100まで。',
       },
     },
+  };
+}
+
+function mcpNamespaceCollectionToolInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      namespace_prefix: {
+        type: 'string',
+        description: '配下NSIDを列挙したい namespace prefix。例: app.chavatar または app.chavatar.*。',
+      },
+    },
+    required: ['namespace_prefix'],
   };
 }
 

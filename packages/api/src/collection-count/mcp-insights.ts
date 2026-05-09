@@ -35,6 +35,16 @@ export type NewCollectionRow = {
   latest_record_get_record_url: string;
 };
 
+export type NamespaceCollectionRow = {
+  collection: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  event_count: number;
+  latest_record_created_at: string;
+  latest_record_at_uri: string;
+  latest_record_get_record_url: string;
+};
+
 export type ActiveCollectionRow = {
   collection: string;
   event_count: number;
@@ -65,6 +75,16 @@ type RawActiveCollectionRow = {
   event_count: string | number;
   first_seen_at: string;
   last_seen_at: string;
+};
+
+type RawNamespaceCollectionRow = {
+  collection: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  event_count: string | number;
+  latest_record_created_at: string;
+  latest_record_did: string;
+  latest_record_rkey: string;
 };
 
 type RawLatestCollectionRecordPointer = {
@@ -111,13 +131,12 @@ export function parseMcpDateRange(params: {
   };
 }
 
-export function buildMcpCacheKey(tool: string, params: McpDateRange & { limit?: number }): string {
+export function buildMcpCacheKey(tool: string, params: McpDateRange & { limit?: number; namespacePrefix?: string }): string {
   const rangeKey =
     params.startDate != null && params.endDate != null ? `start=${params.startDate}:end=${params.endDate}` : `days=${params.days}`;
-  if (params.limit == null) {
-    return `${tool}:${rangeKey}`;
-  }
-  return `${tool}:${rangeKey}:limit=${params.limit}`;
+  const limitKey = params.limit == null ? '' : `:limit=${params.limit}`;
+  const namespaceKey = params.namespacePrefix == null ? '' : `:namespace=${params.namespacePrefix}`;
+  return `${tool}:${rangeKey}${limitKey}${namespaceKey}`;
 }
 
 export async function readThroughMcpCache<T>(
@@ -265,6 +284,50 @@ LIMIT {row_limit:UInt16}
     event_count: Number(row.event_count),
     first_seen_at: row.first_seen_at,
     last_seen_at: row.last_seen_at,
+  }));
+}
+
+export async function readCollectionsForNamespaceFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: { namespacePrefix: string },
+): Promise<NamespaceCollectionRow[]> {
+  const result = await withTimeout(
+    client.query({
+      query: `
+SELECT
+  collection,
+  formatDateTime(min(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
+  formatDateTime(max(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS last_seen_at,
+  count() AS event_count,
+  formatDateTime(max(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS latest_record_created_at,
+  argMax(did, tuple(created_at, event_key)) AS latest_record_did,
+  argMax(rkey, tuple(created_at, event_key)) AS latest_record_rkey
+FROM atp_dashboard.collection_events
+WHERE isNotNull(created_at)
+  AND did != {excluded_did:String}
+  AND startsWith(collection, concat({namespace_prefix:String}, '.'))
+GROUP BY collection
+ORDER BY first_seen_at ASC, collection ASC
+`,
+      query_params: {
+        namespace_prefix: params.namespacePrefix,
+        excluded_did: LEXICON_STORE_DID,
+      },
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse MCP namespace collections query timed out',
+  );
+  const rows = await result.json<RawNamespaceCollectionRow[]>();
+  return rows.map((row) => ({
+    collection: row.collection,
+    first_seen_at: row.first_seen_at,
+    last_seen_at: row.last_seen_at,
+    event_count: Number(row.event_count),
+    latest_record_created_at: row.latest_record_created_at,
+    latest_record_at_uri: buildAtUri(row.latest_record_did, row.collection, row.latest_record_rkey),
+    latest_record_get_record_url: buildGetRecordUrl(row.latest_record_did, row.collection, row.latest_record_rkey),
   }));
 }
 
