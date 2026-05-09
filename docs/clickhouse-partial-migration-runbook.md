@@ -136,6 +136,8 @@ packages/api/AtpDashboardAnalyticsApi.service
 packages/jetstream/Collection.service
 packages/clickhouse-tools/CollectionEventsSync.service
 packages/clickhouse-tools/CollectionEventsSync.timer
+packages/clickhouse-tools/CollectionEventsRescan.service
+packages/clickhouse-tools/CollectionEventsRescan.timer
 packages/clickhouse-tools/CollectionCountRefresh.service
 packages/clickhouse-tools/CollectionCountRefresh.timer
 packages/clickhouse-tools/CollectionCountCompare.service
@@ -155,6 +157,8 @@ sudo cp packages/api/AtpDashboardAnalyticsApi.service /etc/systemd/system/
 sudo cp packages/jetstream/Collection.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionEventsSync.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionEventsSync.timer /etc/systemd/system/
+sudo cp packages/clickhouse-tools/CollectionEventsRescan.service /etc/systemd/system/
+sudo cp packages/clickhouse-tools/CollectionEventsRescan.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountRefresh.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountRefresh.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountCompare.service /etc/systemd/system/
@@ -175,6 +179,7 @@ sudo systemctl status AtpDashboardAnalyticsApi.service
 
 ```bash
 sudo systemctl enable --now CollectionEventsSync.timer
+sudo systemctl enable --now CollectionEventsRescan.timer
 sudo systemctl enable --now CollectionCountRefresh.timer
 sudo systemctl enable --now CollectionCountCompare.timer
 sudo systemctl list-timers 'Collection*'

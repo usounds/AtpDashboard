@@ -1,0 +1,12 @@
+[Unit]
+Description=AtpDashboard ClickHouse recent collection_events rescan
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+ExecStart=pnpm backfill:collection-events -- --confirm-production --rescan-days 1 --max-rows 500000 --batch-size 50000 --lock-ttl-seconds 900
+StandardOutput=append:/var/log/CollectionEventsRescan.log
+StandardError=append:/var/log/CollectionEventsRescan.log
