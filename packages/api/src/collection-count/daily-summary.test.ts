@@ -13,6 +13,8 @@ test('active collection summary excludes lexicon store and counts distinct colle
   const sql = buildDailySummaryQuery('active_collection');
 
   assert.match(sql, /uniqExact\(collection\) AS count/);
+  assert.match(sql, /toUInt16\(arrayJoin\(range\(1, limit_days \+ 1\)\)\) AS day/);
+  assert.match(sql, /toUInt16\(dateDiff\('day', toDate\(created_at\), latest_day\) \+ 1\) AS day/);
   assert.match(sql, /did != \{excluded_did:String\}/);
   assert.match(sql, /ORDER BY day ASC/);
 });

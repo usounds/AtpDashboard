@@ -82,12 +82,12 @@ SELECT
   coalesce(count, 0) AS count
 FROM
 (
-  SELECT arrayJoin(range(1, limit_days + 1)) AS day
+  SELECT toUInt16(arrayJoin(range(1, limit_days + 1))) AS day
 ) days
 LEFT JOIN
 (
   SELECT
-    dateDiff('day', toDate(created_at), latest_day) + 1 AS day,
+    toUInt16(dateDiff('day', toDate(created_at), latest_day) + 1) AS day,
     uniqExact(${field}) AS count
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
@@ -113,12 +113,12 @@ SELECT
   coalesce(count, 0) AS count
 FROM
 (
-  SELECT arrayJoin(range(1, limit_days + 1)) AS day
+  SELECT toUInt16(arrayJoin(range(1, limit_days + 1))) AS day
 ) days
 LEFT JOIN
 (
   SELECT
-    dateDiff('day', first_day, latest_day) + 1 AS day,
+    toUInt16(dateDiff('day', first_day, latest_day) + 1) AS day,
     count() AS count
   FROM
   (
