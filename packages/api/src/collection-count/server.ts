@@ -458,7 +458,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_latest_record_for_collection',
           description:
-            '指定した ATProto collection/NSID の record created_at が最新のrecordを取得し、AT URI、getRecord URL、record JSONを返します。「このNSIDのデータを見たい」ときに使ってください。',
+            '指定した ATProto collection/NSID の record created_at が最新のrecordを探し、実データは取得せず pds.ls の確認URLへ案内します。',
           inputSchema: mcpLatestRecordToolInputSchema(),
         },
       ],
@@ -488,7 +488,6 @@ async function handleMcpJsonRpc(params: {
       const result = await resolveLatestCollectionRecord({
         config: params.config,
         clickhouseClient: params.clickhouseClient,
-        fetchImpl: params.fetchImpl,
         collection,
         getClickHouseClient: params.getClickHouseClient,
       });
@@ -550,7 +549,6 @@ async function handleMcpJsonRpc(params: {
 async function resolveLatestCollectionRecord(params: {
   config: CollectionCountApiConfig;
   clickhouseClient: ClickHouseQueryClient | null | undefined;
-  fetchImpl: FetchLike;
   collection: string;
   getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
 }): Promise<Record<string, unknown>> {
@@ -562,106 +560,25 @@ async function resolveLatestCollectionRecord(params: {
   if (!pointer) {
     return {
       tool: 'get_latest_record_for_collection',
-      intent: 'show_latest_record_json_for_nsid',
+      intent: 'guide_to_latest_record_on_pds_ls',
       collection: params.collection,
       found: false,
       latest_record: null,
-      record_json: null,
-      get_record_error: null,
     };
   }
-  const record = await fetchLatestRecordJson(params.fetchImpl, params.config, pointer);
   return {
     tool: 'get_latest_record_for_collection',
-    intent: 'show_latest_record_json_for_nsid',
+    intent: 'guide_to_latest_record_on_pds_ls',
     collection: params.collection,
     found: true,
-    latest_record: pointer,
-    record_json: record.ok ? record.json : null,
-    get_record_error: record.ok ? null : record.error,
+    latest_record: {
+      collection: pointer.collection,
+      created_at: pointer.created_at,
+      at_uri: pointer.at_uri,
+      pds_ls_url: pointer.pds_ls_url,
+    },
+    guidance: `Open ${pointer.pds_ls_url} to inspect the record outside the LLM conversation.`,
   };
-}
-
-type LatestRecordFetchResult =
-  | {
-      ok: true;
-      json: unknown;
-    }
-  | {
-      ok: false;
-      error: {
-        type: 'http_error' | 'parse_error' | 'timeout' | 'network_error';
-        message: string;
-        retryable: boolean;
-        status?: number;
-        status_text?: string;
-      };
-    };
-
-async function fetchLatestRecordJson(
-  fetchImpl: FetchLike,
-  config: Pick<CollectionCountApiConfig, 'apiTimeoutMs'>,
-  pointer: LatestCollectionRecordPointer,
-): Promise<LatestRecordFetchResult> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.apiTimeoutMs);
-  try {
-    const response = await fetchImpl(pointer.get_record_url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return {
-        ok: false,
-        error: {
-          type: 'http_error',
-          status: response.status,
-          status_text: response.statusText,
-          message: `getRecord failed with ${response.status}`,
-          retryable: response.status === 429 || response.status >= 500,
-        },
-      };
-    }
-    try {
-      return {
-        ok: true,
-        json: await response.json(),
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          type: 'parse_error',
-          message: error instanceof Error ? error.message : 'getRecord response JSON parse failed',
-          retryable: false,
-        },
-      };
-    }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return {
-        ok: false,
-        error: {
-          type: 'timeout',
-          message: 'getRecord request timed out',
-          retryable: true,
-        },
-      };
-    }
-    return {
-      ok: false,
-      error: {
-        type: 'network_error',
-        message: error instanceof Error ? error.message : 'getRecord request failed',
-        retryable: true,
-      },
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function parseMcpCollection(value: unknown): string {

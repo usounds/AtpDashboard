@@ -9,6 +9,7 @@ const DEFAULT_DAYS = 7;
 const DEFAULT_LIMIT = 30;
 const LEXICON_STORE_DID = 'did:web:lexicon.store';
 const DEFAULT_GET_RECORD_SERVICE = 'https://slingshot.microcosm.blue';
+const PDS_LS_SERVICE = 'https://pds.ls';
 
 export type McpCacheStatus = 'HIT' | 'MISS';
 
@@ -59,6 +60,7 @@ export type LatestCollectionRecordPointer = {
   rkey: string;
   at_uri: string;
   get_record_url: string;
+  pds_ls_url: string;
 };
 
 type RawNewCollectionRow = {
@@ -365,13 +367,15 @@ LIMIT 1
   if (!row) {
     return null;
   }
+  const atUri = buildAtUri(row.did, row.collection, row.rkey);
   return {
     collection: row.collection,
     created_at: row.created_at,
     did: row.did,
     rkey: row.rkey,
-    at_uri: buildAtUri(row.did, row.collection, row.rkey),
+    at_uri: atUri,
     get_record_url: buildGetRecordUrl(row.did, row.collection, row.rkey),
+    pds_ls_url: buildPdsLsUrl(atUri),
   };
 }
 
@@ -424,6 +428,10 @@ function buildGetRecordUrl(did: string, collection: string, rkey: string): strin
     rkey,
   });
   return `${DEFAULT_GET_RECORD_SERVICE}/xrpc/com.atproto.repo.getRecord?${params.toString()}`;
+}
+
+function buildPdsLsUrl(atUri: string): string {
+  return `${PDS_LS_SERVICE}/${atUri}`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

@@ -911,8 +911,8 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
   });
 });
 
-test('serves MCP get_latest_record_for_collection with record JSON', async () => {
-  let fetchedUrl = '';
+test('serves MCP get_latest_record_for_collection with pds.ls guidance only', async () => {
+  let fetched = false;
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -935,25 +935,9 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
           };
         },
       },
-      fetch: (async (input: RequestInfo | URL) => {
-        fetchedUrl = String(input);
-        return new Response(
-          JSON.stringify({
-            uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a',
-            value: {
-              $type: 'app.bsky.feed.like',
-              subject: {
-                uri: 'at://did:plc:example/app.bsky.feed.post/r1',
-              },
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          },
-        );
+      fetch: (async () => {
+        fetched = true;
+        return new Response('{}');
       }) as typeof fetch,
     },
   );
@@ -975,30 +959,23 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
   const parsedToolText = JSON.parse(body.result.content[0].text);
 
   assert.equal(response.status, 200);
-  assert.equal(
-    fetchedUrl,
-    'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a',
-  );
+  assert.equal(fetched, false);
   assert.equal(parsedToolText.tool, 'get_latest_record_for_collection');
-  assert.equal(parsedToolText.intent, 'show_latest_record_json_for_nsid');
+  assert.equal(parsedToolText.intent, 'guide_to_latest_record_on_pds_ls');
   assert.equal(parsedToolText.collection, 'app.bsky.feed.like');
   assert.equal(parsedToolText.found, true);
   assert.deepEqual(parsedToolText.latest_record, {
     collection: 'app.bsky.feed.like',
     created_at: '2026-05-09T11:49:23.006000Z',
-    did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
-    rkey: '3lv4ouczo2b2a',
     at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a',
-    get_record_url:
-      'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a',
+    pds_ls_url: 'https://pds.ls/at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a',
   });
-  assert.deepEqual(parsedToolText.record_json.value, {
-    $type: 'app.bsky.feed.like',
-    subject: {
-      uri: 'at://did:plc:example/app.bsky.feed.post/r1',
-    },
-  });
-  assert.equal(parsedToolText.get_record_error, null);
+  assert.equal(
+    parsedToolText.guidance,
+    'Open https://pds.ls/at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a to inspect the record outside the LLM conversation.',
+  );
+  assert.equal(Object.hasOwn(parsedToolText, 'record_json'), false);
+  assert.equal(Object.hasOwn(parsedToolText, 'get_record_error'), false);
 });
 
 test('serves MCP get_latest_record_for_collection with found false when no record exists', async () => {
@@ -1039,126 +1016,8 @@ test('serves MCP get_latest_record_for_collection with found false when no recor
   assert.equal(response.status, 200);
   assert.equal(parsedToolText.found, false);
   assert.equal(parsedToolText.latest_record, null);
-  assert.equal(parsedToolText.record_json, null);
-  assert.equal(parsedToolText.get_record_error, null);
-});
-
-test('serves MCP get_latest_record_for_collection with pointer preserved when getRecord fails', async () => {
-  const app = createCollectionCountApp(
-    {
-      ...baseConfig,
-      clickhouseUrl: 'http://localhost:8123',
-    },
-    {
-      clickhouse: {
-        async query() {
-          return {
-            async json<T>() {
-              return [
-                {
-                  collection: 'app.bsky.feed.like',
-                  created_at: '2026-05-09T11:49:23.006000Z',
-                  did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
-                  rkey: '3lv4ouczo2b2a',
-                },
-              ] as T;
-            },
-          };
-        },
-      },
-      fetch: (async () =>
-        new Response(JSON.stringify({ error: 'not_found' }), {
-          status: 404,
-          statusText: 'Not Found',
-        })) as typeof fetch,
-    },
-  );
-
-  const response = await app.request('/api/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/call',
-      params: {
-        name: 'get_latest_record_for_collection',
-        arguments: { collection: 'app.bsky.feed.like' },
-      },
-    }),
-  });
-  const body = await response.json();
-  const parsedToolText = JSON.parse(body.result.content[0].text);
-
-  assert.equal(response.status, 200);
-  assert.equal(parsedToolText.found, true);
-  assert.equal(parsedToolText.record_json, null);
-  assert.equal(parsedToolText.latest_record.at_uri, 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a');
-  assert.deepEqual(parsedToolText.get_record_error, {
-    type: 'http_error',
-    status: 404,
-    status_text: 'Not Found',
-    message: 'getRecord failed with 404',
-    retryable: false,
-  });
-});
-
-test('serves MCP get_latest_record_for_collection timeout as retryable record error', async () => {
-  const abortError = new Error('The operation was aborted');
-  abortError.name = 'AbortError';
-  const app = createCollectionCountApp(
-    {
-      ...baseConfig,
-      clickhouseUrl: 'http://localhost:8123',
-    },
-    {
-      clickhouse: {
-        async query() {
-          return {
-            async json<T>() {
-              return [
-                {
-                  collection: 'app.bsky.feed.like',
-                  created_at: '2026-05-09T11:49:23.006000Z',
-                  did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
-                  rkey: '3lv4ouczo2b2a',
-                },
-              ] as T;
-            },
-          };
-        },
-      },
-      fetch: (async () => {
-        throw abortError;
-      }) as typeof fetch,
-    },
-  );
-
-  const response = await app.request('/api/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/call',
-      params: {
-        name: 'get_latest_record_for_collection',
-        arguments: { collection: 'app.bsky.feed.like' },
-      },
-    }),
-  });
-  const body = await response.json();
-  const parsedToolText = JSON.parse(body.result.content[0].text);
-
-  assert.equal(response.status, 200);
-  assert.equal(parsedToolText.found, true);
-  assert.equal(parsedToolText.record_json, null);
-  assert.equal(parsedToolText.latest_record.at_uri, 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a');
-  assert.deepEqual(parsedToolText.get_record_error, {
-    type: 'timeout',
-    message: 'getRecord request timed out',
-    retryable: true,
-  });
+  assert.equal(Object.hasOwn(parsedToolText, 'record_json'), false);
+  assert.equal(Object.hasOwn(parsedToolText, 'get_record_error'), false);
 });
 
 test('serves MCP get_latest_record_for_collection invalid collection as invalid params', async () => {
