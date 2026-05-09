@@ -500,7 +500,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_daily_users',
           description:
-            '指定した直近日数で rolling 24h バケットのユーザー推移を返します。Daily Users の表として、各24時間バケットの active DID 数と new DID 数を date/day_offset/active/new の行で返します。「この1週間のユーザーの推移」「Daily Users」「Active/New users」の質問ではこの tool を優先してください。',
+            '指定した直近日数で rolling 24h バケットのユーザー推移を返します。グラフ描画しやすい time series として、各24時間バケットの active DID 数と new DID 数を date/day_offset/active/new の行と chart_spec で返します。「この1週間のユーザーの推移」「Daily Users」「Active/New users」「グラフにして」の質問ではこの tool を優先してください。',
           inputSchema: mcpDailyUsersToolInputSchema(),
         },
         {
@@ -716,10 +716,10 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
 
   return {
     tool: 'get_daily_users',
-    intent: 'daily_users_active_and_new_table',
+    intent: 'daily_users_active_and_new_time_series',
     parameters: formatDateRangeParameters(result.dateRange ?? { days: 0 }),
     result: {
-      primary_view: 'daily_users_table',
+      primary_view: 'time_series_chart',
       period: {
         start_date: startDate,
         end_date: endDate,
@@ -732,6 +732,31 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
         { key: 'active', description: 'Unique DIDs observed in that rolling 24-hour bucket.' },
         { key: 'new', description: 'DIDs first observed in that rolling 24-hour bucket.' },
       ],
+      chart_spec: {
+        type: 'line',
+        title: 'Daily active and new users',
+        x: {
+          key: 'date',
+          type: 'temporal',
+          label: 'Date',
+        },
+        series: [
+          {
+            key: 'active',
+            label: 'Active users',
+            role: 'primary',
+            color_hint: 'blue',
+          },
+          {
+            key: 'new',
+            label: 'New users',
+            role: 'secondary',
+            color_hint: 'green',
+            optional: true,
+          },
+        ],
+        preferred_rendering: ['mermaid_xychart', 'markdown_table'],
+      },
       returned_day_count: rows.length,
       rows,
       summary: {
@@ -741,7 +766,7 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
         new_total: totals.new_sum,
       },
       response_guidance:
-        'Answer user questions with a compact Daily Users table. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket. It is allowed and encouraged to describe obvious increases, decreases, peaks, dips, and short-term trends from these rows in natural language, as long as the interpretation stays grounded in the returned numbers.',
+        'For graph or trend requests, render a compact line chart from chart_spec and rows. Prefer Mermaid xyChart-beta when supported, using date as the x-axis and active users as the primary y-axis; include new users as an optional secondary series only when useful or requested. Also include a compact Daily Users table when it helps readability. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket. Describe obvious increases, decreases, peaks, dips, and short-term trends only when grounded in the returned numbers.',
     },
     cache,
   };

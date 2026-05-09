@@ -622,7 +622,7 @@ test('serves MCP tools/list and tools/call', async () => {
   ]);
 });
 
-test('serves MCP get_daily_users as active and new user table', async () => {
+test('serves MCP get_daily_users as active and new user time series', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -672,14 +672,39 @@ test('serves MCP get_daily_users as active and new user table', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(parsedToolText.tool, 'get_daily_users');
-  assert.equal(parsedToolText.intent, 'daily_users_active_and_new_table');
+  assert.equal(parsedToolText.intent, 'daily_users_active_and_new_time_series');
   assert.deepEqual(parsedToolText.parameters, { lookback_days: 7 });
-  assert.equal(parsedToolText.result.primary_view, 'daily_users_table');
+  assert.equal(parsedToolText.result.primary_view, 'time_series_chart');
   assert.deepEqual(parsedToolText.result.period, {
     start_date: '2026-05-03',
     end_date: '2026-05-09',
     days: 2,
     timezone: 'UTC',
+  });
+  assert.deepEqual(parsedToolText.result.chart_spec, {
+    type: 'line',
+    title: 'Daily active and new users',
+    x: {
+      key: 'date',
+      type: 'temporal',
+      label: 'Date',
+    },
+    series: [
+      {
+        key: 'active',
+        label: 'Active users',
+        role: 'primary',
+        color_hint: 'blue',
+      },
+      {
+        key: 'new',
+        label: 'New users',
+        role: 'secondary',
+        color_hint: 'green',
+        optional: true,
+      },
+    ],
+    preferred_rendering: ['mermaid_xychart', 'markdown_table'],
   });
   assert.deepEqual(parsedToolText.result.rows, [
     {
