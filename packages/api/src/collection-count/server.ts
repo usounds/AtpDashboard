@@ -366,7 +366,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_new_collections',
           description:
-            '指定した直近日数で初めて観測された ATProto collection/NSID を、nsid_first_seen_at の新しい順で返します。',
+            '指定した直近日数で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全NSID一覧は返さず、groupごとの sample_nsids と最新sampleを返します。',
           inputSchema: mcpCollectionToolInputSchema(),
         },
         {
@@ -586,30 +586,22 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
 
 function formatNewCollectionsToolResult(result: McpInsightResult, cache: Record<string, unknown>): Record<string, unknown> {
   const rows = result.value as NewCollectionRow[];
-  const newlyObservedNsids = rows.map((row) => ({
-    collection: row.collection,
-    nsid_first_seen_at: row.first_seen_at,
-    event_count_since_nsid_first_seen: row.event_count,
-    last_indexed_record: {
-      indexed_at: row.last_indexed_at,
-      at_uri: row.last_indexed_at_uri,
-      get_record_url: row.last_indexed_get_record_url,
-    },
-  }));
 
   return {
     tool: 'get_new_collections',
-    intent: 'newly_observed_nsids',
+    intent: 'newly_observed_namespace_groups',
     parameters: {
       lookback_days: result.days,
       limit: result.limit,
     },
     result: {
-      primary_order: ['nsid_first_seen_at desc', 'event_count_since_nsid_first_seen desc', 'collection asc'],
-      returned_count: rows.length,
+      primary_view: 'namespace_groups',
+      primary_order: ['collection_count desc', 'group_first_seen_at desc', 'event_count_since_group_first_seen desc', 'namespace_prefix asc'],
+      returned_nsid_count: rows.length,
       is_truncated: rows.length >= result.limit,
-      newly_observed_nsids: newlyObservedNsids,
+      full_nsid_list_omitted: true,
       namespace_groups: summarizeNamespaceGroups(rows),
+      recent_newly_observed_sample: rows.slice(0, Math.min(10, rows.length)).map(formatNewCollectionRowForMcp),
     },
     cache,
   };
@@ -621,7 +613,7 @@ function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
   first_seen_nsid_in_group: string;
   collection_count: number;
   event_count_since_group_first_seen: number;
-  examples: string[];
+  sample_nsids: Array<ReturnType<typeof formatNewCollectionRowForMcp>>;
 }> {
   const groups = new Map<
     string,
@@ -630,7 +622,7 @@ function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
       first_seen_nsid_in_group: string;
       collection_count: number;
       event_count_since_group_first_seen: number;
-      examples: string[];
+      sample_nsids: Array<ReturnType<typeof formatNewCollectionRowForMcp>>;
     }
   >();
   for (const row of rows) {
@@ -640,7 +632,7 @@ function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
       first_seen_nsid_in_group: row.collection,
       collection_count: 0,
       event_count_since_group_first_seen: 0,
-      examples: [],
+      sample_nsids: [],
     };
     group.collection_count += 1;
     group.event_count_since_group_first_seen += row.event_count;
@@ -651,8 +643,8 @@ function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
       group.group_first_seen_at = row.first_seen_at;
       group.first_seen_nsid_in_group = row.collection;
     }
-    if (group.examples.length < 3) {
-      group.examples.push(row.collection);
+    if (group.sample_nsids.length < 3) {
+      group.sample_nsids.push(formatNewCollectionRowForMcp(row));
     }
     groups.set(namespacePrefix, group);
   }
@@ -667,6 +659,28 @@ function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
         a.namespace_prefix.localeCompare(b.namespace_prefix),
     )
     .slice(0, 10);
+}
+
+function formatNewCollectionRowForMcp(row: NewCollectionRow): {
+  collection: string;
+  nsid_first_seen_at: string;
+  event_count_since_nsid_first_seen: number;
+  last_indexed_record: {
+    indexed_at: string;
+    at_uri: string;
+    get_record_url: string;
+  };
+} {
+  return {
+    collection: row.collection,
+    nsid_first_seen_at: row.first_seen_at,
+    event_count_since_nsid_first_seen: row.event_count,
+    last_indexed_record: {
+      indexed_at: row.last_indexed_at,
+      at_uri: row.last_indexed_at_uri,
+      get_record_url: row.last_indexed_get_record_url,
+    },
+  };
 }
 
 function getNamespacePrefix(collection: string): string {

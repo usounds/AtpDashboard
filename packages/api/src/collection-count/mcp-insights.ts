@@ -271,7 +271,6 @@ function buildGetRecordUrl(did: string, collection: string, rkey: string): strin
     repo: did,
     collection,
     rkey,
-    cid: '',
   });
   return `${DEFAULT_GET_RECORD_SERVICE}/xrpc/com.atproto.repo.getRecord?${params.toString()}`;
 }

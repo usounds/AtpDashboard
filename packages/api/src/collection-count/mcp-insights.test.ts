@@ -35,7 +35,7 @@ test('reads new collections by first ingestion time instead of record created_at
       last_indexed_at: '2026-05-09T11:30:00.000000Z',
       last_indexed_at_uri: 'at://did:plc:example/app.example.backfilled/3lv4ouczo2b2a',
       last_indexed_get_record_url:
-        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.backfilled&rkey=3lv4ouczo2b2a&cid=',
+        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.backfilled&rkey=3lv4ouczo2b2a',
     },
   ]);
   assert.match(capturedQuery, /SELECT max\(ingested_at\)/);

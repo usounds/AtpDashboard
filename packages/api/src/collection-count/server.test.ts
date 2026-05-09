@@ -411,7 +411,7 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
       last_indexed_at: '2026-05-09T00:30:00.000000Z',
       last_indexed_at_uri: 'at://did:plc:example/app.example.new/r1',
       last_indexed_get_record_url:
-        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.new&rkey=r1&cid=',
+        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.new&rkey=r1',
     },
   ]);
 });
@@ -483,7 +483,7 @@ test('serves MCP tools/list and tools/call', async () => {
   ]);
 });
 
-test('serves MCP get_new_collections with NSID-first response shape', async () => {
+test('serves MCP get_new_collections with namespace-group-first response shape', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -545,16 +545,21 @@ test('serves MCP get_new_collections with NSID-first response shape', async () =
 
   assert.equal(response.status, 200);
   assert.equal(parsedToolText.tool, 'get_new_collections');
-  assert.equal(parsedToolText.intent, 'newly_observed_nsids');
+  assert.equal(parsedToolText.intent, 'newly_observed_namespace_groups');
   assert.deepEqual(parsedToolText.parameters, { lookback_days: 3, limit: 100 });
   assert.equal(Object.hasOwn(parsedToolText, 'display_hint'), false);
   assert.equal(Object.hasOwn(parsedToolText, 'summary'), false);
+  assert.equal(Object.hasOwn(parsedToolText.result, 'newly_observed_nsids'), false);
+  assert.equal(parsedToolText.result.primary_view, 'namespace_groups');
   assert.deepEqual(parsedToolText.result.primary_order, [
-    'nsid_first_seen_at desc',
-    'event_count_since_nsid_first_seen desc',
-    'collection asc',
+    'collection_count desc',
+    'group_first_seen_at desc',
+    'event_count_since_group_first_seen desc',
+    'namespace_prefix asc',
   ]);
-  assert.deepEqual(parsedToolText.result.newly_observed_nsids[0], {
+  assert.equal(parsedToolText.result.returned_nsid_count, 3);
+  assert.equal(parsedToolText.result.full_nsid_list_omitted, true);
+  assert.deepEqual(parsedToolText.result.recent_newly_observed_sample[0], {
     collection: 'cash.attoshi.utxo',
     nsid_first_seen_at: '2026-05-09T11:45:23.006000Z',
     event_count_since_nsid_first_seen: 83,
@@ -562,18 +567,40 @@ test('serves MCP get_new_collections with NSID-first response shape', async () =
       indexed_at: '2026-05-09T11:49:23.006000Z',
       at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/cash.attoshi.utxo/3lv4ouczo2b2a',
       get_record_url:
-        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a&cid=',
+        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a',
     },
   });
-  assert.equal(Object.hasOwn(parsedToolText.result.newly_observed_nsids[0], 'first_seen_at'), false);
-  assert.equal(Object.hasOwn(parsedToolText.result.newly_observed_nsids[0], 'event_count'), false);
+  assert.equal(Object.hasOwn(parsedToolText.result.recent_newly_observed_sample[0], 'first_seen_at'), false);
+  assert.equal(Object.hasOwn(parsedToolText.result.recent_newly_observed_sample[0], 'event_count'), false);
   assert.deepEqual(parsedToolText.result.namespace_groups.find((group: { namespace_prefix: string }) => group.namespace_prefix === 'cash.attoshi.*'), {
     namespace_prefix: 'cash.attoshi.*',
     group_first_seen_at: '2026-05-09T11:45:22.006000Z',
     first_seen_nsid_in_group: 'cash.attoshi.tx',
     collection_count: 2,
     event_count_since_group_first_seen: 125,
-    examples: ['cash.attoshi.utxo', 'cash.attoshi.tx'],
+    sample_nsids: [
+      {
+        collection: 'cash.attoshi.utxo',
+        nsid_first_seen_at: '2026-05-09T11:45:23.006000Z',
+        event_count_since_nsid_first_seen: 83,
+        last_indexed_record: {
+          indexed_at: '2026-05-09T11:49:23.006000Z',
+          at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/cash.attoshi.utxo/3lv4ouczo2b2a',
+          get_record_url:
+            'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a',
+        },
+      },
+      {
+        collection: 'cash.attoshi.tx',
+        nsid_first_seen_at: '2026-05-09T11:45:22.006000Z',
+        event_count_since_nsid_first_seen: 42,
+        last_indexed_record: {
+          indexed_at: '2026-05-09T11:48:22.006000Z',
+          at_uri: 'at://did:plc:tx/cash.attoshi.tx/tx-rkey',
+          get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Atx&collection=cash.attoshi.tx&rkey=tx-rkey',
+        },
+      },
+    ],
   });
   assert.equal(
     Object.hasOwn(
@@ -652,7 +679,7 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
   assert.equal(response.status, 200);
   assert.equal(
     fetchedUrl,
-    'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a&cid=',
+    'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a',
   );
   assert.equal(parsedToolText.tool, 'get_latest_record_for_collection');
   assert.equal(parsedToolText.intent, 'show_latest_record_json_for_nsid');
@@ -665,7 +692,7 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
     rkey: '3lv4ouczo2b2a',
     at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a',
     get_record_url:
-      'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a&cid=',
+      'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a',
   });
   assert.deepEqual(parsedToolText.record_json.value, {
     $type: 'app.bsky.feed.like',
