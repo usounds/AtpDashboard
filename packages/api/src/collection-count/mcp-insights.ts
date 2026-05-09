@@ -8,6 +8,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_DAYS = 7;
 const DEFAULT_LIMIT = 30;
 const LEXICON_STORE_DID = 'did:web:lexicon.store';
+const DEFAULT_GET_RECORD_SERVICE = 'https://slingshot.microcosm.blue';
 
 export type McpCacheStatus = 'HIT' | 'MISS';
 
@@ -21,6 +22,9 @@ export type NewCollectionRow = {
   collection: string;
   first_seen_at: string;
   event_count: number;
+  last_indexed_at: string;
+  last_indexed_at_uri: string;
+  last_indexed_get_record_url: string;
 };
 
 export type ActiveCollectionRow = {
@@ -30,10 +34,22 @@ export type ActiveCollectionRow = {
   last_seen_at: string;
 };
 
+export type LatestCollectionRecordPointer = {
+  collection: string;
+  indexed_at: string;
+  did: string;
+  rkey: string;
+  at_uri: string;
+  get_record_url: string;
+};
+
 type RawNewCollectionRow = {
   collection: string;
   first_seen_at: string;
   event_count: string | number;
+  last_indexed_at: string;
+  last_indexed_did: string;
+  last_indexed_rkey: string;
 };
 
 type RawActiveCollectionRow = {
@@ -41,6 +57,13 @@ type RawActiveCollectionRow = {
   event_count: string | number;
   first_seen_at: string;
   last_seen_at: string;
+};
+
+type RawLatestCollectionRecordPointer = {
+  collection: string;
+  indexed_at: string;
+  did: string;
+  rkey: string;
 };
 
 export function parseMcpDays(value: string | number | undefined): number {
@@ -98,13 +121,19 @@ WITH
 SELECT
   collection,
   formatDateTime(first_seen_ingested_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
-  event_count
+  event_count,
+  formatDateTime(last_indexed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS last_indexed_at,
+  last_indexed_did,
+  last_indexed_rkey
 FROM
 (
   SELECT
     collection,
     min(ingested_at) AS first_seen_ingested_at,
-    countIf(ingested_at > latest_at - toIntervalDay(lookback_days) AND ingested_at <= latest_at) AS event_count
+    countIf(ingested_at > latest_at - toIntervalDay(lookback_days) AND ingested_at <= latest_at) AS event_count,
+    max(ingested_at) AS last_indexed_at,
+    argMax(did, tuple(ingested_at, event_key)) AS last_indexed_did,
+    argMax(rkey, tuple(ingested_at, event_key)) AS last_indexed_rkey
   FROM atp_dashboard.collection_events
   WHERE did != {excluded_did:String}
   GROUP BY collection
@@ -129,6 +158,9 @@ LIMIT {row_limit:UInt16}
     collection: row.collection,
     first_seen_at: row.first_seen_at,
     event_count: Number(row.event_count),
+    last_indexed_at: row.last_indexed_at,
+    last_indexed_at_uri: buildAtUri(row.last_indexed_did, row.collection, row.last_indexed_rkey),
+    last_indexed_get_record_url: buildGetRecordUrl(row.last_indexed_did, row.collection, row.last_indexed_rkey),
   }));
 }
 
@@ -179,12 +211,69 @@ LIMIT {row_limit:UInt16}
   }));
 }
 
+export async function readLatestCollectionRecordPointerFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: { collection: string },
+): Promise<LatestCollectionRecordPointer | null> {
+  const result = await withTimeout(
+    client.query({
+      query: `
+SELECT
+  collection,
+  formatDateTime(ingested_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS indexed_at,
+  did,
+  rkey
+FROM atp_dashboard.collection_events
+WHERE collection = {collection:String}
+  AND did != {excluded_did:String}
+ORDER BY ingested_at DESC, event_key DESC
+LIMIT 1
+`,
+      query_params: {
+        collection: params.collection,
+        excluded_did: LEXICON_STORE_DID,
+      },
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse MCP latest record query timed out',
+  );
+  const rows = await result.json<RawLatestCollectionRecordPointer[]>();
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    collection: row.collection,
+    indexed_at: row.indexed_at,
+    did: row.did,
+    rkey: row.rkey,
+    at_uri: buildAtUri(row.did, row.collection, row.rkey),
+    get_record_url: buildGetRecordUrl(row.did, row.collection, row.rkey),
+  };
+}
+
 function parseBoundedInteger(value: string | number | undefined, fallback: number, min: number, max: number): number {
   const parsed = value == null || value === '' ? fallback : Number(value);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
     throw new Error(`Value must be an integer between ${min} and ${max}`);
   }
   return parsed;
+}
+
+function buildAtUri(did: string, collection: string, rkey: string): string {
+  return `at://${did}/${collection}/${rkey}`;
+}
+
+function buildGetRecordUrl(did: string, collection: string, rkey: string): string {
+  const params = new URLSearchParams({
+    repo: did,
+    collection,
+    rkey,
+    cid: '',
+  });
+  return `${DEFAULT_GET_RECORD_SERVICE}/xrpc/com.atproto.repo.getRecord?${params.toString()}`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

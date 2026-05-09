@@ -21,10 +21,12 @@ import {
   buildMcpCacheKey,
   parseMcpDays,
   parseMcpLimit,
+  readLatestCollectionRecordPointerFromClickHouse,
   readActiveCollectionsFromClickHouse,
   readNewCollectionsFromClickHouse,
   readThroughMcpCache,
   type ActiveCollectionRow,
+  type LatestCollectionRecordPointer,
   type McpCacheEntry,
   type McpCacheStatus,
   type NewCollectionRow,
@@ -60,11 +62,15 @@ type JsonRpcRequest = {
 };
 
 type McpInsightTool = 'get_new_collections' | 'get_active_collections';
+type McpTool = McpInsightTool | 'get_latest_record_for_collection';
 
 type McpInsightResult = {
   value: NewCollectionRow[] | ActiveCollectionRow[];
   cacheKey: string;
   cacheStatus: McpCacheStatus;
+  days: number;
+  limit: number;
+  tool: McpInsightTool;
 };
 
 export type CollectionCountAppDependencies = {
@@ -242,6 +248,7 @@ export function createCollectionCountApp(
         payload,
         config,
         clickhouseClient,
+        fetchImpl,
         mcpReadCache,
         getClickHouseClient: async () => {
           clickhouseClient ??= await createClickHouseClient(config);
@@ -312,6 +319,9 @@ async function resolveMcpInsight(params: {
     value: cached.value as NewCollectionRow[] | ActiveCollectionRow[],
     cacheKey,
     cacheStatus: cached.status,
+    days: params.days,
+    limit: params.limit,
+    tool: params.tool,
   };
 }
 
@@ -326,6 +336,7 @@ async function handleMcpJsonRpc(params: {
   payload: JsonRpcRequest;
   config: CollectionCountApiConfig;
   clickhouseClient: ClickHouseQueryClient | null | undefined;
+  fetchImpl: FetchLike;
   mcpReadCache: Map<string, McpCacheEntry<unknown>>;
   getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
 }): Promise<Record<string, unknown> | null> {
@@ -354,7 +365,8 @@ async function handleMcpJsonRpc(params: {
       tools: [
         {
           name: 'get_new_collections',
-          description: '指定した直近日数で初めて観測された ATProto collection/NSID を返します。',
+          description:
+            '指定した直近日数で初めて観測された ATProto collection/NSID を、nsid_first_seen_at の新しい順で返します。',
           inputSchema: mcpCollectionToolInputSchema(),
         },
         {
@@ -362,17 +374,47 @@ async function handleMcpJsonRpc(params: {
           description: '指定した直近日数で event_count が多い ATProto collection/NSID を返します。unique_did は重いため返しません。',
           inputSchema: mcpCollectionToolInputSchema(),
         },
+        {
+          name: 'get_latest_record_for_collection',
+          description:
+            '指定した ATProto collection/NSID の最新index済みrecordを取得し、AT URI、getRecord URL、record JSONを返します。「このNSIDのデータを見たい」ときに使ってください。',
+          inputSchema: mcpLatestRecordToolInputSchema(),
+        },
       ],
     });
   }
 
   if (payload.method === 'tools/call') {
-    const tool = payload.params?.name;
-    if (tool !== 'get_new_collections' && tool !== 'get_active_collections') {
+    const tool = payload.params?.name as McpTool | undefined;
+    if (tool !== 'get_new_collections' && tool !== 'get_active_collections' && tool !== 'get_latest_record_for_collection') {
       return jsonRpcError(id, -32602, 'Unknown tool');
     }
 
     const args = payload.params?.arguments ?? {};
+    if (tool === 'get_latest_record_for_collection') {
+      let collection: string;
+      try {
+        collection = parseMcpCollection(args.collection);
+      } catch (error) {
+        return jsonRpcError(id, -32602, error instanceof Error ? error.message : 'Invalid params');
+      }
+      const result = await resolveLatestCollectionRecord({
+        config: params.config,
+        clickhouseClient: params.clickhouseClient,
+        fetchImpl: params.fetchImpl,
+        collection,
+        getClickHouseClient: params.getClickHouseClient,
+      });
+      return jsonRpcResult(id, {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      });
+    }
+
     const days = parseMcpDays(args.days as string | number | undefined);
     const limit = parseMcpLimit(args.limit as string | number | undefined);
     const result = await resolveMcpInsight({
@@ -390,14 +432,7 @@ async function handleMcpJsonRpc(params: {
         {
           type: 'text',
           text: JSON.stringify(
-            {
-              cache: {
-                status: result.cacheStatus,
-                key: result.cacheKey,
-                ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
-              },
-              data: result.value,
-            },
+            formatMcpToolResult(result),
             null,
             2,
           ),
@@ -407,6 +442,239 @@ async function handleMcpJsonRpc(params: {
   }
 
   return jsonRpcError(id, -32601, 'Method not found');
+}
+
+async function resolveLatestCollectionRecord(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  fetchImpl: FetchLike;
+  collection: string;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<Record<string, unknown>> {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+  const pointer = await readLatestCollectionRecordPointerFromClickHouse(client, params.config, { collection: params.collection });
+  if (!pointer) {
+    return {
+      tool: 'get_latest_record_for_collection',
+      intent: 'show_latest_record_json_for_nsid',
+      collection: params.collection,
+      found: false,
+      latest_indexed_record: null,
+      record_json: null,
+      get_record_error: null,
+    };
+  }
+  const record = await fetchLatestRecordJson(params.fetchImpl, params.config, pointer);
+  return {
+    tool: 'get_latest_record_for_collection',
+    intent: 'show_latest_record_json_for_nsid',
+    collection: params.collection,
+    found: true,
+    latest_indexed_record: pointer,
+    record_json: record.ok ? record.json : null,
+    get_record_error: record.ok ? null : record.error,
+  };
+}
+
+type LatestRecordFetchResult =
+  | {
+      ok: true;
+      json: unknown;
+    }
+  | {
+      ok: false;
+      error: {
+        type: 'http_error' | 'parse_error' | 'timeout' | 'network_error';
+        message: string;
+        retryable: boolean;
+        status?: number;
+        status_text?: string;
+      };
+    };
+
+async function fetchLatestRecordJson(
+  fetchImpl: FetchLike,
+  config: Pick<CollectionCountApiConfig, 'apiTimeoutMs'>,
+  pointer: LatestCollectionRecordPointer,
+): Promise<LatestRecordFetchResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.apiTimeoutMs);
+  try {
+    const response = await fetchImpl(pointer.get_record_url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: {
+          type: 'http_error',
+          status: response.status,
+          status_text: response.statusText,
+          message: `getRecord failed with ${response.status}`,
+          retryable: response.status === 429 || response.status >= 500,
+        },
+      };
+    }
+    try {
+      return {
+        ok: true,
+        json: await response.json(),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          type: 'parse_error',
+          message: error instanceof Error ? error.message : 'getRecord response JSON parse failed',
+          retryable: false,
+        },
+      };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        ok: false,
+        error: {
+          type: 'timeout',
+          message: 'getRecord request timed out',
+          retryable: true,
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: {
+        type: 'network_error',
+        message: error instanceof Error ? error.message : 'getRecord request failed',
+        retryable: true,
+      },
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseMcpCollection(value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('collection must be a non-empty string');
+  }
+  return value.trim();
+}
+
+function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> {
+  const cache = {
+    status: result.cacheStatus,
+    key: result.cacheKey,
+    ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+  };
+  if (result.tool === 'get_new_collections') {
+    return formatNewCollectionsToolResult(result, cache);
+  }
+
+  return {
+    cache,
+    data: result.value,
+  };
+}
+
+function formatNewCollectionsToolResult(result: McpInsightResult, cache: Record<string, unknown>): Record<string, unknown> {
+  const rows = result.value as NewCollectionRow[];
+  const newlyObservedNsids = rows.map((row) => ({
+    collection: row.collection,
+    nsid_first_seen_at: row.first_seen_at,
+    event_count_since_nsid_first_seen: row.event_count,
+    last_indexed_record: {
+      indexed_at: row.last_indexed_at,
+      at_uri: row.last_indexed_at_uri,
+      get_record_url: row.last_indexed_get_record_url,
+    },
+  }));
+
+  return {
+    tool: 'get_new_collections',
+    intent: 'newly_observed_nsids',
+    parameters: {
+      lookback_days: result.days,
+      limit: result.limit,
+    },
+    result: {
+      primary_order: ['nsid_first_seen_at desc', 'event_count_since_nsid_first_seen desc', 'collection asc'],
+      returned_count: rows.length,
+      is_truncated: rows.length >= result.limit,
+      newly_observed_nsids: newlyObservedNsids,
+      namespace_groups: summarizeNamespaceGroups(rows),
+    },
+    cache,
+  };
+}
+
+function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
+  namespace_prefix: string;
+  group_first_seen_at: string;
+  first_seen_nsid_in_group: string;
+  collection_count: number;
+  event_count_since_group_first_seen: number;
+  examples: string[];
+}> {
+  const groups = new Map<
+    string,
+    {
+      group_first_seen_at: string;
+      first_seen_nsid_in_group: string;
+      collection_count: number;
+      event_count_since_group_first_seen: number;
+      examples: string[];
+    }
+  >();
+  for (const row of rows) {
+    const namespacePrefix = getNamespacePrefix(row.collection);
+    const group = groups.get(namespacePrefix) ?? {
+      group_first_seen_at: row.first_seen_at,
+      first_seen_nsid_in_group: row.collection,
+      collection_count: 0,
+      event_count_since_group_first_seen: 0,
+      examples: [],
+    };
+    group.collection_count += 1;
+    group.event_count_since_group_first_seen += row.event_count;
+    if (
+      row.first_seen_at < group.group_first_seen_at ||
+      (row.first_seen_at === group.group_first_seen_at && row.collection < group.first_seen_nsid_in_group)
+    ) {
+      group.group_first_seen_at = row.first_seen_at;
+      group.first_seen_nsid_in_group = row.collection;
+    }
+    if (group.examples.length < 3) {
+      group.examples.push(row.collection);
+    }
+    groups.set(namespacePrefix, group);
+  }
+
+  return [...groups.entries()]
+    .map(([namespace_prefix, group]) => ({ namespace_prefix, ...group }))
+    .sort(
+      (a, b) =>
+        b.collection_count - a.collection_count ||
+        b.group_first_seen_at.localeCompare(a.group_first_seen_at) ||
+        b.event_count_since_group_first_seen - a.event_count_since_group_first_seen ||
+        a.namespace_prefix.localeCompare(b.namespace_prefix),
+    )
+    .slice(0, 10);
+}
+
+function getNamespacePrefix(collection: string): string {
+  const parts = collection.split('.').filter(Boolean);
+  if (parts.length <= 2) {
+    return collection;
+  }
+  return `${parts[0]}.${parts[1]}.*`;
 }
 
 function mcpCollectionToolInputSchema(): Record<string, unknown> {
@@ -428,6 +696,19 @@ function mcpCollectionToolInputSchema(): Record<string, unknown> {
         description: '返すcollection数。1から100まで。',
       },
     },
+  };
+}
+
+function mcpLatestRecordToolInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      collection: {
+        type: 'string',
+        description: 'JSONを直接見たい ATProto collection/NSID。例: app.bsky.feed.like',
+      },
+    },
+    required: ['collection'],
   };
 }
 
