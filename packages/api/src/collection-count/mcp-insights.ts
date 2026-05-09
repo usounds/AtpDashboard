@@ -92,10 +92,9 @@ export async function readNewCollectionsFromClickHouse(
 WITH
   {days:UInt16} AS lookback_days,
   (
-    SELECT toDate(max(created_at))
+    SELECT max(ingested_at)
     FROM atp_dashboard.collection_events
-    WHERE isNotNull(created_at)
-  ) AS latest_day
+  ) AS latest_at
 SELECT
   collection,
   formatDateTime(first_seen_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
@@ -104,14 +103,14 @@ FROM
 (
   SELECT
     collection,
-    min(created_at) AS first_seen_at,
-    countIf(toDate(created_at) >= latest_day - toIntervalDay(lookback_days - 1)) AS event_count
+    min(ingested_at) AS first_seen_at,
+    countIf(ingested_at > latest_at - toIntervalDay(lookback_days) AND ingested_at <= latest_at) AS event_count
   FROM atp_dashboard.collection_events
-  WHERE isNotNull(created_at)
-    AND did != {excluded_did:String}
+  WHERE did != {excluded_did:String}
   GROUP BY collection
 )
-WHERE toDate(first_seen_at) >= latest_day - toIntervalDay(lookback_days - 1)
+WHERE first_seen_at > latest_at - toIntervalDay(lookback_days)
+  AND first_seen_at <= latest_at
 ORDER BY first_seen_at DESC, event_count DESC, collection ASC
 LIMIT {row_limit:UInt16}
 `,
