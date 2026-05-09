@@ -48,6 +48,36 @@ test('serves healthz outside analytics base path', async () => {
   assert.equal(body.publicBasePath, '/api/analytics');
 });
 
+test('allows public CORS access for analytics routes', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: createFakeClickHouse({
+        refreshRows: [
+          {
+            refresh_id: '00000000-0000-4000-8000-000000000011',
+            completed_at: new Date().toISOString(),
+            row_count: 0,
+          },
+        ],
+        snapshotRows: [],
+      }),
+    },
+  );
+
+  const response = await app.request('/api/analytics/collection_count_view', {
+    headers: {
+      Origin: 'http://localhost:5174',
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
+});
+
 test('serves collection_count_view from latest completed ClickHouse snapshot', async () => {
   const app = createCollectionCountApp(
     {

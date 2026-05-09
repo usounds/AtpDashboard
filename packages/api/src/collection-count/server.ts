@@ -57,12 +57,7 @@ export function createCollectionCountApp(
   app.use(
     `${config.publicBasePath}/*`,
     cors({
-      origin: (origin) => {
-        if (!origin) {
-          return null;
-        }
-        return config.allowedOrigins.includes(origin) ? origin : null;
-      },
+      origin: '*',
       allowMethods: ['GET', 'OPTIONS'],
       allowHeaders: ['Content-Type', 'X-Disable-Fallback'],
       exposeHeaders: [

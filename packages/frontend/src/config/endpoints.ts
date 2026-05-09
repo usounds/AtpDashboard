@@ -1,5 +1,5 @@
 export const DEFAULT_COLLECTION_COUNT_ENDPOINT = 'https://dashboardapi.usounds.work/api/analytics/collection_count_view';
-export const DEFAULT_ANALYTICS_API_BASE = 'https://dashboardapi.usounds.work/api/analytics';
+export const DEFAULT_ANALYTICS_API_BASE = 'https://collectiondata.usounds.work';
 
 export type FrontendEndpointEnv = {
     readonly VITE_COLLECTION_COUNT_ENDPOINT?: string;
@@ -12,8 +12,8 @@ export function resolveCollectionCountEndpoint(env: FrontendEndpointEnv = import
 }
 
 export function resolveAnalyticsApiBase(env: FrontendEndpointEnv = import.meta.env): string {
-    const configuredBase = env.VITE_ANALYTICS_API_BASE?.trim();
-    return (configuredBase || DEFAULT_ANALYTICS_API_BASE).replace(/\/+$/, '');
+    void env;
+    return DEFAULT_ANALYTICS_API_BASE;
 }
 
 export function resolveAnalyticsEndpoint(path: string, env: FrontendEndpointEnv = import.meta.env): string {
