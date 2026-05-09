@@ -4,6 +4,7 @@ import {
   parseMcpDailyUserDays,
   parseMcpDateRange,
   readCollectionsForNamespaceFromClickHouse,
+  readDailyCollectionsFromClickHouse,
   readDailyUsersFromClickHouse,
   readNewCollectionsFromClickHouse,
 } from './mcp-insights.ts';
@@ -107,6 +108,47 @@ test('reads daily users as active and new DID series', async () => {
       day_offset: -6,
       active: 4021,
       new: 350,
+    },
+  ]);
+});
+
+test('reads daily collections as active and new collection series', async () => {
+  let capturedQuery = '';
+  let capturedQueryParams: Record<string, unknown> = {};
+  const client: ClickHouseQueryClient = {
+    async query(queryParams) {
+      capturedQuery = queryParams.query;
+      capturedQueryParams = queryParams.query_params ?? {};
+      return {
+        async json<T>() {
+          return [
+            {
+              date: '2026-05-09',
+              day_offset: 0,
+              active: 489,
+              new: 31,
+            },
+          ] as T;
+        },
+      };
+    },
+  };
+
+  const rows = await readDailyCollectionsFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 30 });
+
+  assert.equal(capturedQueryParams.days, 30);
+  assert.equal(capturedQueryParams.excluded_did, 'did:web:lexicon.store');
+  assert.match(capturedQuery, /uniqExact\(collection\) AS active/);
+  assert.match(capturedQuery, /collection,\n\s+min\(created_at\) AS first_seen_at/);
+  assert.match(capturedQuery, /GROUP BY collection/);
+  assert.match(capturedQuery, /coalesce\(new_collections\.new, 0\) AS new/);
+  assert.match(capturedQuery, /ORDER BY bucket_end_at ASC/);
+  assert.deepEqual(rows, [
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      active: 489,
+      new: 31,
     },
   ]);
 });

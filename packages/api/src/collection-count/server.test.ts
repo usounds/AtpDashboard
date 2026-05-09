@@ -552,10 +552,16 @@ test('serves MCP tools/list and tools/call', async () => {
             async json<T>() {
               return [
                 {
-                  collection: 'app.example.active',
-                  event_count: 9,
-                  first_seen_at: '2026-05-08T00:00:00.000000Z',
-                  last_seen_at: '2026-05-09T00:00:00.000000Z',
+                  date: '2026-05-08',
+                  day_offset: -1,
+                  active: 452,
+                  new: 18,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  active: 489,
+                  new: 31,
                 },
               ] as T;
             },
@@ -580,8 +586,8 @@ test('serves MCP tools/list and tools/call', async () => {
       id: 2,
       method: 'tools/call',
       params: {
-        name: 'get_active_collections',
-        arguments: { days: 7, limit: 30 },
+        name: 'get_daily_collections',
+        arguments: { days: 30 },
       },
     }),
   });
@@ -594,8 +600,8 @@ test('serves MCP tools/list and tools/call', async () => {
     [
       'get_new_collection_groups',
       'get_collections_for_namespace',
-      'get_active_collections',
       'get_daily_users',
+      'get_daily_collections',
       'get_latest_record_for_collection',
     ],
   );
@@ -605,19 +611,32 @@ test('serves MCP tools/list and tools/call', async () => {
   assert.match(listBody.result.tools[0].inputSchema.properties.start_date.description, /start_date と end_date を同じ日/);
   assert.match(listBody.result.tools[0].inputSchema.properties.end_date.description, /namespace group として扱います/);
   assert.equal(Object.hasOwn(listBody.result.tools[1].inputSchema.properties, 'namespace_prefix'), true);
-  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'limit'), true);
+  assert.equal(Object.hasOwn(listBody.result.tools[2].inputSchema.properties, 'days'), true);
   assert.equal(Object.hasOwn(listBody.result.tools[3].inputSchema.properties, 'days'), true);
-  assert.match(listBody.result.tools[3].description, /Daily Users/);
-  assert.match(listBody.result.tools[3].description, /ユーザー推移/);
+  assert.match(listBody.result.tools[2].description, /Daily Users/);
+  assert.match(listBody.result.tools[2].description, /ユーザー推移/);
+  assert.match(listBody.result.tools[3].description, /Daily Collections/);
   assert.equal(callResponse.status, 200);
-  assert.equal(Object.hasOwn(parsedToolText, 'summary'), false);
-  assert.equal(Object.hasOwn(parsedToolText, 'display_hint'), false);
-  assert.deepEqual(parsedToolText.data, [
+  assert.equal(parsedToolText.tool, 'get_daily_collections');
+  assert.equal(parsedToolText.intent, 'daily_collections_active_and_new_time_series');
+  assert.equal(parsedToolText.result.chart_spec.title, 'Daily Collections');
+  assert.deepEqual(parsedToolText.result.chart_spec.controls, [
+    { label: 'This Week', days: 7 },
+    { label: 'This Month', days: 30 },
+    { label: 'This Year', days: 365 },
+  ]);
+  assert.deepEqual(parsedToolText.result.rows, [
     {
-      collection: 'app.example.active',
-      event_count: 9,
-      first_seen_at: '2026-05-08T00:00:00.000000Z',
-      last_seen_at: '2026-05-09T00:00:00.000000Z',
+      date: '2026-05-08',
+      day_offset: -1,
+      active: 452,
+      new: 18,
+    },
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      active: 489,
+      new: 31,
     },
   ]);
 });
@@ -784,6 +803,45 @@ test('rejects removed MCP get_new_collections tool', async () => {
       params: {
         name: 'get_new_collections',
         arguments: { days: 3 },
+      },
+    }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.error.code, -32602);
+  assert.equal(body.error.message, 'Unknown tool');
+});
+
+test('rejects removed MCP get_active_collections tool', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'get_active_collections',
+        arguments: { days: 7 },
       },
     }),
   });

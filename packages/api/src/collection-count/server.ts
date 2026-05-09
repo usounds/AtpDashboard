@@ -21,14 +21,13 @@ import {
   buildMcpCacheKey,
   parseMcpDateRange,
   parseMcpDailyUserDays,
-  parseMcpLimit,
   readLatestCollectionRecordPointerFromClickHouse,
-  readActiveCollectionsFromClickHouse,
   readCollectionsForNamespaceFromClickHouse,
+  readDailyCollectionsFromClickHouse,
   readDailyUsersFromClickHouse,
   readNewCollectionsFromClickHouse,
   readThroughMcpCache,
-  type ActiveCollectionRow,
+  type DailyCollectionRow,
   type DailyUserRow,
   type LatestCollectionRecordPointer,
   type McpCacheEntry,
@@ -69,8 +68,8 @@ type JsonRpcRequest = {
 
 type McpInsightTool =
   | 'get_new_collection_groups'
-  | 'get_active_collections'
   | 'get_daily_users'
+  | 'get_daily_collections'
   | 'get_collections_for_namespace';
 type McpTool = McpInsightTool | 'get_latest_record_for_collection';
 
@@ -89,7 +88,7 @@ const UNIVERSAL_RESOLVER_URL = 'https://dev.uniresolver.io/1.0/identifiers';
 const DID_DOCUMENT_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type McpInsightResult = {
-  value: NewCollectionRow[] | ActiveCollectionRow[] | DailyUserRow[] | NamespaceCollectionRow[];
+  value: NewCollectionRow[] | DailyUserRow[] | DailyCollectionRow[] | NamespaceCollectionRow[];
   cacheKey: string;
   cacheStatus: McpCacheStatus;
   dateRange?: McpDateRange;
@@ -280,30 +279,6 @@ export function createCollectionCountApp(
     }
   });
 
-  app.get(getPublicRoute(config, '/mcp/active_collections'), async (c) => {
-    try {
-      const dateRange = parseMcpDateRange({ days: c.req.query('days') });
-      const limit = parseMcpLimit(c.req.query('limit'));
-      const result = await resolveMcpInsight({
-        config,
-        clickhouseClient,
-        mcpReadCache,
-        tool: 'get_active_collections',
-        dateRange,
-        limit,
-        getClickHouseClient: async () => {
-          clickhouseClient ??= await createClickHouseClient(config);
-          return clickhouseClient ?? null;
-        },
-      });
-      setMcpCacheHeaders(c, result);
-      return c.json(result.value);
-    } catch (error) {
-      console.error('[atpdashboard-api] MCP active_collections failed', sanitizeError(error));
-      return c.json({ error: 'unavailable' }, 503);
-    }
-  });
-
   app.get(getPublicRoute(config, '/mcp/daily_users'), async (c) => {
     try {
       const dateRange = { days: parseMcpDailyUserDays(c.req.query('days')) };
@@ -326,6 +301,32 @@ export function createCollectionCountApp(
       }));
     } catch (error) {
       console.error('[atpdashboard-api] MCP daily_users failed', sanitizeError(error));
+      return c.json({ error: 'unavailable' }, 503);
+    }
+  });
+
+  app.get(getPublicRoute(config, '/mcp/daily_collections'), async (c) => {
+    try {
+      const dateRange = { days: parseMcpDailyUserDays(c.req.query('days')) };
+      const result = await resolveMcpInsight({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'get_daily_collections',
+        dateRange,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setMcpCacheHeaders(c, result);
+      return c.json(formatDailyCollectionsToolResult(result, {
+        status: result.cacheStatus,
+        key: result.cacheKey,
+        ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+      }));
+    } catch (error) {
+      console.error('[atpdashboard-api] MCP daily_collections failed', sanitizeError(error));
       return c.json({ error: 'unavailable' }, 503);
     }
   });
@@ -424,14 +425,16 @@ async function resolveMcpInsight(params: {
         days: dateRange.days,
       });
     }
-    return readActiveCollectionsFromClickHouse(client, params.config, {
-      days: dateRange.days,
-      limit: params.limit ?? parseMcpLimit(undefined),
-    });
+    if (params.tool === 'get_daily_collections') {
+      return readDailyCollectionsFromClickHouse(client, params.config, {
+        days: dateRange.days,
+      });
+    }
+    throw new Error(`Unsupported MCP insight tool: ${params.tool}`);
   });
 
   return {
-    value: cached.value as NewCollectionRow[] | ActiveCollectionRow[] | DailyUserRow[] | NamespaceCollectionRow[],
+    value: cached.value as NewCollectionRow[] | DailyUserRow[] | DailyCollectionRow[] | NamespaceCollectionRow[],
     cacheKey,
     cacheStatus: cached.status,
     dateRange: params.dateRange,
@@ -493,15 +496,16 @@ async function handleMcpJsonRpc(params: {
           inputSchema: mcpNamespaceCollectionToolInputSchema(),
         },
         {
-          name: 'get_active_collections',
-          description: '指定した直近日数で event_count が多い ATProto collection/NSID を返します。unique_did は重いため返しません。',
-          inputSchema: mcpCollectionToolInputSchema(),
-        },
-        {
           name: 'get_daily_users',
           description:
             '指定した直近日数で rolling 24h バケットのユーザー推移を返します。グラフ描画しやすい time series として、各24時間バケットの active DID 数と new DID 数を date/day_offset/active/new の行と chart_spec で返します。「この1週間のユーザーの推移」「Daily Users」「Active/New users」「グラフにして」の質問ではこの tool を優先してください。',
           inputSchema: mcpDailyUsersToolInputSchema(),
+        },
+        {
+          name: 'get_daily_collections',
+          description:
+            '指定した直近日数で Daily Collections の Active/New 推移を返します。画像の Daily Collections カードのような折れ線グラフを作るため、各 rolling 24h バケットの active collection 数と new collection 数を date/day_offset/active/new の行と chart_spec で返します。This Week/This Month/This Year は days=7/30/365 を指定してください。',
+          inputSchema: mcpDailyCollectionsToolInputSchema(),
         },
         {
           name: 'get_latest_record_for_collection',
@@ -517,8 +521,8 @@ async function handleMcpJsonRpc(params: {
     const tool = payload.params?.name as McpTool | undefined;
     if (
       tool !== 'get_new_collection_groups' &&
-      tool !== 'get_active_collections' &&
       tool !== 'get_daily_users' &&
+      tool !== 'get_daily_collections' &&
       tool !== 'get_collections_for_namespace' &&
       tool !== 'get_latest_record_for_collection'
     ) {
@@ -557,6 +561,8 @@ async function handleMcpJsonRpc(params: {
         dateRange = { days: 0 };
       } else if (tool === 'get_daily_users') {
         dateRange = { days: parseMcpDailyUserDays(args.days as string | number | undefined) };
+      } else if (tool === 'get_daily_collections') {
+        dateRange = { days: parseMcpDailyUserDays(args.days as string | number | undefined) };
       } else {
         dateRange = parseMcpDateRange({
           days: args.days as string | number | undefined,
@@ -567,14 +573,12 @@ async function handleMcpJsonRpc(params: {
     } catch (error) {
       return jsonRpcError(id, -32602, error instanceof Error ? error.message : 'Invalid params');
     }
-    const limit = tool === 'get_active_collections' ? parseMcpLimit(args.limit as string | number | undefined) : undefined;
     const result = await resolveMcpInsight({
       config: params.config,
       clickhouseClient: params.clickhouseClient,
       mcpReadCache: params.mcpReadCache,
       tool,
       dateRange: tool === 'get_collections_for_namespace' ? undefined : dateRange,
-      limit,
       namespacePrefix,
       getClickHouseClient: params.getClickHouseClient,
     });
@@ -693,6 +697,9 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
   if (result.tool === 'get_daily_users') {
     return formatDailyUsersToolResult(result, cache);
   }
+  if (result.tool === 'get_daily_collections') {
+    return formatDailyCollectionsToolResult(result, cache);
+  }
 
   return {
     cache,
@@ -767,6 +774,82 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
       },
       response_guidance:
         'For graph or trend requests, render compact line charts from chart_spec and rows. Prefer Mermaid xyChart-beta when supported, using date as the x-axis; plot active users as the primary series and also plot new users, either as a second line when scale remains readable or as a separate companion chart when the values would be compressed. Also include a compact Daily Users table when it helps readability. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket. The assistant may proactively add concise analysis without waiting for an explicit request: call out peaks, dips, increases, decreases, active/new alignment or divergence, and short-term trend hypotheses, as long as every observation is grounded in the returned numbers and clearly avoids unsupported causation.',
+    },
+    cache,
+  };
+}
+
+function formatDailyCollectionsToolResult(result: McpInsightResult, cache: Record<string, unknown>): Record<string, unknown> {
+  const rows = result.value as DailyCollectionRow[];
+  const startDate = rows[0]?.date ?? null;
+  const endDate = rows.at(-1)?.date ?? null;
+  const totals = rows.reduce(
+    (summary, row) => ({
+      active_sum: summary.active_sum + row.active,
+      new_sum: summary.new_sum + row.new,
+      active_peak: Math.max(summary.active_peak, row.active),
+      new_peak: Math.max(summary.new_peak, row.new),
+    }),
+    { active_sum: 0, new_sum: 0, active_peak: 0, new_peak: 0 },
+  );
+
+  return {
+    tool: 'get_daily_collections',
+    intent: 'daily_collections_active_and_new_time_series',
+    parameters: formatDateRangeParameters(result.dateRange ?? { days: 0 }),
+    result: {
+      primary_view: 'time_series_chart',
+      period: {
+        start_date: startDate,
+        end_date: endDate,
+        days: rows.length,
+        timezone: 'UTC',
+      },
+      columns: [
+        { key: 'date', description: 'UTC date of the rolling 24-hour bucket end.' },
+        { key: 'day_offset', description: 'Rolling 24-hour buckets relative to the latest indexed event. 0 is the latest 24h bucket.' },
+        { key: 'active', description: 'Unique ATProto collections observed in that rolling 24-hour bucket.' },
+        { key: 'new', description: 'Collections first observed in that rolling 24-hour bucket.' },
+      ],
+      chart_spec: {
+        type: 'line',
+        title: 'Daily Collections',
+        controls: [
+          { label: 'This Week', days: 7 },
+          { label: 'This Month', days: 30 },
+          { label: 'This Year', days: 365 },
+        ],
+        x: {
+          key: 'day_offset',
+          type: 'ordinal',
+          label: 'Days from latest indexed event',
+        },
+        series: [
+          {
+            key: 'active',
+            label: 'Active',
+            role: 'primary',
+            color_hint: 'blue',
+          },
+          {
+            key: 'new',
+            label: 'New',
+            role: 'secondary',
+            color_hint: 'light_blue',
+          },
+        ],
+        preferred_rendering: ['line_area_chart', 'mermaid_xychart', 'markdown_table'],
+      },
+      returned_day_count: rows.length,
+      rows,
+      summary: {
+        active_peak: totals.active_peak,
+        new_peak: totals.new_peak,
+        active_average: rows.length === 0 ? 0 : Math.round(totals.active_sum / rows.length),
+        new_total: totals.new_sum,
+      },
+      response_guidance:
+        'Render this as a Daily Collections chart with Active and New lines like the reference card. Use day_offset on the x-axis for compact dashboard views and include This Week/This Month/This Year controls by calling this tool with days=7/30/365. Add concise observations grounded in the returned active/new counts only.',
     },
     cache,
   };
@@ -1213,28 +1296,6 @@ function mcpNewCollectionToolInputSchema(): Record<string, unknown> {
   };
 }
 
-function mcpCollectionToolInputSchema(): Record<string, unknown> {
-  return {
-    type: 'object',
-    properties: {
-      days: {
-        type: 'integer',
-        minimum: 1,
-        maximum: 14,
-        default: 7,
-        description: '直近何日分を見るか。1から14まで。',
-      },
-      limit: {
-        type: 'integer',
-        minimum: 1,
-        maximum: 100,
-        default: 30,
-        description: '返すcollection数。1から100まで。',
-      },
-    },
-  };
-}
-
 function mcpDailyUsersToolInputSchema(): Record<string, unknown> {
   return {
     type: 'object',
@@ -1246,6 +1307,22 @@ function mcpDailyUsersToolInputSchema(): Record<string, unknown> {
         default: 7,
         description:
           '直近何日分のDaily Users表を見るか。1から365まで。This Weekは7、This Monthは30、This Yearは365を指定します。',
+      },
+    },
+  };
+}
+
+function mcpDailyCollectionsToolInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      days: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 365,
+        default: 30,
+        description:
+          '直近何日分のDaily Collections表を見るか。1から365まで。This Weekは7、This Monthは30、This Yearは365を指定します。',
       },
     },
   };

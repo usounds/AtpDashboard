@@ -5,9 +5,7 @@ export const MCP_READ_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const MAX_DAYS = 14;
 const MAX_DAILY_USER_DAYS = 365;
-const MAX_LIMIT = 100;
 const DEFAULT_DAYS = 7;
-const DEFAULT_LIMIT = 30;
 const LEXICON_STORE_DID = 'did:web:lexicon.store';
 const DEFAULT_GET_RECORD_SERVICE = 'https://slingshot.microcosm.blue';
 const PDS_LS_SERVICE = 'https://pds.ls';
@@ -47,14 +45,14 @@ export type NamespaceCollectionRow = {
   latest_record_get_record_url: string;
 };
 
-export type ActiveCollectionRow = {
-  collection: string;
-  event_count: number;
-  first_seen_at: string;
-  last_seen_at: string;
+export type DailyUserRow = {
+  date: string;
+  day_offset: number;
+  active: number;
+  new: number;
 };
 
-export type DailyUserRow = {
+export type DailyCollectionRow = {
   date: string;
   day_offset: number;
   active: number;
@@ -80,14 +78,14 @@ type RawNewCollectionRow = {
   latest_record_rkey: string;
 };
 
-type RawActiveCollectionRow = {
-  collection: string;
-  event_count: string | number;
-  first_seen_at: string;
-  last_seen_at: string;
+type RawDailyUserRow = {
+  date: string;
+  day_offset: string | number;
+  active: string | number;
+  new: string | number;
 };
 
-type RawDailyUserRow = {
+type RawDailyCollectionRow = {
   date: string;
   day_offset: string | number;
   active: string | number;
@@ -117,10 +115,6 @@ export function parseMcpDays(value: string | number | undefined): number {
 
 export function parseMcpDailyUserDays(value: string | number | undefined): number {
   return parseBoundedInteger(value, DEFAULT_DAYS, 1, MAX_DAILY_USER_DAYS);
-}
-
-export function parseMcpLimit(value: string | number | undefined): number {
-  return parseBoundedInteger(value, DEFAULT_LIMIT, 1, MAX_LIMIT);
 }
 
 export function parseMcpDateRange(params: {
@@ -264,53 +258,6 @@ ORDER BY first_seen_created_at DESC, event_count DESC, collection ASC
   }));
 }
 
-export async function readActiveCollectionsFromClickHouse(
-  client: ClickHouseQueryClient,
-  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
-  params: { days: number; limit: number },
-): Promise<ActiveCollectionRow[]> {
-  const result = await withTimeout(
-    client.query({
-      query: `
-WITH
-  {days:UInt16} AS lookback_days,
-  (
-    SELECT toDate(max(created_at))
-    FROM atp_dashboard.collection_events
-    WHERE isNotNull(created_at)
-  ) AS latest_day
-SELECT
-  collection,
-  count() AS event_count,
-  formatDateTime(min(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
-  formatDateTime(max(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS last_seen_at
-FROM atp_dashboard.collection_events
-WHERE isNotNull(created_at)
-  AND did != {excluded_did:String}
-  AND toDate(created_at) >= latest_day - toIntervalDay(lookback_days - 1)
-GROUP BY collection
-ORDER BY event_count DESC, collection ASC
-LIMIT {row_limit:UInt16}
-`,
-      query_params: {
-        days: params.days,
-        row_limit: params.limit,
-        excluded_did: LEXICON_STORE_DID,
-      },
-      format: 'JSONEachRow',
-    }),
-    config.clickhouseTimeoutMs,
-    'ClickHouse MCP active_collections query timed out',
-  );
-  const rows = await result.json<RawActiveCollectionRow[]>();
-  return rows.map((row) => ({
-    collection: row.collection,
-    event_count: Number(row.event_count),
-    first_seen_at: row.first_seen_at,
-    last_seen_at: row.last_seen_at,
-  }));
-}
-
 export async function readDailyUsersFromClickHouse(
   client: ClickHouseQueryClient,
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
@@ -377,6 +324,83 @@ ORDER BY bucket_end_at ASC
     'ClickHouse MCP daily_users query timed out',
   );
   const rows = await result.json<RawDailyUserRow[]>();
+  return rows.map((row) => ({
+    date: row.date,
+    day_offset: Number(row.day_offset),
+    active: Number(row.active),
+    new: Number(row.new),
+  }));
+}
+
+export async function readDailyCollectionsFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: { days: number },
+): Promise<DailyCollectionRow[]> {
+  const result = await withTimeout(
+    client.query({
+      query: `
+WITH
+  {days:UInt16} AS lookback_days,
+  (
+    SELECT max(created_at)
+    FROM atp_dashboard.collection_events
+    WHERE isNotNull(created_at)
+  ) AS latest_at
+SELECT
+  formatDateTime(bucket_end_at, '%Y-%m-%d', 'UTC') AS date,
+  -toInt16(bucket_index) AS day_offset,
+  coalesce(active_collections.active, 0) AS active,
+  coalesce(new_collections.new, 0) AS new
+FROM
+(
+  SELECT
+    toUInt16(arrayJoin(range(lookback_days))) AS bucket_index,
+    latest_at - toIntervalDay(bucket_index) AS bucket_end_at
+) days
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', created_at, latest_at), 86400)) AS bucket_index,
+    uniqExact(collection) AS active
+  FROM atp_dashboard.collection_events
+  WHERE isNotNull(created_at)
+    AND did != {excluded_did:String}
+    AND created_at > latest_at - toIntervalDay(lookback_days)
+    AND created_at <= latest_at
+  GROUP BY bucket_index
+) active_collections USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), 86400)) AS bucket_index,
+    count() AS new
+  FROM
+  (
+    SELECT
+      collection,
+      min(created_at) AS first_seen_at
+    FROM atp_dashboard.collection_events
+    WHERE isNotNull(created_at)
+      AND did != {excluded_did:String}
+    GROUP BY collection
+  )
+  WHERE first_seen_at > latest_at - toIntervalDay(lookback_days)
+    AND first_seen_at <= latest_at
+  GROUP BY bucket_index
+) new_collections USING bucket_index
+ORDER BY bucket_end_at ASC
+`,
+      query_params: {
+        days: params.days,
+        excluded_did: LEXICON_STORE_DID,
+      },
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse MCP daily_collections query timed out',
+  );
+  const rows = await result.json<RawDailyCollectionRow[]>();
   return rows.map((row) => ({
     date: row.date,
     day_offset: Number(row.day_offset),
