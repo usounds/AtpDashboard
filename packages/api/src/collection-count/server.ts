@@ -741,7 +741,7 @@ function formatDailyUsersToolResult(result: McpInsightResult, cache: Record<stri
         new_total: totals.new_sum,
       },
       response_guidance:
-        'Answer user questions with a compact Daily Users table. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket.',
+        'Answer user questions with a compact Daily Users table. For days-based requests, treat each row as a rolling 24-hour bucket ending on the shown UTC date; active is unique DID count and new is first-observed DID count within that bucket. It is allowed and encouraged to describe obvious increases, decreases, peaks, dips, and short-term trends from these rows in natural language, as long as the interpretation stays grounded in the returned numbers.',
     },
     cache,
   };
