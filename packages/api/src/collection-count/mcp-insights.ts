@@ -97,21 +97,21 @@ WITH
   ) AS latest_at
 SELECT
   collection,
-  formatDateTime(first_seen_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
+  formatDateTime(first_seen_ingested_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
   event_count
 FROM
 (
   SELECT
     collection,
-    min(ingested_at) AS first_seen_at,
+    min(ingested_at) AS first_seen_ingested_at,
     countIf(ingested_at > latest_at - toIntervalDay(lookback_days) AND ingested_at <= latest_at) AS event_count
   FROM atp_dashboard.collection_events
   WHERE did != {excluded_did:String}
   GROUP BY collection
 )
-WHERE first_seen_at > latest_at - toIntervalDay(lookback_days)
-  AND first_seen_at <= latest_at
-ORDER BY first_seen_at DESC, event_count DESC, collection ASC
+WHERE first_seen_ingested_at > latest_at - toIntervalDay(lookback_days)
+  AND first_seen_ingested_at <= latest_at
+ORDER BY first_seen_ingested_at DESC, event_count DESC, collection ASC
 LIMIT {row_limit:UInt16}
 `,
       query_params: {

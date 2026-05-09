@@ -32,7 +32,8 @@ test('reads new collections by first ingestion time instead of record created_at
     },
   ]);
   assert.match(capturedQuery, /SELECT max\(ingested_at\)/);
-  assert.match(capturedQuery, /min\(ingested_at\) AS first_seen_at/);
+  assert.match(capturedQuery, /min\(ingested_at\) AS first_seen_ingested_at/);
+  assert.match(capturedQuery, /WHERE first_seen_ingested_at > latest_at - toIntervalDay\(lookback_days\)/);
   assert.match(capturedQuery, /countIf\(ingested_at > latest_at - toIntervalDay\(lookback_days\)/);
   assert.doesNotMatch(capturedQuery, /min\(created_at\) AS first_seen_at/);
 });
