@@ -1,0 +1,16 @@
+[Unit]
+Description=AtpDashboard Jetstream Collection
+After=network.target DBDockerCheck.service
+Requires=DBDockerCheck.service
+
+[Service]
+ExecStart=pnpm --filter @atpdashboard/jetstream start
+Restart=always
+RestartSec=5
+User=root
+WorkingDirectory=/srv/AtpDashboard
+StandardOutput=append:/var/log/Collection.log
+StandardError=append:/var/log/Collection.log
+
+[Install]
+WantedBy=multi-user.target

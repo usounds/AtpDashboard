@@ -1,0 +1,12 @@
+[Unit]
+Description=AtpDashboard ClickHouse collection_events sync
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+ExecStart=pnpm backfill:collection-events -- --confirm-production --max-runtime-minutes 10 --max-rows 500000 --batch-size 50000 --lock-ttl-seconds 900
+StandardOutput=append:/var/log/CollectionEventsSync.log
+StandardError=append:/var/log/CollectionEventsSync.log

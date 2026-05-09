@@ -1,0 +1,16 @@
+{
+  "name": "@atpdashboard/clickhouse-tools",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "backfill:collection-events": "node --experimental-strip-types src/backfill-collection-events.ts",
+    "compare:collection-count": "node --experimental-strip-types src/compare-collection-count-view.ts",
+    "refresh:collection-count": "node --experimental-strip-types src/refresh-collection-count-snapshot.ts",
+    "test": "node --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.14.0",
+    "pg": "^8.16.3"
+  }
+}

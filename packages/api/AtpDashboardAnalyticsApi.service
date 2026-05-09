@@ -1,0 +1,16 @@
+[Unit]
+Description=AtpDashboard Analytics API
+After=network.target
+
+[Service]
+ExecStart=pnpm --filter @atpdashboard/api start
+Restart=always
+RestartSec=5
+User=root
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/api.env
+StandardOutput=append:/var/log/AtpDashboardAnalyticsApi.log
+StandardError=append:/var/log/AtpDashboardAnalyticsApi.log
+
+[Install]
+WantedBy=multi-user.target

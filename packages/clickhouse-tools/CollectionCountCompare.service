@@ -1,0 +1,12 @@
+[Unit]
+Description=AtpDashboard collection_count PostgREST vs ClickHouse compare
+After=network.target AtpDashboardAnalyticsApi.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+ExecStart=pnpm compare:collection-count -- --clickhouse-only --postgres-url https://collectiondata.usounds.work/collection_count_view --clickhouse-url https://collectiondata.usounds.work/api/analytics/collection_count_view --json-out reports/collection-count-compare-latest.json --markdown-out reports/collection-count-compare-latest.md
+StandardOutput=append:/var/log/CollectionCountCompare.log
+StandardError=append:/var/log/CollectionCountCompare.log

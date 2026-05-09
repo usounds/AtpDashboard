@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { resolveCollectionCountEndpoint } from '../config/endpoints';
 import { Collection } from '../types/collection';
 
 type CollectionState = {
@@ -26,7 +27,7 @@ export const useCollectionStore = create<CollectionState & CollectionActions>((s
         set({ isLoading: true, error: null });
 
         try {
-            const response = await fetch('https://collectiondata.usounds.work/collection_count_view');
+            const response = await fetch(resolveCollectionCountEndpoint());
             if (!response.ok) {
                 throw new Error(`Error: ${response.statusText}`);
             }
