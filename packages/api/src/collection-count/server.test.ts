@@ -383,9 +383,9 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
                   collection: 'app.example.new',
                   first_seen_at: '2026-05-09T00:00:00.000000Z',
                   event_count: 3,
-                  last_indexed_at: '2026-05-09T00:30:00.000000Z',
-                  last_indexed_did: 'did:plc:example',
-                  last_indexed_rkey: 'r1',
+                  latest_record_created_at: '2026-05-09T00:30:00.000000Z',
+                  latest_record_did: 'did:plc:example',
+                  latest_record_rkey: 'r1',
                 },
               ] as T;
             },
@@ -408,9 +408,9 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
       collection: 'app.example.new',
       first_seen_at: '2026-05-09T00:00:00.000000Z',
       event_count: 3,
-      last_indexed_at: '2026-05-09T00:30:00.000000Z',
-      last_indexed_at_uri: 'at://did:plc:example/app.example.new/r1',
-      last_indexed_get_record_url:
+      latest_record_created_at: '2026-05-09T00:30:00.000000Z',
+      latest_record_at_uri: 'at://did:plc:example/app.example.new/r1',
+      latest_record_get_record_url:
         'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.new&rkey=r1',
     },
   ]);
@@ -501,25 +501,25 @@ test('serves MCP get_new_collections with namespace-group-first response shape',
                   collection: 'cash.attoshi.utxo',
                   first_seen_at: '2026-05-09T11:45:23.006000Z',
                   event_count: 83,
-                  last_indexed_at: '2026-05-09T11:49:23.006000Z',
-                  last_indexed_did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
-                  last_indexed_rkey: '3lv4ouczo2b2a',
+                  latest_record_created_at: '2026-05-09T11:49:23.006000Z',
+                  latest_record_did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
+                  latest_record_rkey: '3lv4ouczo2b2a',
                 },
                 {
                   collection: 'cash.attoshi.tx',
                   first_seen_at: '2026-05-09T11:45:22.006000Z',
                   event_count: 42,
-                  last_indexed_at: '2026-05-09T11:48:22.006000Z',
-                  last_indexed_did: 'did:plc:tx',
-                  last_indexed_rkey: 'tx-rkey',
+                  latest_record_created_at: '2026-05-09T11:48:22.006000Z',
+                  latest_record_did: 'did:plc:tx',
+                  latest_record_rkey: 'tx-rkey',
                 },
                 {
                   collection: 'app.example.new',
                   first_seen_at: '2026-05-09T11:45:24.006000Z',
                   event_count: 1,
-                  last_indexed_at: '2026-05-09T11:46:24.006000Z',
-                  last_indexed_did: 'did:plc:new',
-                  last_indexed_rkey: 'new-rkey',
+                  latest_record_created_at: '2026-05-09T11:46:24.006000Z',
+                  latest_record_did: 'did:plc:new',
+                  latest_record_rkey: 'new-rkey',
                 },
               ] as T;
             },
@@ -567,8 +567,8 @@ test('serves MCP get_new_collections with namespace-group-first response shape',
     collection: 'cash.attoshi.utxo',
     nsid_first_seen_at: '2026-05-09T11:45:23.006000Z',
     event_count_since_nsid_first_seen: 83,
-    last_indexed_record: {
-      indexed_at: '2026-05-09T11:49:23.006000Z',
+    latest_record: {
+      created_at: '2026-05-09T11:49:23.006000Z',
       at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/cash.attoshi.utxo/3lv4ouczo2b2a',
       get_record_url:
         'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a',
@@ -587,8 +587,8 @@ test('serves MCP get_new_collections with namespace-group-first response shape',
         collection: 'cash.attoshi.utxo',
         nsid_first_seen_at: '2026-05-09T11:45:23.006000Z',
         event_count_since_nsid_first_seen: 83,
-        last_indexed_record: {
-          indexed_at: '2026-05-09T11:49:23.006000Z',
+        latest_record: {
+          created_at: '2026-05-09T11:49:23.006000Z',
           at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/cash.attoshi.utxo/3lv4ouczo2b2a',
           get_record_url:
             'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=cash.attoshi.utxo&rkey=3lv4ouczo2b2a',
@@ -598,8 +598,8 @@ test('serves MCP get_new_collections with namespace-group-first response shape',
         collection: 'cash.attoshi.tx',
         nsid_first_seen_at: '2026-05-09T11:45:22.006000Z',
         event_count_since_nsid_first_seen: 42,
-        last_indexed_record: {
-          indexed_at: '2026-05-09T11:48:22.006000Z',
+        latest_record: {
+          created_at: '2026-05-09T11:48:22.006000Z',
           at_uri: 'at://did:plc:tx/cash.attoshi.tx/tx-rkey',
           get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Atx&collection=cash.attoshi.tx&rkey=tx-rkey',
         },
@@ -622,9 +622,9 @@ test('serves all MCP get_new_collections namespace groups', async () => {
     collection: `app.group${String(index).padStart(2, '0')}.record`,
     first_seen_at: `2026-05-09T11:${String(index).padStart(2, '0')}:00.000000Z`,
     event_count: index + 1,
-    last_indexed_at: `2026-05-09T11:${String(index).padStart(2, '0')}:30.000000Z`,
-    last_indexed_did: `did:plc:group${index}`,
-    last_indexed_rkey: `rkey-${index}`,
+    latest_record_created_at: `2026-05-09T11:${String(index).padStart(2, '0')}:30.000000Z`,
+    latest_record_did: `did:plc:group${index}`,
+    latest_record_rkey: `rkey-${index}`,
   }));
   const app = createCollectionCountApp(
     {
@@ -684,7 +684,7 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
               return [
                 {
                   collection: 'app.bsky.feed.like',
-                  indexed_at: '2026-05-09T11:49:23.006000Z',
+                  created_at: '2026-05-09T11:49:23.006000Z',
                   did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
                   rkey: '3lv4ouczo2b2a',
                 },
@@ -741,9 +741,9 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
   assert.equal(parsedToolText.intent, 'show_latest_record_json_for_nsid');
   assert.equal(parsedToolText.collection, 'app.bsky.feed.like');
   assert.equal(parsedToolText.found, true);
-  assert.deepEqual(parsedToolText.latest_indexed_record, {
+  assert.deepEqual(parsedToolText.latest_record, {
     collection: 'app.bsky.feed.like',
-    indexed_at: '2026-05-09T11:49:23.006000Z',
+    created_at: '2026-05-09T11:49:23.006000Z',
     did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
     rkey: '3lv4ouczo2b2a',
     at_uri: 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a',
@@ -759,7 +759,7 @@ test('serves MCP get_latest_record_for_collection with record JSON', async () =>
   assert.equal(parsedToolText.get_record_error, null);
 });
 
-test('serves MCP get_latest_record_for_collection with found false when no indexed record exists', async () => {
+test('serves MCP get_latest_record_for_collection with found false when no record exists', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -796,7 +796,7 @@ test('serves MCP get_latest_record_for_collection with found false when no index
 
   assert.equal(response.status, 200);
   assert.equal(parsedToolText.found, false);
-  assert.equal(parsedToolText.latest_indexed_record, null);
+  assert.equal(parsedToolText.latest_record, null);
   assert.equal(parsedToolText.record_json, null);
   assert.equal(parsedToolText.get_record_error, null);
 });
@@ -815,7 +815,7 @@ test('serves MCP get_latest_record_for_collection with pointer preserved when ge
               return [
                 {
                   collection: 'app.bsky.feed.like',
-                  indexed_at: '2026-05-09T11:49:23.006000Z',
+                  created_at: '2026-05-09T11:49:23.006000Z',
                   did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
                   rkey: '3lv4ouczo2b2a',
                 },
@@ -851,7 +851,7 @@ test('serves MCP get_latest_record_for_collection with pointer preserved when ge
   assert.equal(response.status, 200);
   assert.equal(parsedToolText.found, true);
   assert.equal(parsedToolText.record_json, null);
-  assert.equal(parsedToolText.latest_indexed_record.at_uri, 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a');
+  assert.equal(parsedToolText.latest_record.at_uri, 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a');
   assert.deepEqual(parsedToolText.get_record_error, {
     type: 'http_error',
     status: 404,
@@ -877,7 +877,7 @@ test('serves MCP get_latest_record_for_collection timeout as retryable record er
               return [
                 {
                   collection: 'app.bsky.feed.like',
-                  indexed_at: '2026-05-09T11:49:23.006000Z',
+                  created_at: '2026-05-09T11:49:23.006000Z',
                   did: 'did:plc:hdhoaan3xa3jiuq4fg4mefid',
                   rkey: '3lv4ouczo2b2a',
                 },
@@ -911,7 +911,7 @@ test('serves MCP get_latest_record_for_collection timeout as retryable record er
   assert.equal(response.status, 200);
   assert.equal(parsedToolText.found, true);
   assert.equal(parsedToolText.record_json, null);
-  assert.equal(parsedToolText.latest_indexed_record.at_uri, 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a');
+  assert.equal(parsedToolText.latest_record.at_uri, 'at://did:plc:hdhoaan3xa3jiuq4fg4mefid/app.bsky.feed.like/3lv4ouczo2b2a');
   assert.deepEqual(parsedToolText.get_record_error, {
     type: 'timeout',
     message: 'getRecord request timed out',

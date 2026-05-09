@@ -378,7 +378,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_latest_record_for_collection',
           description:
-            '指定した ATProto collection/NSID の最新index済みrecordを取得し、AT URI、getRecord URL、record JSONを返します。「このNSIDのデータを見たい」ときに使ってください。',
+            '指定した ATProto collection/NSID の record created_at が最新のrecordを取得し、AT URI、getRecord URL、record JSONを返します。「このNSIDのデータを見たい」ときに使ってください。',
           inputSchema: mcpLatestRecordToolInputSchema(),
         },
       ],
@@ -463,7 +463,7 @@ async function resolveLatestCollectionRecord(params: {
       intent: 'show_latest_record_json_for_nsid',
       collection: params.collection,
       found: false,
-      latest_indexed_record: null,
+      latest_record: null,
       record_json: null,
       get_record_error: null,
     };
@@ -474,7 +474,7 @@ async function resolveLatestCollectionRecord(params: {
     intent: 'show_latest_record_json_for_nsid',
     collection: params.collection,
     found: true,
-    latest_indexed_record: pointer,
+    latest_record: pointer,
     record_json: record.ok ? record.json : null,
     get_record_error: record.ok ? null : record.error,
   };
@@ -664,8 +664,8 @@ function formatNewCollectionRowForMcp(row: NewCollectionRow): {
   collection: string;
   nsid_first_seen_at: string;
   event_count_since_nsid_first_seen: number;
-  last_indexed_record: {
-    indexed_at: string;
+  latest_record: {
+    created_at: string;
     at_uri: string;
     get_record_url: string;
   };
@@ -674,10 +674,10 @@ function formatNewCollectionRowForMcp(row: NewCollectionRow): {
     collection: row.collection,
     nsid_first_seen_at: row.first_seen_at,
     event_count_since_nsid_first_seen: row.event_count,
-    last_indexed_record: {
-      indexed_at: row.last_indexed_at,
-      at_uri: row.last_indexed_at_uri,
-      get_record_url: row.last_indexed_get_record_url,
+    latest_record: {
+      created_at: row.latest_record_created_at,
+      at_uri: row.latest_record_at_uri,
+      get_record_url: row.latest_record_get_record_url,
     },
   };
 }
