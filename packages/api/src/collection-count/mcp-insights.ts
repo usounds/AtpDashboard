@@ -74,7 +74,10 @@ export function parseMcpLimit(value: string | number | undefined): number {
   return parseBoundedInteger(value, DEFAULT_LIMIT, 1, MAX_LIMIT);
 }
 
-export function buildMcpCacheKey(tool: string, params: { days: number; limit: number }): string {
+export function buildMcpCacheKey(tool: string, params: { days: number; limit?: number }): string {
+  if (params.limit == null) {
+    return `${tool}:days=${params.days}`;
+  }
   return `${tool}:days=${params.days}:limit=${params.limit}`;
 }
 
@@ -107,7 +110,7 @@ export async function readThroughMcpCache<T>(
 export async function readNewCollectionsFromClickHouse(
   client: ClickHouseQueryClient,
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
-  params: { days: number; limit: number },
+  params: { days: number },
 ): Promise<NewCollectionRow[]> {
   const result = await withTimeout(
     client.query({
@@ -141,11 +144,9 @@ FROM
 WHERE first_seen_ingested_at > latest_at - toIntervalDay(lookback_days)
   AND first_seen_ingested_at <= latest_at
 ORDER BY first_seen_ingested_at DESC, event_count DESC, collection ASC
-LIMIT {row_limit:UInt16}
 `,
       query_params: {
         days: params.days,
-        row_limit: params.limit,
         excluded_did: LEXICON_STORE_DID,
       },
       format: 'JSONEachRow',

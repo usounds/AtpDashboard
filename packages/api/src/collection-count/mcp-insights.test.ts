@@ -25,7 +25,7 @@ test('reads new collections by first ingestion time instead of record created_at
     },
   };
 
-  const rows = await readNewCollectionsFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 3, limit: 20 });
+  const rows = await readNewCollectionsFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 3 });
 
   assert.deepEqual(rows, [
     {
@@ -44,5 +44,6 @@ test('reads new collections by first ingestion time instead of record created_at
   assert.match(capturedQuery, /countIf\(ingested_at > latest_at - toIntervalDay\(lookback_days\)/);
   assert.match(capturedQuery, /argMax\(did, tuple\(ingested_at, event_key\)\) AS last_indexed_did/);
   assert.match(capturedQuery, /argMax\(rkey, tuple\(ingested_at, event_key\)\) AS last_indexed_rkey/);
+  assert.doesNotMatch(capturedQuery, /LIMIT \{row_limit:UInt16\}/);
   assert.doesNotMatch(capturedQuery, /min\(created_at\) AS first_seen_at/);
 });

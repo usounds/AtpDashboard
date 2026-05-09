@@ -69,7 +69,7 @@ type McpInsightResult = {
   cacheKey: string;
   cacheStatus: McpCacheStatus;
   days: number;
-  limit: number;
+  limit?: number;
   tool: McpInsightTool;
 };
 
@@ -190,14 +190,12 @@ export function createCollectionCountApp(
   app.get(getPublicRoute(config, '/mcp/new_collections'), async (c) => {
     try {
       const days = parseMcpDays(c.req.query('days'));
-      const limit = parseMcpLimit(c.req.query('limit'));
       const result = await resolveMcpInsight({
         config,
         clickhouseClient,
         mcpReadCache,
         tool: 'get_new_collections',
         days,
-        limit,
         getClickHouseClient: async () => {
           clickhouseClient ??= await createClickHouseClient(config);
           return clickhouseClient ?? null;
@@ -299,7 +297,7 @@ async function resolveMcpInsight(params: {
   mcpReadCache: Map<string, McpCacheEntry<unknown>>;
   tool: McpInsightTool;
   days: number;
-  limit: number;
+  limit?: number;
   getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
 }): Promise<McpInsightResult> {
   const client = params.clickhouseClient ?? (await params.getClickHouseClient());
@@ -310,9 +308,12 @@ async function resolveMcpInsight(params: {
   const cacheKey = buildMcpCacheKey(params.tool, { days: params.days, limit: params.limit });
   const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () => {
     if (params.tool === 'get_new_collections') {
-      return readNewCollectionsFromClickHouse(client, params.config, params);
+      return readNewCollectionsFromClickHouse(client, params.config, { days: params.days });
     }
-    return readActiveCollectionsFromClickHouse(client, params.config, params);
+    return readActiveCollectionsFromClickHouse(client, params.config, {
+      days: params.days,
+      limit: params.limit ?? parseMcpLimit(undefined),
+    });
   });
 
   return {
@@ -366,8 +367,8 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_new_collections',
           description:
-            '指定した直近日数で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全NSID一覧は返さず、groupごとの sample_nsids と最新sampleを返します。',
-          inputSchema: mcpCollectionToolInputSchema(),
+            '指定した直近日数で初めて観測された ATProto collection/NSID を namespace group 優先で要約します。全NSID一覧は返さず、全groupごとの最初に見られたNSID、sample_nsids、最新sampleを返します。',
+          inputSchema: mcpNewCollectionToolInputSchema(),
         },
         {
           name: 'get_active_collections',
@@ -416,7 +417,7 @@ async function handleMcpJsonRpc(params: {
     }
 
     const days = parseMcpDays(args.days as string | number | undefined);
-    const limit = parseMcpLimit(args.limit as string | number | undefined);
+    const limit = tool === 'get_active_collections' ? parseMcpLimit(args.limit as string | number | undefined) : undefined;
     const result = await resolveMcpInsight({
       config: params.config,
       clickhouseClient: params.clickhouseClient,
@@ -592,13 +593,12 @@ function formatNewCollectionsToolResult(result: McpInsightResult, cache: Record<
     intent: 'newly_observed_namespace_groups',
     parameters: {
       lookback_days: result.days,
-      limit: result.limit,
     },
     result: {
       primary_view: 'namespace_groups',
       primary_order: ['collection_count desc', 'group_first_seen_at desc', 'event_count_since_group_first_seen desc', 'namespace_prefix asc'],
       returned_nsid_count: rows.length,
-      is_truncated: rows.length >= result.limit,
+      returned_group_count: new Set(rows.map((row) => getNamespacePrefix(row.collection))).size,
       full_nsid_list_omitted: true,
       namespace_groups: summarizeNamespaceGroups(rows),
       recent_newly_observed_sample: rows.slice(0, Math.min(10, rows.length)).map(formatNewCollectionRowForMcp),
@@ -657,8 +657,7 @@ function summarizeNamespaceGroups(rows: NewCollectionRow[]): Array<{
         b.group_first_seen_at.localeCompare(a.group_first_seen_at) ||
         b.event_count_since_group_first_seen - a.event_count_since_group_first_seen ||
         a.namespace_prefix.localeCompare(b.namespace_prefix),
-    )
-    .slice(0, 10);
+    );
 }
 
 function formatNewCollectionRowForMcp(row: NewCollectionRow): {
@@ -689,6 +688,21 @@ function getNamespacePrefix(collection: string): string {
     return collection;
   }
   return `${parts[0]}.${parts[1]}.*`;
+}
+
+function mcpNewCollectionToolInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      days: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 14,
+        default: 7,
+        description: '直近何日分を見るか。1から14まで。',
+      },
+    },
+  };
 }
 
 function mcpCollectionToolInputSchema(): Record<string, unknown> {
