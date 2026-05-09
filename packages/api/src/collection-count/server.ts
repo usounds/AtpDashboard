@@ -75,6 +75,12 @@ const RAW_RECORD_DISPLAY_POLICY = {
     'Guide the user to open pds.ls for actual record data. If the user asks for 実データ, answer with the pds.ls endpoint URL instead of expanding JSON in chat.',
 };
 
+const LEXICON_COLLECTION = 'com.atproto.lexicon.schema';
+const GOOGLE_DNS_RESOLVE_URL = 'https://dns.google/resolve';
+const PLC_DIRECTORY_URL = 'https://plc.directory';
+const UNIVERSAL_RESOLVER_URL = 'https://dev.uniresolver.io/1.0/identifiers';
+const DID_DOCUMENT_CACHE_TTL_MS = 60 * 60 * 1000;
+
 type McpInsightResult = {
   value: NewCollectionRow[] | ActiveCollectionRow[] | NamespaceCollectionRow[];
   cacheKey: string;
@@ -83,6 +89,25 @@ type McpInsightResult = {
   limit?: number;
   namespacePrefix?: string;
   tool: McpInsightTool;
+};
+
+type LexiconResolutionSummary = {
+  collection: string;
+  authority_domain: string;
+  dns_name: string;
+  status: 'found' | 'not_found' | 'error';
+  did?: string;
+  pds_service_endpoint?: string;
+  lexicon_record_url?: string;
+  schema?: Record<string, unknown>;
+  error?: string;
+  guidance: string;
+};
+
+type DidDocumentCacheEntry = {
+  expiresAt: number;
+  value?: Record<string, unknown>;
+  inFlight?: Promise<Record<string, unknown>>;
 };
 
 export type CollectionCountAppDependencies = {
@@ -102,6 +127,7 @@ export function createCollectionCountApp(
   let clickhouseClient: ClickHouseQueryClient | null | undefined = dependencies.clickhouse;
   let cache: CacheEntry | null = null;
   const mcpReadCache = new Map<string, McpCacheEntry<unknown>>();
+  const didDocumentCache = new Map<string, DidDocumentCacheEntry>();
 
   app.use('*', secureHeaders());
   const publicCors = cors({
@@ -312,6 +338,7 @@ export function createCollectionCountApp(
         clickhouseClient,
         fetchImpl,
         mcpReadCache,
+        didDocumentCache,
         getClickHouseClient: async () => {
           clickhouseClient ??= await createClickHouseClient(config);
           return clickhouseClient ?? null;
@@ -415,6 +442,7 @@ async function handleMcpJsonRpc(params: {
   clickhouseClient: ClickHouseQueryClient | null | undefined;
   fetchImpl: FetchLike;
   mcpReadCache: Map<string, McpCacheEntry<unknown>>;
+  didDocumentCache: Map<string, DidDocumentCacheEntry>;
   getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
 }): Promise<Record<string, unknown> | null> {
   const { payload } = params;
@@ -455,7 +483,7 @@ async function handleMcpJsonRpc(params: {
         {
           name: 'get_collections_for_namespace',
           description:
-            '指定した namespace prefix 配下で観測済みの ATProto collection/NSID をすべて列挙します。実データのJSON本文は絶対にチャットへ展開しないでください。latest_record の pds_ls_url をユーザーに案内してください。例: app.chavatar について聞かれたら namespace_prefix=app.chavatar で呼び、app.chavatar.* 配下のNSID一覧を返します。',
+            '指定した namespace prefix 配下で観測済みの ATProto collection/NSID をすべて列挙し、可能なら各NSIDのLexicon定義JSONを解決してschema要約を返します。Lexicon JSONはschemaとして理解して説明してよいですが、実レコードのJSON本文は絶対に取得・表示・チャット展開しないでください。実データ確認は latest_record の pds_ls_url を案内してください。例: app.chavatar について聞かれたら namespace_prefix=app.chavatar で呼び、app.chavatar.* 配下のNSID一覧とLexicon説明を返します。',
           inputSchema: mcpNamespaceCollectionToolInputSchema(),
         },
         {
@@ -536,6 +564,27 @@ async function handleMcpJsonRpc(params: {
       namespacePrefix,
       getClickHouseClient: params.getClickHouseClient,
     });
+    const cache = {
+      status: result.cacheStatus,
+      key: result.cacheKey,
+      ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+    };
+    if (tool === 'get_collections_for_namespace') {
+      const lexicons = await resolveLexiconsForNamespaceRows(
+        result.value as NamespaceCollectionRow[],
+        params.fetchImpl,
+        params.config.apiTimeoutMs,
+        params.didDocumentCache,
+      );
+      return jsonRpcResult(id, {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(formatNamespaceCollectionsToolResult(result, cache, lexicons), null, 2),
+          },
+        ],
+      });
+    }
 
     return jsonRpcResult(id, {
       content: [
@@ -628,21 +677,36 @@ function formatMcpToolResult(result: McpInsightResult): Record<string, unknown> 
     };
   }
   if (result.tool === 'get_collections_for_namespace') {
-    return {
-      tool: 'get_collections_for_namespace',
-      intent: 'observed_nsids_under_namespace_prefix',
-      raw_record_display_policy: RAW_RECORD_DISPLAY_POLICY,
-      parameters: {
-        namespace_prefix: result.namespacePrefix,
-      },
-      result: formatNamespaceCollectionsResult(result),
-      cache,
-    };
+    return formatNamespaceCollectionsToolResult(result, cache);
   }
 
   return {
     cache,
     data: result.value,
+  };
+}
+
+function formatNamespaceCollectionsToolResult(
+  result: McpInsightResult,
+  cache: Record<string, unknown>,
+  lexicons: Map<string, LexiconResolutionSummary> = new Map(),
+): Record<string, unknown> {
+  return {
+    tool: 'get_collections_for_namespace',
+    intent: 'observed_nsids_under_namespace_prefix_with_lexicon_schema',
+    raw_record_display_policy: RAW_RECORD_DISPLAY_POLICY,
+    lexicon_policy: {
+      lexicon_json_allowed_for_schema_understanding: true,
+      instruction:
+        'Lexicon definitions may be read and summarized as schema JSON. Actual record data JSON must never be displayed inline in chat.',
+      response_guidance:
+        'Explain the Lexicon purpose, fields, types, and refs. For actual user record data, provide only pds.ls/getRecord URLs.',
+    },
+    parameters: {
+      namespace_prefix: result.namespacePrefix,
+    },
+    result: formatNamespaceCollectionsResult(result, lexicons),
+    cache,
   };
 }
 
@@ -666,7 +730,10 @@ function formatNewCollectionGroupsResult(result: McpInsightResult): Record<strin
   };
 }
 
-function formatNamespaceCollectionsResult(result: McpInsightResult): Record<string, unknown> {
+function formatNamespaceCollectionsResult(
+  result: McpInsightResult,
+  lexicons: Map<string, LexiconResolutionSummary> = new Map(),
+): Record<string, unknown> {
   const rows = result.value as NamespaceCollectionRow[];
   return {
     namespace_prefix: result.namespacePrefix,
@@ -683,8 +750,257 @@ function formatNamespaceCollectionsResult(result: McpInsightResult): Record<stri
         get_record_url: row.latest_record_get_record_url,
         guidance: 'Do not fetch or paste raw record JSON inline. Send the user to pds_ls_url to inspect actual data.',
       },
+      lexicon: lexicons.get(row.collection) ?? {
+        collection: row.collection,
+        status: 'not_resolved',
+        guidance: 'Lexicon was not resolved for this response. Do not inspect actual record JSON inline.',
+      },
     })),
   };
+}
+
+async function resolveLexiconsForNamespaceRows(
+  rows: NamespaceCollectionRow[],
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+  didDocumentCache: Map<string, DidDocumentCacheEntry>,
+): Promise<Map<string, LexiconResolutionSummary>> {
+  const entries = await Promise.all(rows.map((row) => resolveLexiconForCollection(row.collection, fetchImpl, timeoutMs, didDocumentCache)));
+  return new Map(entries.map((entry) => [entry.collection, entry]));
+}
+
+async function resolveLexiconForCollection(
+  collection: string,
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+  didDocumentCache: Map<string, DidDocumentCacheEntry>,
+): Promise<LexiconResolutionSummary> {
+  const authorityDomain = getLexiconAuthorityDomain(collection);
+  const dnsName = `_lexicon.${authorityDomain}`;
+  const guidance = 'Use this Lexicon schema to explain the NSID. Do not fetch or paste actual record JSON inline.';
+  try {
+    const did = await resolveLexiconDidFromDns(dnsName, fetchImpl, timeoutMs);
+    if (!did) {
+      return {
+        collection,
+        authority_domain: authorityDomain,
+        dns_name: dnsName,
+        status: 'not_found',
+        guidance,
+      };
+    }
+
+    const didDocument = await resolveDidDocument(did, fetchImpl, timeoutMs, didDocumentCache);
+    const serviceEndpoint = getAtprotoPdsServiceEndpoint(didDocument);
+    if (!serviceEndpoint) {
+      return {
+        collection,
+        authority_domain: authorityDomain,
+        dns_name: dnsName,
+        status: 'not_found',
+        did,
+        guidance,
+        error: 'No #atproto_pds service endpoint found in DID document',
+      };
+    }
+
+    const lexiconRecordUrl = buildLexiconRecordUrl(serviceEndpoint, did, collection);
+    const response = await withTimeout(fetchImpl(lexiconRecordUrl), timeoutMs, 'Lexicon record request timed out');
+    if (!response.ok) {
+      return {
+        collection,
+        authority_domain: authorityDomain,
+        dns_name: dnsName,
+        status: 'not_found',
+        did,
+        pds_service_endpoint: serviceEndpoint,
+        lexicon_record_url: lexiconRecordUrl,
+        guidance,
+      };
+    }
+
+    const record = (await response.json()) as { value?: unknown };
+    return {
+      collection,
+      authority_domain: authorityDomain,
+      dns_name: dnsName,
+      status: 'found',
+      did,
+      pds_service_endpoint: serviceEndpoint,
+      lexicon_record_url: lexiconRecordUrl,
+      schema: summarizeLexiconDefinition(record.value),
+      guidance,
+    };
+  } catch (error) {
+    return {
+      collection,
+      authority_domain: authorityDomain,
+      dns_name: dnsName,
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown Lexicon resolution error',
+      guidance,
+    };
+  }
+}
+
+function getLexiconAuthorityDomain(collection: string): string {
+  const parts = collection.split('.');
+  if (parts.length < 2) {
+    return collection;
+  }
+  return parts.slice(0, 2).reverse().join('.');
+}
+
+async function resolveLexiconDidFromDns(dnsName: string, fetchImpl: FetchLike, timeoutMs: number): Promise<string | null> {
+  const url = `${GOOGLE_DNS_RESOLVE_URL}?${new URLSearchParams({ name: dnsName, type: 'TXT' }).toString()}`;
+  const response = await withTimeout(fetchImpl(url), timeoutMs, 'Lexicon DNS TXT request timed out');
+  if (!response.ok) {
+    return null;
+  }
+  const json = (await response.json()) as { Answer?: Array<{ data?: string }> };
+  const txtData = json.Answer?.map((answer) => answer.data ?? '')
+    .join('')
+    .replace(/^"|"$/g, '')
+    .replace(/"/g, '');
+  const did = txtData?.match(/did=(did:[A-Za-z0-9:._%-]+)/)?.[1];
+  return did ?? null;
+}
+
+async function resolveDidDocument(
+  did: string,
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+  didDocumentCache: Map<string, DidDocumentCacheEntry>,
+): Promise<Record<string, unknown>> {
+  const now = Date.now();
+  const cached = didDocumentCache.get(did);
+  if (cached?.value !== undefined && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  const url = did.startsWith('did:web:')
+    ? `${UNIVERSAL_RESOLVER_URL}/${encodeURIComponent(did)}`
+    : `${PLC_DIRECTORY_URL}/${encodeURIComponent(did)}`;
+  const inFlight = (async () => {
+    const response = await withTimeout(fetchImpl(url), timeoutMs, 'DID document request timed out');
+    if (!response.ok) {
+      throw new Error(`DID document request failed (${response.status})`);
+    }
+    const json = (await response.json()) as Record<string, unknown>;
+    if (did.startsWith('did:web:') && isRecord(json.didDocument)) {
+      return json.didDocument;
+    }
+    return json;
+  })();
+  didDocumentCache.set(did, { expiresAt: now + DID_DOCUMENT_CACHE_TTL_MS, inFlight });
+  try {
+    const value = await inFlight;
+    didDocumentCache.set(did, { expiresAt: Date.now() + DID_DOCUMENT_CACHE_TTL_MS, value });
+    return value;
+  } catch (error) {
+    didDocumentCache.delete(did);
+    throw error;
+  }
+}
+
+function getAtprotoPdsServiceEndpoint(didDocument: Record<string, unknown>): string | null {
+  const services = Array.isArray(didDocument.service) ? didDocument.service : [];
+  const service = services.find((entry): entry is Record<string, unknown> => isRecord(entry) && entry.id === '#atproto_pds');
+  const endpoint = service?.serviceEndpoint;
+  if (typeof endpoint === 'string') {
+    return endpoint;
+  }
+  if (Array.isArray(endpoint) && typeof endpoint[0] === 'string') {
+    return endpoint[0];
+  }
+  return null;
+}
+
+function buildLexiconRecordUrl(serviceEndpoint: string, repo: string, collection: string): string {
+  const params = new URLSearchParams({
+    repo,
+    collection: LEXICON_COLLECTION,
+    rkey: collection,
+  });
+  return `${serviceEndpoint.replace(/\/+$/, '')}/xrpc/com.atproto.repo.getRecord?${params.toString()}`;
+}
+
+function summarizeLexiconDefinition(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    return { status: 'invalid_lexicon_value' };
+  }
+  const defs = isRecord(value.defs) ? value.defs : {};
+  return {
+    lexicon: value.lexicon,
+    id: value.id,
+    description: value.description,
+    defs: Object.fromEntries(Object.entries(defs).map(([name, def]) => [name, summarizeLexiconDef(def)])),
+  };
+}
+
+function summarizeLexiconDef(def: unknown): Record<string, unknown> {
+  if (!isRecord(def)) {
+    return { type: typeof def };
+  }
+  const summary: Record<string, unknown> = pickLexiconFields(def, ['type', 'description', 'key', 'record', 'ref', 'knownValues']);
+  if (isRecord(def.record)) {
+    summary.record = summarizeLexiconDef(def.record);
+  }
+  if (isRecord(def.properties)) {
+    summary.properties = Object.fromEntries(Object.entries(def.properties).map(([name, prop]) => [name, summarizeLexiconProperty(prop)]));
+  }
+  if (Array.isArray(def.required)) {
+    summary.required = def.required.filter((value) => typeof value === 'string');
+  }
+  return summary;
+}
+
+function summarizeLexiconProperty(prop: unknown): Record<string, unknown> {
+  if (!isRecord(prop)) {
+    return { type: typeof prop };
+  }
+  const summary: Record<string, unknown> = pickLexiconFields(prop, [
+    'type',
+    'description',
+    'format',
+    'ref',
+    'knownValues',
+    'maxLength',
+    'minLength',
+    'maximum',
+    'minimum',
+  ]);
+  if (isRecord(prop.items)) {
+    summary.items = pickLexiconFields(prop.items, ['type', 'ref', 'format']);
+  }
+  return summary;
+}
+
+function pickLexiconFields(record: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  return Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
 
 function formatDateRangeParameters(dateRange: McpDateRange): Record<string, unknown> {

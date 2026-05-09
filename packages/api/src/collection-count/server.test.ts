@@ -846,6 +846,7 @@ test('serves compact MCP get_new_collection_groups without samples or record poi
 
 test('serves MCP get_collections_for_namespace with all observed child NSIDs', async () => {
   let capturedQueryParams: Record<string, unknown> = {};
+  const lexiconFetchCalls: string[] = [];
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -881,6 +882,59 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
           };
         },
       },
+      fetch: createLexiconFetch(
+        {
+          did: 'did:plc:lexicon',
+          serviceEndpoint: 'https://pds.example',
+          lexicons: {
+            'app.chavatar.avatar': {
+              lexicon: 1,
+              id: 'app.chavatar.avatar',
+              defs: {
+                main: {
+                  type: 'record',
+                  description: 'Avatar metadata',
+                  key: 'tid',
+                  record: {
+                    type: 'object',
+                    required: ['name'],
+                    properties: {
+                      name: { type: 'string', description: 'Avatar name' },
+                      image: { type: 'blob' },
+                    },
+                  },
+                },
+              },
+            },
+            'app.chavatar.schedules': {
+              lexicon: 1,
+              id: 'app.chavatar.schedules',
+              defs: {
+                main: {
+                  type: 'record',
+                  description: 'Schedule settings',
+                  key: 'literal:self',
+                  record: {
+                    type: 'object',
+                    required: ['enabled'],
+                    properties: {
+                      enabled: { type: 'boolean', description: 'Whether schedules are enabled' },
+                      entries: { type: 'array', items: { type: 'ref', ref: '#schedule' } },
+                    },
+                  },
+                },
+                schedule: {
+                  type: 'object',
+                  properties: {
+                    startsAt: { type: 'string', format: 'datetime' },
+                  },
+                },
+              },
+            },
+          },
+        },
+        lexiconFetchCalls,
+      ),
     },
   );
 
@@ -903,10 +957,12 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
   assert.equal(response.status, 200);
   assert.equal(capturedQueryParams.namespace_prefix, 'app.chavatar');
   assert.equal(parsedToolText.tool, 'get_collections_for_namespace');
-  assert.equal(parsedToolText.intent, 'observed_nsids_under_namespace_prefix');
+  assert.equal(parsedToolText.intent, 'observed_nsids_under_namespace_prefix_with_lexicon_schema');
   assert.equal(parsedToolText.raw_record_display_policy.raw_record_json_inline_forbidden, true);
   assert.match(parsedToolText.raw_record_display_policy.instruction, /Do not display raw record JSON inline/);
   assert.match(parsedToolText.raw_record_display_policy.pds_ls_instruction, /pds\.ls/);
+  assert.equal(parsedToolText.lexicon_policy.lexicon_json_allowed_for_schema_understanding, true);
+  assert.match(parsedToolText.lexicon_policy.instruction, /Actual record data JSON must never/);
   assert.deepEqual(parsedToolText.parameters, { namespace_prefix: 'app.chavatar' });
   assert.equal(parsedToolText.result.returned_nsid_count, 2);
   assert.deepEqual(
@@ -920,6 +976,14 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
     get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aschedule&collection=app.chavatar.schedules&rkey=self',
     guidance: 'Do not fetch or paste raw record JSON inline. Send the user to pds_ls_url to inspect actual data.',
   });
+  assert.equal(parsedToolText.result.nsids[1].lexicon.status, 'found');
+  assert.equal(parsedToolText.result.nsids[1].lexicon.authority_domain, 'chavatar.app');
+  assert.equal(parsedToolText.result.nsids[1].lexicon.dns_name, '_lexicon.chavatar.app');
+  assert.equal(parsedToolText.result.nsids[1].lexicon.schema.id, 'app.chavatar.schedules');
+  assert.equal(parsedToolText.result.nsids[1].lexicon.schema.defs.main.description, 'Schedule settings');
+  assert.deepEqual(parsedToolText.result.nsids[1].lexicon.schema.defs.main.record.required, ['enabled']);
+  assert.equal(parsedToolText.result.nsids[1].lexicon.schema.defs.main.record.properties.entries.items.ref, '#schedule');
+  assert.equal(lexiconFetchCalls.filter((url) => url === 'https://plc.directory/did%3Aplc%3Alexicon').length, 1);
 });
 
 test('serves MCP get_latest_record_for_collection with pds.ls guidance only', async () => {
@@ -1082,4 +1146,56 @@ function createJsonFetch(value: unknown): typeof fetch {
         'Content-Type': 'application/json',
       },
     });
+}
+
+function createLexiconFetch(
+  options: {
+    did: string;
+    serviceEndpoint: string;
+    lexicons: Record<string, unknown>;
+  },
+  calls: string[] = [],
+): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.startsWith('https://dns.google/resolve?')) {
+      return jsonResponse({
+        Answer: [
+          {
+            data: `"did=${options.did}"`,
+          },
+        ],
+      });
+    }
+    if (url === `https://plc.directory/${encodeURIComponent(options.did)}`) {
+      return jsonResponse({
+        service: [
+          {
+            id: '#atproto_pds',
+            serviceEndpoint: options.serviceEndpoint,
+          },
+        ],
+      });
+    }
+    if (url.startsWith(`${options.serviceEndpoint}/xrpc/com.atproto.repo.getRecord?`)) {
+      const parsed = new URL(url);
+      const rkey = parsed.searchParams.get('rkey');
+      const lexicon = rkey == null ? null : options.lexicons[rkey];
+      if (!lexicon) {
+        return new Response('{}', { status: 404 });
+      }
+      return jsonResponse({ value: lexicon });
+    }
+    return new Response('{}', { status: 404 });
+  }) as typeof fetch;
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
 }
