@@ -228,7 +228,7 @@ function buildDailyUsersSelectQuery(target: AnalyticsChartSnapshotTarget): strin
 WITH
   ${target.days} AS lookback_days,
   ${Math.ceil(target.days / target.bucketDays)} AS bucket_count,
-  ${target.bucketDays} AS bucket_days,
+  ${target.bucketDays} AS chart_bucket_days,
   ${target.bucketDays * 86400} AS bucket_seconds,
   (
     SELECT max(created_at)
@@ -239,10 +239,10 @@ SELECT
   {refresh_id:UUID} AS refresh_id,
   '${target.tool}' AS tool,
   toUInt16(lookback_days) AS days,
-  toUInt8(bucket_days) AS bucket_days,
+  toUInt8(chart_bucket_days) AS bucket_days,
   days.bucket_index,
   toDate(bucket_end_at, 'UTC') AS date,
-  -toInt16(days.bucket_index * bucket_days) AS day_offset,
+  -toInt16(days.bucket_index * chart_bucket_days) AS day_offset,
   toUInt64(coalesce(active.active, 0)) AS active,
   toUInt64(coalesce(new_users.new, 0)) AS new,
   toUInt64(0) AS count,
@@ -290,7 +290,7 @@ function buildDailyCollectionsSelectQuery(target: AnalyticsChartSnapshotTarget):
 WITH
   ${target.days} AS lookback_days,
   ${Math.ceil(target.days / target.bucketDays)} AS bucket_count,
-  ${target.bucketDays} AS bucket_days,
+  ${target.bucketDays} AS chart_bucket_days,
   ${target.bucketDays * 86400} AS bucket_seconds,
   (
     SELECT max(created_at)
@@ -301,10 +301,10 @@ SELECT
   {refresh_id:UUID} AS refresh_id,
   '${target.tool}' AS tool,
   toUInt16(lookback_days) AS days,
-  toUInt8(bucket_days) AS bucket_days,
+  toUInt8(chart_bucket_days) AS bucket_days,
   days.bucket_index,
   toDate(bucket_end_at, 'UTC') AS date,
-  -toInt16(days.bucket_index * bucket_days) AS day_offset,
+  -toInt16(days.bucket_index * chart_bucket_days) AS day_offset,
   toUInt64(coalesce(active_collections.active, 0)) AS active,
   toUInt64(coalesce(new_collections.new, 0)) AS new,
   toUInt64(0) AS count,
@@ -354,7 +354,7 @@ function buildEventCountsSelectQuery(target: AnalyticsChartSnapshotTarget): stri
 WITH
   ${target.days} AS lookback_days,
   ${Math.ceil(target.days / target.bucketDays)} AS bucket_count,
-  ${target.bucketDays} AS bucket_days,
+  ${target.bucketDays} AS chart_bucket_days,
   ${target.bucketDays * 86400} AS bucket_seconds,
   (
     SELECT max(created_at)
@@ -365,10 +365,10 @@ SELECT
   {refresh_id:UUID} AS refresh_id,
   '${target.tool}' AS tool,
   toUInt16(lookback_days) AS days,
-  toUInt8(bucket_days) AS bucket_days,
+  toUInt8(chart_bucket_days) AS bucket_days,
   days.bucket_index,
   toDate(bucket_end_at, 'UTC') AS date,
-  -toInt16(days.bucket_index * bucket_days) AS day_offset,
+  -toInt16(days.bucket_index * chart_bucket_days) AS day_offset,
   toUInt64(0) AS active,
   toUInt64(0) AS new,
   toUInt64(coalesce(events.count, 0)) AS count,

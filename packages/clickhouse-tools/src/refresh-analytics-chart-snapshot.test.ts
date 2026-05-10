@@ -32,7 +32,8 @@ test('snapshot query inserts every dashboard chart target', () => {
   assert.match(sql, /'daily_users' AS tool/);
   assert.match(sql, /'event_counts' AS tool/);
   assert.match(sql, /365 AS lookback_days/);
-  assert.match(sql, /30 AS bucket_days/);
+  assert.match(sql, /30 AS chart_bucket_days/);
+  assert.doesNotMatch(sql, /\d+ AS bucket_days/);
   assert.match(sql, /did != \{excluded_did:String\}/);
   assert.match(sql, /count\(\) AS count/);
 });
