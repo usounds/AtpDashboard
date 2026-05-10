@@ -239,12 +239,28 @@ WITH
     WHERE collection = {collection:String}
       AND isNotNull(created_at)
       AND created_at_key != '<NULL>'
-  ) AS latest_at
+  ) AS latest_at,
+  latest_at - toIntervalDay(lookback_days) AS window_start_at,
+  (
+    SELECT uniqExact(did)
+    FROM
+    (
+      SELECT
+        did,
+        min(created_at) AS first_seen_at
+      FROM atp_dashboard.collection_events
+      WHERE collection = {collection:String}
+        AND isNotNull(created_at)
+        AND created_at_key != '<NULL>'
+      GROUP BY did
+    )
+    WHERE first_seen_at <= window_start_at
+  ) AS baseline_users
 SELECT
   toString(date) AS date,
   day_offset,
   new,
-  sum(new) OVER (ORDER BY bucket_index DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative
+  baseline_users + sum(new) OVER (ORDER BY bucket_index DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative
 FROM
 (
   SELECT
@@ -274,7 +290,7 @@ FROM
         AND created_at_key != '<NULL>'
       GROUP BY did
     )
-    WHERE first_seen_at > latest_at - toIntervalDay(lookback_days)
+    WHERE first_seen_at > window_start_at
       AND first_seen_at <= latest_at
     GROUP BY bucket_index
   ) AS new_users USING (bucket_index)

@@ -932,6 +932,9 @@ test('serves cached collection_cumulative_users endpoint from ClickHouse', async
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
   assert.match(capturedQuery, /min\(created_at\) AS first_seen_at/);
+  assert.match(capturedQuery, /AS baseline_users/);
+  assert.match(capturedQuery, /first_seen_at <= window_start_at/);
+  assert.match(capturedQuery, /baseline_users \+ sum\(new\) OVER/);
   assert.match(capturedQuery, /sum\(new\) OVER/);
   assert.deepEqual(capturedParams, {
     collection: 'app.example.post',
