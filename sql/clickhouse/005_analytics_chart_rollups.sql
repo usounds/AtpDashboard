@@ -14,10 +14,10 @@ ORDER BY day;
 CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_daily_activity_rollup_mv
 TO atp_dashboard.analytics_daily_activity_rollup AS
 SELECT
-    toDate(created_at, 'UTC') AS day,
+    toDate(assumeNotNull(created_at), 'UTC') AS day,
     uniqExactState(event_key) AS event_count_state,
     uniqExactState(did) AS active_did_state,
-    maxState(created_at) AS latest_at_state
+    maxState(assumeNotNull(created_at)) AS latest_at_state
 FROM atp_dashboard.collection_events
 WHERE isNotNull(created_at)
 GROUP BY day;
@@ -34,7 +34,7 @@ ORDER BY day;
 CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_daily_collection_activity_rollup_mv
 TO atp_dashboard.analytics_daily_collection_activity_rollup AS
 SELECT
-    toDate(created_at, 'UTC') AS day,
+    toDate(assumeNotNull(created_at), 'UTC') AS day,
     uniqExactState(collection) AS active_collection_state
 FROM atp_dashboard.collection_events
 WHERE isNotNull(created_at)
@@ -53,7 +53,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_did_first_seen_st
 TO atp_dashboard.analytics_did_first_seen_state AS
 SELECT
     did,
-    minState(created_at) AS first_seen_state
+    minState(assumeNotNull(created_at)) AS first_seen_state
 FROM atp_dashboard.collection_events
 WHERE isNotNull(created_at)
 GROUP BY did;
@@ -70,7 +70,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_collection_first_
 TO atp_dashboard.analytics_collection_first_seen_state AS
 SELECT
     collection,
-    minState(created_at) AS first_seen_state
+    minState(assumeNotNull(created_at)) AS first_seen_state
 FROM atp_dashboard.collection_events
 WHERE isNotNull(created_at)
   AND did != 'did:web:lexicon.store'
@@ -108,17 +108,17 @@ ORDER BY day;
 --
 -- INSERT INTO atp_dashboard.analytics_daily_activity_rollup
 -- SELECT
---     toDate(created_at, 'UTC') AS day,
+--     toDate(assumeNotNull(created_at), 'UTC') AS day,
 --     uniqExactState(event_key) AS event_count_state,
 --     uniqExactState(did) AS active_did_state,
---     maxState(created_at) AS latest_at_state
+--     maxState(assumeNotNull(created_at)) AS latest_at_state
 -- FROM atp_dashboard.collection_events
 -- WHERE isNotNull(created_at)
 -- GROUP BY day;
 --
 -- INSERT INTO atp_dashboard.analytics_daily_collection_activity_rollup
 -- SELECT
---     toDate(created_at, 'UTC') AS day,
+--     toDate(assumeNotNull(created_at), 'UTC') AS day,
 --     uniqExactState(collection) AS active_collection_state
 -- FROM atp_dashboard.collection_events
 -- WHERE isNotNull(created_at)
@@ -128,7 +128,7 @@ ORDER BY day;
 -- INSERT INTO atp_dashboard.analytics_did_first_seen_state
 -- SELECT
 --     did,
---     minState(created_at) AS first_seen_state
+--     minState(assumeNotNull(created_at)) AS first_seen_state
 -- FROM atp_dashboard.collection_events
 -- WHERE isNotNull(created_at)
 -- GROUP BY did;
@@ -136,7 +136,7 @@ ORDER BY day;
 -- INSERT INTO atp_dashboard.analytics_collection_first_seen_state
 -- SELECT
 --     collection,
---     minState(created_at) AS first_seen_state
+--     minState(assumeNotNull(created_at)) AS first_seen_state
 -- FROM atp_dashboard.collection_events
 -- WHERE isNotNull(created_at)
 --   AND did != 'did:web:lexicon.store'
