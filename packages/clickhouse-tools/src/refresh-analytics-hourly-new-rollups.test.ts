@@ -20,7 +20,8 @@ test('builds hourly new rollup inserts from first seen state tables', () => {
   assert.match(didSql, /INSERT INTO atp_dashboard\.analytics_hourly_new_did_rollup/);
   assert.match(didSql, /FROM atp_dashboard\.analytics_did_first_seen_state/);
   assert.match(didSql, /minMerge\(first_seen_state\) AS first_seen_at/);
-  assert.match(didSql, /toStartOfHour\(first_seen_at\)/);
+  assert.match(didSql, /toUnixTimestamp\(first_seen_at\)/);
+  assert.match(didSql, /intDiv\(toUnixTimestamp\(first_seen_at\), 3600\) \* 3600/);
   assert.match(collectionSql, /INSERT INTO atp_dashboard\.analytics_hourly_new_collection_rollup/);
   assert.match(collectionSql, /FROM atp_dashboard\.analytics_collection_first_seen_state/);
 });

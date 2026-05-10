@@ -255,7 +255,7 @@ ORDER BY hour;
 --
 -- INSERT INTO atp_dashboard.analytics_hourly_new_did_rollup
 -- SELECT
---     toStartOfHour(first_seen_at) AS hour,
+--     toDateTime(intDiv(toUnixTimestamp(first_seen_at), 3600) * 3600, 'UTC') AS hour,
 --     count() AS new_count,
 --     now64(3, 'UTC') AS refreshed_at
 -- FROM
@@ -270,7 +270,7 @@ ORDER BY hour;
 --
 -- INSERT INTO atp_dashboard.analytics_hourly_new_collection_rollup
 -- SELECT
---     toStartOfHour(first_seen_at) AS hour,
+--     toDateTime(intDiv(toUnixTimestamp(first_seen_at), 3600) * 3600, 'UTC') AS hour,
 --     count() AS new_count,
 --     now64(3, 'UTC') AS refreshed_at
 -- FROM

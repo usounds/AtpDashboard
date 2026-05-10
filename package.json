@@ -21,6 +21,7 @@
     "jetstream:backfill": "pnpm --filter @atpdashboard/jetstream backfill",
     "test:api": "pnpm --filter @atpdashboard/api test",
     "test:frontend": "pnpm --filter @atpdashboard/frontend test",
+    "test:clickhouse-hourly-rollups": "bash scripts/test_analytics_hourly_rollups_clickhouse.sh",
     "backfill:collection-events": "pnpm --filter @atpdashboard/clickhouse-tools backfill:collection-events",
     "compare:collection-count": "pnpm --filter @atpdashboard/clickhouse-tools compare:collection-count",
     "refresh:analytics-hourly-new": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-hourly-new",
