@@ -18,7 +18,9 @@ import {
 } from './daily-summary.ts';
 import {
   MCP_READ_CACHE_TTL_MS,
+  buildDailyChartCacheKey,
   buildMcpCacheKey,
+  parseDailyChartBucketDays,
   parseMcpDateRange,
   parseMcpDailyUserDays,
   readLatestCollectionRecordPointerFromClickHouse,
@@ -28,6 +30,7 @@ import {
   readNewCollectionsFromClickHouse,
   readThroughMcpCache,
   type DailyCollectionRow,
+  type DailyChartBucketParams,
   type DailyUserRow,
   type LatestCollectionRecordPointer,
   type McpCacheEntry,
@@ -72,6 +75,15 @@ type McpInsightTool =
   | 'get_daily_collections'
   | 'get_collections_for_namespace';
 type McpTool = McpInsightTool | 'get_latest_record_for_collection';
+type DailyChartTool = 'daily_users' | 'daily_collections';
+
+type DailyChartResult = {
+  rows: DailyUserRow[] | DailyCollectionRow[];
+  cacheKey: string;
+  cacheStatus: McpCacheStatus;
+  params: Required<DailyChartBucketParams>;
+  tool: DailyChartTool;
+};
 
 const RAW_RECORD_DISPLAY_POLICY = {
   raw_record_json_inline_forbidden: true,
@@ -239,6 +251,50 @@ export function createCollectionCountApp(
       }
     });
   }
+
+  app.get(getPublicRoute(config, '/daily_users'), async (c) => {
+    try {
+      const result = await resolveDailyChart({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'daily_users',
+        params: parseDailyChartParams(c.req.query('days'), c.req.query('bucket_days')),
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setDailyChartCacheHeaders(c, result);
+      return c.json(formatDailyChartHttpResult(result));
+    } catch (error) {
+      console.error('[atpdashboard-api] daily_users chart failed', sanitizeError(error));
+      c.header('X-Data-Source', 'unavailable');
+      return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, 503);
+    }
+  });
+
+  app.get(getPublicRoute(config, '/daily_collections'), async (c) => {
+    try {
+      const result = await resolveDailyChart({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        tool: 'daily_collections',
+        params: parseDailyChartParams(c.req.query('days'), c.req.query('bucket_days')),
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setDailyChartCacheHeaders(c, result);
+      return c.json(formatDailyChartHttpResult(result));
+    } catch (error) {
+      console.error('[atpdashboard-api] daily_collections chart failed', sanitizeError(error));
+      c.header('X-Data-Source', 'unavailable');
+      return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, 503);
+    }
+  });
 
   app.get(getPublicRoute(config, '/mcp/new_collection_groups'), async (c) => {
     try {
@@ -450,6 +506,66 @@ async function resolveMcpInsight(params: {
     limit: params.limit,
     namespacePrefix: params.namespacePrefix,
     tool: params.tool,
+  };
+}
+
+function parseDailyChartParams(days: string | number | undefined, bucketDays: string | number | undefined): Required<DailyChartBucketParams> {
+  return {
+    days: parseMcpDailyUserDays(days),
+    bucketDays: parseDailyChartBucketDays(bucketDays),
+  };
+}
+
+async function resolveDailyChart(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  mcpReadCache: Map<string, McpCacheEntry<unknown>>;
+  tool: DailyChartTool;
+  params: Required<DailyChartBucketParams>;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<DailyChartResult> {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+
+  const cacheKey = buildDailyChartCacheKey(params.tool, params.params);
+  const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () => {
+    if (params.tool === 'daily_users') {
+      return readDailyUsersFromClickHouse(client, params.config, params.params);
+    }
+    return readDailyCollectionsFromClickHouse(client, params.config, params.params);
+  });
+
+  return {
+    rows: cached.value as DailyUserRow[] | DailyCollectionRow[],
+    cacheKey,
+    cacheStatus: cached.status,
+    params: params.params,
+    tool: params.tool,
+  };
+}
+
+function setDailyChartCacheHeaders(c: { header: (name: string, value: string) => void }, result: DailyChartResult): void {
+  c.header('X-Data-Source', 'clickhouse');
+  c.header('X-Cache', result.cacheStatus);
+  c.header('X-Cache-Key', result.cacheKey);
+  c.header('X-Cache-Ttl-Seconds', String(Math.floor(MCP_READ_CACHE_TTL_MS / 1000)));
+}
+
+function formatDailyChartHttpResult(result: DailyChartResult): Record<string, unknown> {
+  return {
+    tool: result.tool,
+    parameters: {
+      days: result.params.days,
+      bucket_days: result.params.bucketDays,
+    },
+    rows: result.rows,
+    cache: {
+      status: result.cacheStatus,
+      key: result.cacheKey,
+      ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+    },
   };
 }
 

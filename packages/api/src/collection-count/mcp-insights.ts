@@ -59,6 +59,11 @@ export type DailyCollectionRow = {
   new: number;
 };
 
+export type DailyChartBucketParams = {
+  days: number;
+  bucketDays?: number;
+};
+
 export type LatestCollectionRecordPointer = {
   collection: string;
   created_at: string;
@@ -117,6 +122,14 @@ export function parseMcpDailyUserDays(value: string | number | undefined): numbe
   return parseBoundedInteger(value, DEFAULT_DAYS, 1, MAX_DAILY_USER_DAYS);
 }
 
+export function parseDailyChartBucketDays(value: string | number | undefined): number {
+  const bucketDays = parseBoundedInteger(value, 1, 1, 30);
+  if (bucketDays !== 1 && bucketDays !== 30) {
+    throw new Error('bucket_days must be 1 or 30');
+  }
+  return bucketDays;
+}
+
 export function parseMcpDateRange(params: {
   days?: string | number;
   startDate?: string;
@@ -155,6 +168,10 @@ export function buildMcpCacheKey(tool: string, params: McpDateRange & { limit?: 
   const limitKey = params.limit == null ? '' : `:limit=${params.limit}`;
   const namespaceKey = params.namespacePrefix == null ? '' : `:namespace=${params.namespacePrefix}`;
   return `${tool}:${rangeKey}${limitKey}${namespaceKey}`;
+}
+
+export function buildDailyChartCacheKey(tool: string, params: DailyChartBucketParams): string {
+  return `${tool}:days=${params.days}:bucket_days=${params.bucketDays ?? 1}`;
 }
 
 export async function readThroughMcpCache<T>(
@@ -261,13 +278,19 @@ ORDER BY first_seen_created_at DESC, event_count DESC, collection ASC
 export async function readDailyUsersFromClickHouse(
   client: ClickHouseQueryClient,
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
-  params: { days: number },
+  params: DailyChartBucketParams,
 ): Promise<DailyUserRow[]> {
+  const bucketDays = params.bucketDays ?? 1;
+  const bucketCount = Math.ceil(params.days / bucketDays);
+  const bucketSeconds = bucketDays * 86400;
   const result = await withTimeout(
     client.query({
       query: `
 WITH
   {days:UInt16} AS lookback_days,
+  {bucket_count:UInt16} AS bucket_count,
+  {bucket_days:UInt16} AS bucket_days,
+  {bucket_seconds:UInt32} AS bucket_seconds,
   (
     SELECT max(created_at)
     FROM atp_dashboard.collection_events
@@ -275,19 +298,19 @@ WITH
   ) AS latest_at
 SELECT
   formatDateTime(bucket_end_at, '%Y-%m-%d', 'UTC') AS date,
-  -toInt16(bucket_index) AS day_offset,
+  -toInt16(bucket_index * bucket_days) AS day_offset,
   coalesce(active.active, 0) AS active,
   coalesce(new_users.new, 0) AS new
 FROM
 (
   SELECT
-    toUInt16(arrayJoin(range(lookback_days))) AS bucket_index,
-    latest_at - toIntervalDay(bucket_index) AS bucket_end_at
+    toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+    latest_at - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at
 ) days
 LEFT JOIN
 (
   SELECT
-    toUInt16(intDiv(dateDiff('second', created_at, latest_at), 86400)) AS bucket_index,
+    toUInt16(intDiv(dateDiff('second', created_at, latest_at), bucket_seconds)) AS bucket_index,
     uniqExact(did) AS active
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
@@ -298,7 +321,7 @@ LEFT JOIN
 LEFT JOIN
 (
   SELECT
-    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), 86400)) AS bucket_index,
+    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), bucket_seconds)) AS bucket_index,
     count() AS new
   FROM
   (
@@ -317,6 +340,9 @@ ORDER BY bucket_end_at ASC
 `,
       query_params: {
         days: params.days,
+        bucket_count: bucketCount,
+        bucket_days: bucketDays,
+        bucket_seconds: bucketSeconds,
       },
       format: 'JSONEachRow',
     }),
@@ -335,13 +361,19 @@ ORDER BY bucket_end_at ASC
 export async function readDailyCollectionsFromClickHouse(
   client: ClickHouseQueryClient,
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
-  params: { days: number },
+  params: DailyChartBucketParams,
 ): Promise<DailyCollectionRow[]> {
+  const bucketDays = params.bucketDays ?? 1;
+  const bucketCount = Math.ceil(params.days / bucketDays);
+  const bucketSeconds = bucketDays * 86400;
   const result = await withTimeout(
     client.query({
       query: `
 WITH
   {days:UInt16} AS lookback_days,
+  {bucket_count:UInt16} AS bucket_count,
+  {bucket_days:UInt16} AS bucket_days,
+  {bucket_seconds:UInt32} AS bucket_seconds,
   (
     SELECT max(created_at)
     FROM atp_dashboard.collection_events
@@ -349,19 +381,19 @@ WITH
   ) AS latest_at
 SELECT
   formatDateTime(bucket_end_at, '%Y-%m-%d', 'UTC') AS date,
-  -toInt16(bucket_index) AS day_offset,
+  -toInt16(bucket_index * bucket_days) AS day_offset,
   coalesce(active_collections.active, 0) AS active,
   coalesce(new_collections.new, 0) AS new
 FROM
 (
   SELECT
-    toUInt16(arrayJoin(range(lookback_days))) AS bucket_index,
-    latest_at - toIntervalDay(bucket_index) AS bucket_end_at
+    toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+    latest_at - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at
 ) days
 LEFT JOIN
 (
   SELECT
-    toUInt16(intDiv(dateDiff('second', created_at, latest_at), 86400)) AS bucket_index,
+    toUInt16(intDiv(dateDiff('second', created_at, latest_at), bucket_seconds)) AS bucket_index,
     uniqExact(collection) AS active
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
@@ -373,7 +405,7 @@ LEFT JOIN
 LEFT JOIN
 (
   SELECT
-    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), 86400)) AS bucket_index,
+    toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), bucket_seconds)) AS bucket_index,
     count() AS new
   FROM
   (
@@ -393,6 +425,9 @@ ORDER BY bucket_end_at ASC
 `,
       query_params: {
         days: params.days,
+        bucket_count: bucketCount,
+        bucket_days: bucketDays,
+        bucket_seconds: bucketSeconds,
         excluded_did: LEXICON_STORE_DID,
       },
       format: 'JSONEachRow',

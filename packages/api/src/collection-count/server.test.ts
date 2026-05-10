@@ -435,6 +435,199 @@ test('serves cached MCP insight HTTP endpoints from ClickHouse', async () => {
   });
 });
 
+test('serves cached daily collections chart endpoint from ClickHouse', async () => {
+  let queryCount = 0;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          queryCount += 1;
+          return {
+            async json<T>() {
+              return [
+                {
+                  date: '2026-05-08',
+                  day_offset: -1,
+                  active: 452,
+                  new: 18,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  active: 489,
+                  new: 31,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/daily_collections?days=30');
+  const second = await app.request('/api/analytics/daily_collections?days=30');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Cache'), 'MISS');
+  assert.equal(first.headers.get('X-Cache-Ttl-Seconds'), '600');
+  assert.equal(second.headers.get('X-Cache'), 'HIT');
+  assert.equal(queryCount, 1);
+  assert.deepEqual(body, {
+    tool: 'daily_collections',
+    parameters: {
+      days: 30,
+      bucket_days: 1,
+    },
+    rows: [
+      {
+        date: '2026-05-08',
+        day_offset: -1,
+        active: 452,
+        new: 18,
+      },
+      {
+        date: '2026-05-09',
+        day_offset: 0,
+        active: 489,
+        new: 31,
+      },
+    ],
+    cache: {
+      status: 'HIT',
+      key: 'daily_collections:days=30:bucket_days=1',
+      ttl_seconds: 600,
+    },
+  });
+});
+
+test('serves daily users chart endpoint from ClickHouse', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [
+                {
+                  date: '2026-05-03',
+                  day_offset: -6,
+                  active: 4021,
+                  new: 350,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  active: 4265,
+                  new: 410,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/daily_users?days=7');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
+  assert.deepEqual(body.rows, [
+    {
+      date: '2026-05-03',
+      day_offset: -6,
+      active: 4021,
+      new: 350,
+    },
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      active: 4265,
+      new: 410,
+    },
+  ]);
+  assert.deepEqual(body.parameters, {
+    days: 7,
+    bucket_days: 1,
+  });
+});
+
+test('serves yearly daily chart endpoint as 30 day buckets', async () => {
+  let queryParams: Record<string, unknown> | null = null;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          queryParams = params.query_params as Record<string, unknown>;
+          return {
+            async json<T>() {
+              return [
+                {
+                  date: '2025-05-14',
+                  day_offset: -360,
+                  active: 100,
+                  new: 10,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  active: 150,
+                  new: 12,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/daily_users?days=365&bucket_days=30');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.parameters, {
+    days: 365,
+    bucket_days: 30,
+  });
+  assert.deepEqual(body.rows, [
+    {
+      date: '2025-05-14',
+      day_offset: -360,
+      active: 100,
+      new: 10,
+    },
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      active: 150,
+      new: 12,
+    },
+  ]);
+  assert.deepEqual(queryParams, {
+    days: 365,
+    bucket_count: 13,
+    bucket_days: 30,
+    bucket_seconds: 2592000,
+  });
+});
+
 test('serves compact new collection groups HTTP endpoint', async () => {
   const app = createCollectionCountApp(
     {

@@ -25,19 +25,19 @@ test('falls back to ClickHouse collection_count_view API endpoint for blank conf
     assert.equal(resolveCollectionCountEndpoint({ VITE_COLLECTION_COUNT_ENDPOINT: '   ' }), DEFAULT_COLLECTION_COUNT_ENDPOINT);
 });
 
-test('uses PostgREST analytics base by default', () => {
+test('uses ClickHouse analytics API base by default', () => {
     assert.equal(resolveAnalyticsApiBase({}), DEFAULT_ANALYTICS_API_BASE);
     assert.equal(
-        resolveAnalyticsEndpoint('active_collection_summary_view', {}),
-        'https://collectiondata.usounds.work/active_collection_summary_view',
+        resolveAnalyticsEndpoint('daily_collections', {}),
+        'https://dashboardapi.usounds.work/api/analytics/daily_collections',
     );
 });
 
-test('keeps daily summary endpoints on PostgREST even when analytics API base is configured', () => {
+test('uses configured analytics API base when provided', () => {
     assert.equal(
-        resolveAnalyticsEndpoint('/active_collection_summary_view', {
+        resolveAnalyticsEndpoint('/daily_users', {
             VITE_ANALYTICS_API_BASE: 'https://example.com/api/analytics/',
         }),
-        'https://collectiondata.usounds.work/active_collection_summary_view',
+        'https://example.com/api/analytics/daily_users',
     );
 });

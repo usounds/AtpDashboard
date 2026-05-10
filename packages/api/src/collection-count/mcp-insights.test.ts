@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  parseDailyChartBucketDays,
   parseMcpDailyUserDays,
   parseMcpDateRange,
   readCollectionsForNamespaceFromClickHouse,
@@ -96,9 +97,12 @@ test('reads daily users as active and new DID series', async () => {
   const rows = await readDailyUsersFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 7 });
 
   assert.equal(capturedQueryParams.days, 7);
+  assert.equal(capturedQueryParams.bucket_count, 7);
+  assert.equal(capturedQueryParams.bucket_days, 1);
+  assert.equal(capturedQueryParams.bucket_seconds, 86400);
   assert.match(capturedQuery, /uniqExact\(did\) AS active/);
   assert.match(capturedQuery, /SELECT max\(created_at\)/);
-  assert.match(capturedQuery, /toUInt16\(intDiv\(dateDiff\('second', created_at, latest_at\), 86400\)\) AS bucket_index/);
+  assert.match(capturedQuery, /toUInt16\(intDiv\(dateDiff\('second', created_at, latest_at\), bucket_seconds\)\) AS bucket_index/);
   assert.match(capturedQuery, /min\(created_at\) AS first_seen_at/);
   assert.match(capturedQuery, /first_seen_at > latest_at - toIntervalDay\(lookback_days\)/);
   assert.match(capturedQuery, /ORDER BY bucket_end_at ASC/);
@@ -137,6 +141,9 @@ test('reads daily collections as active and new collection series', async () => 
   const rows = await readDailyCollectionsFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 30 });
 
   assert.equal(capturedQueryParams.days, 30);
+  assert.equal(capturedQueryParams.bucket_count, 30);
+  assert.equal(capturedQueryParams.bucket_days, 1);
+  assert.equal(capturedQueryParams.bucket_seconds, 86400);
   assert.equal(capturedQueryParams.excluded_did, 'did:web:lexicon.store');
   assert.match(capturedQuery, /uniqExact\(collection\) AS active/);
   assert.match(capturedQuery, /collection,\n\s+min\(created_at\) AS first_seen_at/);
@@ -157,6 +164,13 @@ test('parses MCP daily user days up to one year', () => {
   assert.equal(parseMcpDailyUserDays(undefined), 7);
   assert.equal(parseMcpDailyUserDays('365'), 365);
   assert.throws(() => parseMcpDailyUserDays('366'), /between 1 and 365/);
+});
+
+test('parses daily chart bucket days for day and year modes', () => {
+  assert.equal(parseDailyChartBucketDays(undefined), 1);
+  assert.equal(parseDailyChartBucketDays('1'), 1);
+  assert.equal(parseDailyChartBucketDays('30'), 30);
+  assert.throws(() => parseDailyChartBucketDays('7'), /bucket_days must be 1 or 30/);
 });
 
 test('reads all observed collections under a namespace prefix', async () => {

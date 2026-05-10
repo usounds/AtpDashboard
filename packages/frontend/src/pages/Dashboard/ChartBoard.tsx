@@ -26,8 +26,8 @@ const ChartBoard: React.FC = () => {
     <>
       <div className="mt-4 grid grid-cols-12 gap-4 md:mt-6 md:gap-6 2xl:mt-7.5 2xl:gap-7.5">
         <CollectionChart />
-        <WeekChart newView='new_collection_summary_view' newTitle="New" activeView='active_collection_summary_view' activeTitle="Active" title='Collections' />
-        <WeekChart newView='new_did_summary_view' newTitle="New" activeView='active_did_summary_view' activeTitle="Active" title='Users' />
+        <WeekChart metric="collections" newTitle="New" activeTitle="Active" title='Collections' />
+        <WeekChart metric="users" newTitle="New" activeTitle="Active" title='Users' />
       </div>
     </>
   );

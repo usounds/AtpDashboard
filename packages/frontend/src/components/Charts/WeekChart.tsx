@@ -1,17 +1,21 @@
 import { ApexOptions } from 'apexcharts';
 import React, { useState, useEffect } from 'react';
 import ReactApexChart from 'react-apexcharts';
-import { DailySummary } from '../../types/collection';
+import {
+  buildDailyChartCategories,
+  buildDailyChartSeries,
+  buildDailyChartUrl,
+  type DailyChartMetric,
+  type DailyChartRange,
+  type DailyChartResponse,
+} from './dailyChart';
 
 interface WeekChartProps {
-  newView: string;
+  metric: DailyChartMetric;
   newTitle: string;
-  activeView: string;
   activeTitle: string;
   title: string;
 }
-
-const POSTGREST_DAILY_SUMMARY_BASE = 'https://collectiondata.usounds.work';
 
 const options: ApexOptions = {
   legend: {
@@ -126,13 +130,13 @@ interface ChartTwoState {
   }[];
 }
 
-const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, activeView, title }) => {
+const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, title }) => {
   const [state, setState] = useState<ChartTwoState>({
     series: [
 
     ],
   });
-  const [range, setRange] = useState<string>('30 Days');
+  const [range, setRange] = useState<DailyChartRange>('30 Days');
   const [currentOption, setCurrentOption] = useState<ApexOptions>(options);
   const handleReset = () => {
     setState((prevState) => ({
@@ -141,64 +145,17 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
   };
   handleReset;
 
-  const getMappedDailySummary = async (view: string): Promise<number[]> => {
-    const limit = range === '7 Days' ? 7 : range === '30 Days' ? 30 : 365;
-    // APIからデータを取得
-    const newResult = await fetch(`${POSTGREST_DAILY_SUMMARY_BASE}/${view}?limit=${limit}`);
-
-    // エラーチェック
-    if (!newResult.ok) {
-      throw new Error(`Error: ${newResult.statusText}`);
-    }
-
-    // JSONレスポンスをDailySummary型として受け取る
-    const newList = await newResult.json() as DailySummary[];
-
-    // day の最小値と最大値を取得
-    const minDay = Math.min(...newList.map(({ day }) => day));
-    const maxDay = Math.max(...newList.map(({ day }) => day));
-
-    // day をキーにしたマップを作成
-    const dayMap = new Map(newList.map(({ day, count }) => [day, count]));
-
-    // 欠損補完しつつ count の配列を作成
-    const completeSummaryList = [];
-    for (let d = minDay; d <= maxDay; d++) {
-      completeSummaryList.push(dayMap.get(d) ?? 0);
-    }
-
-    // 365日表示の場合は30日ごとのバケットに集計
-    if (range === '365 Days') {
-      const bucketSize = 30;
-      const bucketed: number[] = [];
-      for (let i = 0; i < completeSummaryList.length; i += bucketSize) {
-        const slice = completeSummaryList.slice(i, i + bucketSize);
-        const sum = slice.reduce((a, b) => a + b, 0);
-        bucketed.push(sum);
-      }
-      // 逆順にして最新のバケットが先頭になるように
-      return bucketed.reverse();
-    }
-
-    return completeSummaryList.reverse(); // 逆順にする
-  };
-
   const loadData = async () => {
-    const newResult = await getMappedDailySummary(newView);
-    const activeResult = await getMappedDailySummary(activeView);
+    const response = await fetch(buildDailyChartUrl(metric, range));
+    if (!response.ok) {
+      throw new Error(`Error: ${response.statusText}`);
+    }
 
-    // カテゴリはバケット数に合わせて生成
-    const categories = activeResult.map((_, index) => {
-      const result = activeResult.length - index - 1;
-      // 30日バケットの場合は "-30", "-60" など、1日バケットの場合は "-1", "-2" ...
-      if (range === '365 Days') {
-        const days = (result + 1) * 30; // 1 バケット = 30日
-        return `-${days}`;
-      }
-      return result === 0 ? '0' : `-${result}`;
-    });
-
-    const maxValue = Math.max(...activeResult) * 1.05;
+    const result = await response.json() as DailyChartResponse;
+    const categories = buildDailyChartCategories(result.rows);
+    const series = buildDailyChartSeries(result.rows, activeTitle, newTitle);
+    const activeValues = result.rows.map((row) => row.active);
+    const maxValue = Math.max(...activeValues, 0) * 1.05;
 
     setCurrentOption((prevOptions) => ({
       ...prevOptions,
@@ -208,21 +165,12 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
       },
       yaxis: {
         ...prevOptions.yaxis,
-        max: maxValue,
+        max: maxValue > 0 ? maxValue : 1,
       },
     }));
 
     setState({
-      series: [
-        {
-          name: activeTitle,
-          data: activeResult,
-        },
-        {
-          name: newTitle,
-          data: newResult,
-        },
-      ],
+      series,
     });
   };
 
@@ -239,7 +187,7 @@ const WeekChart: React.FC<WeekChartProps> = ({ newTitle, newView, activeTitle, a
     };
 
     fetchData();
-  }, [range]);
+  }, [metric, range]);
 
   return (
     <div className="col-span-12 rounded-sm border border-stroke bg-white p-7.5 shadow-default dark:border-strokedark dark:bg-boxdark xl:col-span-6">
