@@ -6,8 +6,12 @@ import { loadCollectionCountApiConfig, getPublicRoute, type CollectionCountApiCo
 import {
   createClickHouseClient,
   isStaleSnapshotError,
+  readCollectionCumulativeUsersFromClickHouse,
+  readCollectionStatsFromClickHouse,
   readCollectionCountFromClickHouse,
   type ClickHouseQueryClient,
+  type CollectionCumulativeUsersResultRow,
+  type CollectionStatsResultRow,
 } from './clickhouse.ts';
 import { readCollectionCountFromPostgrest, type FetchLike } from './fallback.ts';
 import {
@@ -101,6 +105,20 @@ type UniqueDidCountResult = {
   cacheStatus: McpCacheStatus;
 };
 
+type CollectionStatsResult = {
+  rows: CollectionStatsResultRow[];
+  cacheKey: string;
+  cacheStatus: McpCacheStatus;
+};
+
+type CollectionCumulativeUsersResult = {
+  collection: string;
+  rows: CollectionCumulativeUsersResultRow[];
+  cacheKey: string;
+  cacheStatus: McpCacheStatus;
+  params: Required<DailyChartBucketParams>;
+};
+
 const RAW_RECORD_DISPLAY_POLICY = {
   raw_record_json_inline_forbidden: true,
   instruction:
@@ -152,6 +170,8 @@ type DidDocumentCacheEntry = {
   value?: Record<string, unknown>;
   inFlight?: Promise<Record<string, unknown>>;
 };
+
+class InvalidRequestError extends Error {}
 
 export type CollectionCountAppDependencies = {
   clickhouse?: ClickHouseQueryClient | null;
@@ -351,6 +371,51 @@ export function createCollectionCountApp(
       console.error('[atpdashboard-api] unique_did_count failed', sanitizeError(error));
       c.header('X-Data-Source', 'unavailable');
       return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, 503);
+    }
+  });
+
+  app.get(getPublicRoute(config, '/collection_stats'), async (c) => {
+    try {
+      const collection = parseCollectionStatsCollection(c.req.query('collection'));
+      const result = await resolveCollectionStats({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        collection,
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setCollectionStatsCacheHeaders(c, result);
+      return c.json(result.rows);
+    } catch (error) {
+      console.error('[atpdashboard-api] collection_stats failed', sanitizeError(error));
+      c.header('X-Data-Source', 'unavailable');
+      return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, error instanceof InvalidRequestError ? 400 : 503);
+    }
+  });
+
+  app.get(getPublicRoute(config, '/collection_cumulative_users'), async (c) => {
+    try {
+      const collection = parseCollectionStatsCollection(c.req.query('collection'));
+      const result = await resolveCollectionCumulativeUsers({
+        config,
+        clickhouseClient,
+        mcpReadCache,
+        collection,
+        params: parseDailyChartParams(c.req.query('days'), c.req.query('bucket_days')),
+        getClickHouseClient: async () => {
+          clickhouseClient ??= await createClickHouseClient(config);
+          return clickhouseClient ?? null;
+        },
+      });
+      setCollectionCumulativeUsersCacheHeaders(c, result);
+      return c.json(formatCollectionCumulativeUsersHttpResult(result));
+    } catch (error) {
+      console.error('[atpdashboard-api] collection_cumulative_users failed', sanitizeError(error));
+      c.header('X-Data-Source', 'unavailable');
+      return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, error instanceof InvalidRequestError ? 400 : 503);
     }
   });
 
@@ -634,6 +699,73 @@ async function resolveUniqueDidCount(params: {
   };
 }
 
+async function resolveCollectionStats(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  mcpReadCache: Map<string, McpCacheEntry<unknown>>;
+  collection: string;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<CollectionStatsResult> {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+
+  const cacheKey = `collection_stats:collection=${params.collection}`;
+  const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () =>
+    readCollectionStatsFromClickHouse(client, params.config, params.collection),
+  );
+
+  return {
+    rows: cached.value as CollectionStatsResultRow[],
+    cacheKey,
+    cacheStatus: cached.status,
+  };
+}
+
+async function resolveCollectionCumulativeUsers(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  mcpReadCache: Map<string, McpCacheEntry<unknown>>;
+  collection: string;
+  params: Required<DailyChartBucketParams>;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<CollectionCumulativeUsersResult> {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+
+  const cacheKey = `collection_cumulative_users:collection=${params.collection}:days=${params.params.days}:bucket_days=${params.params.bucketDays}`;
+  const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () =>
+    readCollectionCumulativeUsersFromClickHouse(client, params.config, {
+      collection: params.collection,
+      days: params.params.days,
+      bucketDays: params.params.bucketDays,
+    }),
+  );
+
+  return {
+    collection: params.collection,
+    rows: cached.value as CollectionCumulativeUsersResultRow[],
+    cacheKey,
+    cacheStatus: cached.status,
+    params: params.params,
+  };
+}
+
+function parseCollectionStatsCollection(value: string | undefined): string {
+  const raw = value?.trim();
+  if (!raw) {
+    throw new InvalidRequestError('collection is required');
+  }
+  const collection = raw.startsWith('eq.') ? raw.slice(3) : raw;
+  if (!collection || collection.length > 512) {
+    throw new InvalidRequestError('invalid collection');
+  }
+  return collection;
+}
+
 function setDailyChartCacheHeaders(c: { header: (name: string, value: string) => void }, result: DailyChartResult): void {
   c.header('X-Data-Source', 'clickhouse_snapshot');
   c.header('X-Cache', result.cacheStatus);
@@ -684,6 +816,39 @@ function setUniqueDidCountCacheHeaders(c: { header: (name: string, value: string
   c.header('X-Cache', result.cacheStatus);
   c.header('X-Cache-Key', result.cacheKey);
   c.header('X-Cache-Ttl-Seconds', String(Math.floor(MCP_READ_CACHE_TTL_MS / 1000)));
+}
+
+function setCollectionStatsCacheHeaders(c: { header: (name: string, value: string) => void }, result: CollectionStatsResult): void {
+  c.header('X-Data-Source', 'clickhouse');
+  c.header('X-Cache', result.cacheStatus);
+  c.header('X-Cache-Key', result.cacheKey);
+  c.header('X-Cache-Ttl-Seconds', String(Math.floor(MCP_READ_CACHE_TTL_MS / 1000)));
+}
+
+function setCollectionCumulativeUsersCacheHeaders(
+  c: { header: (name: string, value: string) => void },
+  result: CollectionCumulativeUsersResult,
+): void {
+  c.header('X-Data-Source', 'clickhouse');
+  c.header('X-Cache', result.cacheStatus);
+  c.header('X-Cache-Key', result.cacheKey);
+  c.header('X-Cache-Ttl-Seconds', String(Math.floor(MCP_READ_CACHE_TTL_MS / 1000)));
+}
+
+function formatCollectionCumulativeUsersHttpResult(result: CollectionCumulativeUsersResult): Record<string, unknown> {
+  return {
+    collection: result.collection,
+    parameters: {
+      days: result.params.days,
+      bucket_days: result.params.bucketDays,
+    },
+    rows: result.rows,
+    cache: {
+      status: result.cacheStatus,
+      key: result.cacheKey,
+      ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
+    },
+  };
 }
 
 function setMcpCacheHeaders(c: { header: (name: string, value: string) => void }, result: McpInsightResult): void {

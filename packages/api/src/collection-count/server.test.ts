@@ -833,6 +833,188 @@ test('serves cached unique DID count endpoint from ClickHouse', async () => {
   });
 });
 
+test('serves cached collection_stats endpoint from ClickHouse', async () => {
+  let queryCount = 0;
+  let capturedQuery = '';
+  let capturedParams: Record<string, unknown> | undefined;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          queryCount += 1;
+          capturedQuery = params.query;
+          capturedParams = params.query_params;
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.post',
+                  unique_did: 12,
+                  min_createdat: '2026-05-09T11:45:23.006000Z',
+                  max_createdat: '2026-05-10T03:35:43.732000Z',
+                  unique_rkey: 34,
+                  total_count: 56,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/collection_stats?collection=app.example.post');
+  const second = await app.request('/api/analytics/collection_stats?collection=app.example.post');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Cache'), 'MISS');
+  assert.equal(second.headers.get('X-Cache'), 'HIT');
+  assert.equal(queryCount, 1);
+  assert.match(capturedQuery, /uniqExact\(did\) AS unique_did/);
+  assert.match(capturedQuery, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
+  assert.match(capturedQuery, /uniqExact\(event_key\) AS total_count/);
+  assert.deepEqual(capturedParams, { collection: 'app.example.post' });
+  assert.deepEqual(body, [
+    {
+      collection: 'app.example.post',
+      unique_did: 12,
+      min_createdat: '2026-05-09T11:45:23.006',
+      max_createdat: '2026-05-10T03:35:43.732',
+      unique_rkey: 34,
+      total_count: 56,
+    },
+  ]);
+});
+
+test('serves cached collection_cumulative_users endpoint from ClickHouse', async () => {
+  let queryCount = 0;
+  let capturedQuery = '';
+  let capturedParams: Record<string, unknown> | undefined;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          queryCount += 1;
+          capturedQuery = params.query;
+          capturedParams = params.query_params;
+          return {
+            async json<T>() {
+              return [
+                { date: '2026-05-08', day_offset: -1, new: 3, cumulative: 3 },
+                { date: '2026-05-09', day_offset: 0, new: 2, cumulative: 5 },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/collection_cumulative_users?collection=app.example.post&days=30');
+  const second = await app.request('/api/analytics/collection_cumulative_users?collection=app.example.post&days=30');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Cache'), 'MISS');
+  assert.equal(second.headers.get('X-Cache'), 'HIT');
+  assert.equal(queryCount, 1);
+  assert.match(capturedQuery, /min\(created_at\) AS first_seen_at/);
+  assert.match(capturedQuery, /sum\(new\) OVER/);
+  assert.deepEqual(capturedParams, {
+    collection: 'app.example.post',
+    days: 30,
+    bucket_days: 1,
+  });
+  assert.deepEqual(body, {
+    collection: 'app.example.post',
+    parameters: {
+      days: 30,
+      bucket_days: 1,
+    },
+    rows: [
+      { date: '2026-05-08', day_offset: -1, new: 3, cumulative: 3 },
+      { date: '2026-05-09', day_offset: 0, new: 2, cumulative: 5 },
+    ],
+    cache: {
+      status: 'HIT',
+      key: 'collection_cumulative_users:collection=app.example.post:days=30:bucket_days=1',
+      ttl_seconds: 600,
+    },
+  });
+});
+
+test('serves yearly collection_cumulative_users endpoint with 30 day buckets', async () => {
+  let capturedParams: Record<string, unknown> | undefined;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          capturedParams = params.query_params;
+          return {
+            async json<T>() {
+              return [
+                { date: '2025-05-15', day_offset: -360, new: 12, cumulative: 12 },
+                { date: '2026-05-10', day_offset: 0, new: 24, cumulative: 512 },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/collection_cumulative_users?collection=app.example.post&days=365&bucket_days=30');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(capturedParams, {
+    collection: 'app.example.post',
+    days: 365,
+    bucket_days: 30,
+  });
+  assert.deepEqual(body.rows, [
+    { date: '2025-05-15', day_offset: -360, new: 12, cumulative: 12 },
+    { date: '2026-05-10', day_offset: 0, new: 24, cumulative: 512 },
+  ]);
+});
+
+test('rejects collection_cumulative_users without collection', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          throw new Error('unexpected query');
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/collection_cumulative_users?days=30');
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(body, { error: 'collection is required' });
+});
+
 test('serves compact new collection groups HTTP endpoint', async () => {
   const app = createCollectionCountApp(
     {

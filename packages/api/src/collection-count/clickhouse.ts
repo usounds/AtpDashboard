@@ -24,6 +24,38 @@ export type SnapshotRow = {
   refreshed_at: string;
 };
 
+export type CollectionStatsRow = {
+  collection: string;
+  unique_did: string | number;
+  min_createdat: string | null;
+  max_createdat: string | null;
+  unique_rkey: string | number;
+  total_count: string | number;
+};
+
+export type CollectionStatsResultRow = {
+  collection: string;
+  unique_did: number;
+  min_createdat: string | null;
+  max_createdat: string | null;
+  unique_rkey: number;
+  total_count: number;
+};
+
+export type CollectionCumulativeUsersRow = {
+  date: string;
+  day_offset: string | number;
+  new: string | number;
+  cumulative: string | number;
+};
+
+export type CollectionCumulativeUsersResultRow = {
+  date: string;
+  day_offset: number;
+  new: number;
+  cumulative: number;
+};
+
 export function toPostgrestTimestamp(value: string | null): string | null {
   if (value == null) {
     return null;
@@ -123,6 +155,132 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
     min: toPostgrestTimestamp(row.min),
     max: toPostgrestTimestamp(row.max),
   }));
+}
+
+export async function readCollectionStatsFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  collection: string,
+): Promise<CollectionStatsResultRow[]> {
+  const rows = await withTimeout(readCollectionStatsRows(client, collection), config.clickhouseTimeoutMs, 'ClickHouse collection_stats query timed out');
+  return rows.map((row) => ({
+    collection: row.collection,
+    unique_did: Number(row.unique_did),
+    min_createdat: toPostgrestTimestamp(row.min_createdat),
+    max_createdat: toPostgrestTimestamp(row.max_createdat),
+    unique_rkey: Number(row.unique_rkey),
+    total_count: Number(row.total_count),
+  }));
+}
+
+async function readCollectionStatsRows(client: ClickHouseQueryClient, collection: string): Promise<CollectionStatsRow[]> {
+  const result = await client.query({
+    query: `
+SELECT
+  collection,
+  uniqExact(did) AS unique_did,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, formatDateTime(parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS min_createdat,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, formatDateTime(parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS max_createdat,
+  uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
+  uniqExact(event_key) AS total_count
+FROM atp_dashboard.collection_events
+WHERE collection = {collection:String}
+GROUP BY collection
+LIMIT 1
+`,
+    query_params: {
+      collection,
+    },
+    format: 'JSONEachRow',
+  });
+  return result.json<CollectionStatsRow[]>();
+}
+
+export async function readCollectionCumulativeUsersFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: { collection: string; days: number; bucketDays: number },
+): Promise<CollectionCumulativeUsersResultRow[]> {
+  const rows = await withTimeout(
+    readCollectionCumulativeUsersRows(client, params),
+    config.clickhouseTimeoutMs,
+    'ClickHouse collection_cumulative_users query timed out',
+  );
+  return rows.map((row) => ({
+    date: row.date,
+    day_offset: Number(row.day_offset),
+    new: Number(row.new),
+    cumulative: Number(row.cumulative),
+  }));
+}
+
+async function readCollectionCumulativeUsersRows(
+  client: ClickHouseQueryClient,
+  params: { collection: string; days: number; bucketDays: number },
+): Promise<CollectionCumulativeUsersRow[]> {
+  const result = await client.query({
+    query: `
+WITH
+  {days:UInt16} AS lookback_days,
+  {bucket_days:UInt8} AS requested_bucket_days,
+  toUInt16(ceil(lookback_days / requested_bucket_days)) AS bucket_count,
+  requested_bucket_days * 86400 AS bucket_seconds,
+  (
+    SELECT max(created_at)
+    FROM atp_dashboard.collection_events
+    WHERE collection = {collection:String}
+      AND isNotNull(created_at)
+      AND created_at_key != '<NULL>'
+  ) AS latest_at
+SELECT
+  toString(date) AS date,
+  day_offset,
+  new,
+  sum(new) OVER (ORDER BY bucket_index DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative
+FROM
+(
+  SELECT
+    days.bucket_index AS bucket_index,
+    toString(toDate(days.bucket_end_at, 'UTC')) AS date,
+    -toInt16(days.bucket_index * requested_bucket_days) AS day_offset,
+    toUInt64(coalesce(new_users.new, 0)) AS new
+  FROM
+  (
+    SELECT
+      toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+      latest_at - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at
+  ) AS days
+  LEFT JOIN
+  (
+    SELECT
+      toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), bucket_seconds)) AS bucket_index,
+      uniqExact(did) AS new
+    FROM
+    (
+      SELECT
+        did,
+        min(created_at) AS first_seen_at
+      FROM atp_dashboard.collection_events
+      WHERE collection = {collection:String}
+        AND isNotNull(created_at)
+        AND created_at_key != '<NULL>'
+      GROUP BY did
+    )
+    WHERE first_seen_at > latest_at - toIntervalDay(lookback_days)
+      AND first_seen_at <= latest_at
+    GROUP BY bucket_index
+  ) AS new_users USING (bucket_index)
+)
+ORDER BY bucket_index DESC
+`,
+    query_params: {
+      collection: params.collection,
+      days: params.days,
+      bucket_days: params.bucketDays,
+    },
+    format: 'JSONEachRow',
+  });
+  return result.json<CollectionCumulativeUsersRow[]>();
 }
 
 export function isStaleSnapshotError(error: unknown): boolean {
