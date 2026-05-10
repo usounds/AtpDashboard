@@ -1,0 +1,9 @@
+[Unit]
+Description=Run AtpDashboard ClickHouse analytics presence pipeline hourly
+
+[Timer]
+OnCalendar=*:17
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -17,7 +17,8 @@ test('requires dry-run or confirm-production', () => {
   assert.equal(parseRefreshAnalyticsChartOptions(['--confirm-production']).confirmProduction, true);
   assert.equal(parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'rollup']).source, 'rollup');
   assert.equal(parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'hourly']).source, 'hourly');
-  assert.throws(() => parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'bad']), /raw.*rollup.*hourly/);
+  assert.equal(parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'presence']).source, 'presence');
+  assert.throws(() => parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'bad']), /raw.*rollup.*hourly.*presence/);
 });
 
 test('dry-run config does not require ClickHouse URL', () => {
@@ -80,6 +81,20 @@ test('hourly snapshot query reads hourly rollups instead of raw events', () => {
   assert.match(sql, /uniqExactMerge\(event_count_state\) AS count/);
   assert.match(sql, /uniqExactMerge\(active_did_state\) AS active/);
   assert.match(sql, /uniqExactMerge\(active_collection_state\) AS active/);
+  assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
+});
+
+test('presence snapshot query avoids uniqExactMerge in scheduled source', () => {
+  const sql = buildSnapshotInsertQuery(undefined, 'presence');
+
+  assert.match(sql, /INSERT INTO atp_dashboard\.analytics_chart_snapshot/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_hourly_did_presence/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_hourly_collection_presence/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_hourly_event_count/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_hourly_new_did_rollup/);
+  assert.match(sql, /GROUP BY bucket_index, did/);
+  assert.match(sql, /GROUP BY bucket_index, collection/);
+  assert.doesNotMatch(sql, /uniqExactMerge/);
   assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
 });
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 export type RefreshStatus = 'running' | 'completed' | 'failed';
-export type AnalyticsChartRefreshSource = 'raw' | 'rollup' | 'hourly';
+export type AnalyticsChartRefreshSource = 'raw' | 'rollup' | 'hourly' | 'presence';
 
 export type RefreshAnalyticsChartOptions = {
   refreshId: string;
@@ -17,6 +17,8 @@ export type RefreshAnalyticsChartConfig = {
   clickhouseUsername: string | null;
   clickhousePassword: string | null;
   clickhouseRefreshTimeoutMs: number;
+  clickhouseMaxThreads: number;
+  clickhouseMaxInsertThreads: number;
 };
 
 export type AnalyticsChartSnapshotTarget = {
@@ -89,15 +91,17 @@ export function loadRefreshAnalyticsChartConfig(
     clickhouseUsername: readOptional(env.CLICKHOUSE_USERNAME),
     clickhousePassword: readOptional(env.CLICKHOUSE_PASSWORD),
     clickhouseRefreshTimeoutMs: readPositiveInteger(env.CLICKHOUSE_REFRESH_TIMEOUT_MS ?? '600000', 'CLICKHOUSE_REFRESH_TIMEOUT_MS'),
+    clickhouseMaxThreads: readPositiveInteger(env.CLICKHOUSE_MAX_THREADS ?? '2', 'CLICKHOUSE_MAX_THREADS'),
+    clickhouseMaxInsertThreads: readPositiveInteger(env.CLICKHOUSE_MAX_INSERT_THREADS ?? '1', 'CLICKHOUSE_MAX_INSERT_THREADS'),
   };
 }
 
 export function readAnalyticsChartRefreshSource(value: string | undefined): AnalyticsChartRefreshSource {
   const source = value?.trim() || 'raw';
-  if (source === 'raw' || source === 'rollup' || source === 'hourly') {
+  if (source === 'raw' || source === 'rollup' || source === 'hourly' || source === 'presence') {
     return source;
   }
-  throw new Error(`ANALYTICS_CHART_REFRESH_SOURCE must be "raw", "rollup", or "hourly", got: ${source}`);
+  throw new Error(`ANALYTICS_CHART_REFRESH_SOURCE must be "raw", "rollup", "hourly", or "presence", got: ${source}`);
 }
 
 export function buildMarkStaleRunningQuery(): string {
@@ -253,6 +257,9 @@ function buildTargetSelectQuery(target: AnalyticsChartSnapshotTarget, source: An
   }
   if (source === 'hourly') {
     return buildHourlyTargetSelectQuery(target);
+  }
+  if (source === 'presence') {
+    return buildPresenceTargetSelectQuery(target);
   }
   return buildRawTargetSelectQuery(target);
 }
@@ -751,6 +758,197 @@ LEFT JOIN
 ) events USING bucket_index`;
 }
 
+function buildPresenceTargetSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  if (target.tool === 'daily_users') {
+    return buildPresenceDailyUsersSelectQuery(target);
+  }
+  if (target.tool === 'daily_collections') {
+    return buildPresenceDailyCollectionsSelectQuery(target);
+  }
+  return buildPresenceEventCountsSelectQuery(target);
+}
+
+function buildPresencePrefix(target: AnalyticsChartSnapshotTarget): string {
+  return `
+WITH
+  ${target.days} AS lookback_days,
+  ${Math.ceil(target.days / target.bucketDays)} AS bucket_count,
+  ${target.bucketDays} AS chart_bucket_days,
+  ${target.bucketDays * 86400} AS bucket_seconds,
+  (
+    SELECT run_id
+    FROM atp_dashboard.analytics_presence_run_status
+    WHERE status IN ('verified', 'published')
+    ORDER BY if(isNull(published_at), verified_at, published_at) DESC, started_at DESC
+    LIMIT 1
+  ) AS presence_run_id,
+  (
+    SELECT source_latest_at
+    FROM atp_dashboard.analytics_presence_run_status
+    WHERE run_id = presence_run_id
+    LIMIT 1
+  ) AS source_latest_at,
+  (
+    SELECT source_latest_hour
+    FROM atp_dashboard.analytics_presence_run_status
+    WHERE run_id = presence_run_id
+    LIMIT 1
+  ) AS source_latest_hour`;
+}
+
+function buildPresenceBucketsSelect(): string {
+  return `
+FROM
+(
+  SELECT
+    toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+    source_latest_hour - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at,
+    source_latest_hour - toIntervalSecond((bucket_index + 1) * bucket_seconds) AS bucket_start_at
+) buckets`;
+}
+
+function buildPresenceDailyUsersSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildPresencePrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  buckets.bucket_index,
+  toDate(buckets.bucket_end_at, 'UTC') AS date,
+  -toInt16(buckets.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(coalesce(active.active, 0)) AS active,
+  toUInt64(coalesce(new_users.new, 0)) AS new,
+  toUInt64(0) AS count,
+  source_latest_at AS latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildPresenceBucketsSelect()}
+LEFT JOIN
+(
+  SELECT
+    bucket_index,
+    count() AS active
+  FROM
+  (
+    SELECT
+      toUInt16(intDiv(dateDiff('second', hour, source_latest_hour), bucket_seconds)) AS bucket_index,
+      did
+    FROM atp_dashboard.analytics_hourly_did_presence
+    WHERE hour > source_latest_hour - toIntervalDay(lookback_days)
+      AND hour <= source_latest_hour
+    GROUP BY bucket_index, did
+  )
+  GROUP BY bucket_index
+) active USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, source_latest_hour), bucket_seconds)) AS bucket_index,
+    sum(new_count) AS new
+  FROM
+  (
+    SELECT
+      hour,
+      argMax(new_count, refreshed_at) AS new_count
+    FROM atp_dashboard.analytics_hourly_new_did_rollup
+    GROUP BY hour
+  )
+  WHERE hour > source_latest_hour - toIntervalDay(lookback_days)
+    AND hour <= source_latest_hour
+  GROUP BY bucket_index
+) new_users USING bucket_index`;
+}
+
+function buildPresenceDailyCollectionsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildPresencePrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  buckets.bucket_index,
+  toDate(buckets.bucket_end_at, 'UTC') AS date,
+  -toInt16(buckets.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(coalesce(active_collections.active, 0)) AS active,
+  toUInt64(coalesce(new_collections.new, 0)) AS new,
+  toUInt64(0) AS count,
+  source_latest_at AS latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildPresenceBucketsSelect()}
+LEFT JOIN
+(
+  SELECT
+    bucket_index,
+    count() AS active
+  FROM
+  (
+    SELECT
+      toUInt16(intDiv(dateDiff('second', hour, source_latest_hour), bucket_seconds)) AS bucket_index,
+      collection
+    FROM atp_dashboard.analytics_hourly_collection_presence
+    WHERE hour > source_latest_hour - toIntervalDay(lookback_days)
+      AND hour <= source_latest_hour
+    GROUP BY bucket_index, collection
+  )
+  GROUP BY bucket_index
+) active_collections USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, source_latest_hour), bucket_seconds)) AS bucket_index,
+    sum(new_count) AS new
+  FROM
+  (
+    SELECT
+      hour,
+      argMax(new_count, refreshed_at) AS new_count
+    FROM atp_dashboard.analytics_hourly_new_collection_rollup
+    GROUP BY hour
+  )
+  WHERE hour > source_latest_hour - toIntervalDay(lookback_days)
+    AND hour <= source_latest_hour
+  GROUP BY bucket_index
+) new_collections USING bucket_index`;
+}
+
+function buildPresenceEventCountsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildPresencePrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  buckets.bucket_index,
+  toDate(buckets.bucket_end_at, 'UTC') AS date,
+  -toInt16(buckets.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(0) AS active,
+  toUInt64(0) AS new,
+  toUInt64(coalesce(events.count, 0)) AS count,
+  source_latest_at AS latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildPresenceBucketsSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, source_latest_hour), bucket_seconds)) AS bucket_index,
+    sum(count) AS count
+  FROM
+  (
+    SELECT
+      hour,
+      argMax(count, refreshed_at) AS count
+    FROM atp_dashboard.analytics_hourly_event_count
+    GROUP BY hour
+  )
+  WHERE hour > source_latest_hour - toIntervalDay(lookback_days)
+    AND hour <= source_latest_hour
+  GROUP BY bucket_index
+) events USING bucket_index`;
+}
+
 function readNext(argv: string[], index: number, flag: string): string {
   const value = argv[index];
   if (!value) {
@@ -796,6 +994,12 @@ async function main(): Promise<void> {
         password: config.clickhousePassword ?? undefined,
         database: config.clickhouseDatabase,
         request_timeout: config.clickhouseRefreshTimeoutMs,
+        clickhouse_settings: {
+          max_threads: config.clickhouseMaxThreads,
+          max_insert_threads: config.clickhouseMaxInsertThreads,
+          send_progress_in_http_headers: 1,
+          http_headers_progress_interval_ms: '30000',
+        },
       });
 
   try {

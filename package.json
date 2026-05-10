@@ -22,11 +22,14 @@
     "test:api": "pnpm --filter @atpdashboard/api test",
     "test:frontend": "pnpm --filter @atpdashboard/frontend test",
     "test:clickhouse-hourly-rollups": "bash scripts/test_analytics_hourly_rollups_clickhouse.sh",
+    "test:clickhouse-presence-pipeline": "bash scripts/test_analytics_presence_pipeline_clickhouse.sh",
     "backfill:collection-events": "pnpm --filter @atpdashboard/clickhouse-tools backfill:collection-events",
     "compare:collection-count": "pnpm --filter @atpdashboard/clickhouse-tools compare:collection-count",
     "refresh:analytics-hourly-new": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-hourly-new",
+    "refresh:analytics-presence": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-presence",
     "refresh:analytics-charts": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-charts",
     "refresh:collection-count": "pnpm --filter @atpdashboard/clickhouse-tools refresh:collection-count",
+    "verify:analytics-presence": "pnpm --filter @atpdashboard/clickhouse-tools verify:analytics-presence",
     "test:clickhouse-tools": "pnpm --filter @atpdashboard/clickhouse-tools test",
     "update": "pnpm dlx npm-check-updates && pnpm install"
   }
