@@ -242,7 +242,7 @@ SELECT
 FROM public.collection c
 WHERE c."createdAt" IS NOT NULL
   AND c."createdAt" >= now() - ($1::int * interval '1 day')
-ORDER BY c."createdAt" ASC, c.did ASC, c.collection ASC, c.rkey ASC
+ORDER BY c."createdAt" DESC, c.did ASC, c.collection ASC, c.rkey ASC
 LIMIT $2`,
     params: [rescanDays, limit],
   };

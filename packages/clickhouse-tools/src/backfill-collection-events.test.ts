@@ -108,7 +108,7 @@ test('recent rescan query reads by createdAt window without checkpoint tuple', (
   const { sql, params } = buildRecentRescanQuery(1, 1000);
 
   assert.match(sql, /c\."createdAt" >= now\(\) - \(\$1::int \* interval '1 day'\)/);
-  assert.match(sql, /ORDER BY c\."createdAt" ASC, c\.did ASC, c\.collection ASC, c\.rkey ASC/);
+  assert.match(sql, /ORDER BY c\."createdAt" DESC, c\.did ASC, c\.collection ASC, c\.rkey ASC/);
   assert.doesNotMatch(sql, /clickhouse_sync_checkpoints/);
   assert.deepEqual(params, [1, 1000]);
 });

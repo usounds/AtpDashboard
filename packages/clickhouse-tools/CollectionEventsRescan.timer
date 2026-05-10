@@ -1,9 +1,9 @@
 [Unit]
-Description=Run AtpDashboard ClickHouse recent collection_events rescan every 10 minutes
+Description=Run AtpDashboard ClickHouse recent collection_events rescan every 10 minutes, staggered
 
 [Timer]
-OnCalendar=*:5/10
-Persistent=true
+OnCalendar=*:06/10
+Persistent=false
 
 [Install]
 WantedBy=timers.target
