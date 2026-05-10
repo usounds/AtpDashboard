@@ -7,8 +7,9 @@ Type=oneshot
 User=root
 WorkingDirectory=/srv/AtpDashboard
 EnvironmentFile=-/etc/atpdashboard/clickhouse.env
-Environment=CLICKHOUSE_MAX_THREADS=2
+Environment=CLICKHOUSE_MAX_THREADS=1
 Environment=CLICKHOUSE_MAX_INSERT_THREADS=1
+Environment=CLICKHOUSE_MAX_MEMORY_USAGE=3000000000
 ExecStart=/usr/bin/flock -n /run/atpdashboard-analytics-presence.lock /srv/AtpDashboard/scripts/deploy_analytics_presence_pipeline.sh --confirm --periodic
 StandardOutput=append:/var/log/AnalyticsPresencePipeline.log
 StandardError=append:/var/log/AnalyticsPresencePipeline.log

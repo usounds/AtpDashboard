@@ -1,5 +1,31 @@
 CREATE DATABASE IF NOT EXISTS atp_dashboard;
 
+CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_presence_event_source
+(
+    event_key String,
+    did String,
+    collection String,
+    created_at DateTime64(6, 'UTC'),
+    hour DateTime64(0, 'UTC'),
+    ingested_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (ingested_at, hour, event_key);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_presence_event_source_mv
+TO atp_dashboard.analytics_presence_event_source
+AS
+SELECT
+    event_key,
+    did,
+    collection,
+    assumeNotNull(created_at) AS created_at,
+    toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+    ingested_at
+FROM atp_dashboard.collection_events
+WHERE isNotNull(created_at);
+
 CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_hourly_did_presence
 (
     hour DateTime64(0, 'UTC'),

@@ -25,6 +25,7 @@ export type RefreshAnalyticsPresencePipelineConfig = {
   clickhouseRefreshTimeoutMs: number;
   clickhouseMaxThreads: number;
   clickhouseMaxInsertThreads: number;
+  clickhouseMaxMemoryUsage: number;
 };
 
 type ClickHouseCommandLike = {
@@ -77,8 +78,9 @@ export function loadRefreshAnalyticsPresencePipelineConfig(
     clickhouseUsername: readOptional(env.CLICKHOUSE_USERNAME),
     clickhousePassword: readOptional(env.CLICKHOUSE_PASSWORD),
     clickhouseRefreshTimeoutMs: readPositiveInteger(env.CLICKHOUSE_REFRESH_TIMEOUT_MS ?? '600000', 'CLICKHOUSE_REFRESH_TIMEOUT_MS'),
-    clickhouseMaxThreads: readPositiveInteger(env.CLICKHOUSE_MAX_THREADS ?? '2', 'CLICKHOUSE_MAX_THREADS'),
+    clickhouseMaxThreads: readPositiveInteger(env.CLICKHOUSE_MAX_THREADS ?? '1', 'CLICKHOUSE_MAX_THREADS'),
     clickhouseMaxInsertThreads: readPositiveInteger(env.CLICKHOUSE_MAX_INSERT_THREADS ?? '1', 'CLICKHOUSE_MAX_INSERT_THREADS'),
+    clickhouseMaxMemoryUsage: readPositiveInteger(env.CLICKHOUSE_MAX_MEMORY_USAGE ?? '3000000000', 'CLICKHOUSE_MAX_MEMORY_USAGE'),
   };
 }
 
@@ -102,9 +104,8 @@ SELECT
   0 AS row_count,
   NULL AS error_message,
   now64(3, 'UTC') AS updated_at
-FROM atp_dashboard.collection_events
-WHERE isNotNull(created_at)
-  AND ingested_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
+FROM atp_dashboard.analytics_presence_event_source
+WHERE ingested_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
 `;
 }
 
@@ -112,13 +113,14 @@ export function buildDidPresenceInsertQuery(): string {
   return `
 INSERT INTO atp_dashboard.analytics_hourly_did_presence
 SELECT
-  toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+  hour,
   did,
   now64(3, 'UTC') AS observed_at
-FROM atp_dashboard.collection_events
-WHERE isNotNull(created_at)
-  AND ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+FROM atp_dashboard.analytics_presence_event_source
+WHERE ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
   AND (
+    EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'event_source_backfill' AND run_id = {run_id:UUID})
+    OR
     NOT EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'collection_events')
     OR ingested_at > (
       SELECT processed_ingested_at
@@ -138,14 +140,15 @@ export function buildCollectionPresenceInsertQuery(): string {
   return `
 INSERT INTO atp_dashboard.analytics_hourly_collection_presence
 SELECT
-  toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+  hour,
   collection,
   now64(3, 'UTC') AS observed_at
-FROM atp_dashboard.collection_events
-WHERE isNotNull(created_at)
-  AND did != {excluded_did:String}
+FROM atp_dashboard.analytics_presence_event_source
+WHERE did != {excluded_did:String}
   AND ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
   AND (
+    EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'event_source_backfill' AND run_id = {run_id:UUID})
+    OR
     NOT EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'collection_events')
     OR ingested_at > (
       SELECT processed_ingested_at
@@ -165,13 +168,14 @@ export function buildEventKeyPresenceInsertQuery(): string {
   return `
 INSERT INTO atp_dashboard.analytics_hourly_event_key_presence
 SELECT
-  toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+  hour,
   event_key,
   now64(3, 'UTC') AS observed_at
-FROM atp_dashboard.collection_events
-WHERE isNotNull(created_at)
-  AND ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+FROM atp_dashboard.analytics_presence_event_source
+WHERE ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
   AND (
+    EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'event_source_backfill' AND run_id = {run_id:UUID})
+    OR
     NOT EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'collection_events')
     OR ingested_at > (
       SELECT processed_ingested_at
@@ -204,13 +208,14 @@ FROM
   WHERE hour > (SELECT source_latest_hour FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1) - toIntervalDay({backfill_days:UInt32})
     AND hour <= (SELECT source_latest_hour FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
     AND (
+      EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'event_source_backfill' AND run_id = {run_id:UUID})
+      OR
       NOT EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'collection_events')
       OR hour IN
       (
-        SELECT toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS dirty_hour
-        FROM atp_dashboard.collection_events
-        WHERE isNotNull(created_at)
-          AND ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+        SELECT hour AS dirty_hour
+        FROM atp_dashboard.analytics_presence_event_source
+        WHERE ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
           AND ingested_at > (
             SELECT processed_ingested_at
             FROM atp_dashboard.analytics_presence_watermarks
@@ -404,6 +409,7 @@ async function main(): Promise<void> {
         clickhouse_settings: {
           max_threads: config.clickhouseMaxThreads,
           max_insert_threads: config.clickhouseMaxInsertThreads,
+          max_memory_usage: config.clickhouseMaxMemoryUsage,
           send_progress_in_http_headers: 1,
           http_headers_progress_interval_ms: '30000',
         },

@@ -89,14 +89,10 @@ echo "[presence-deploy] final target state:"
 echo "  AnalyticsPresencePipeline.timer: enabled, OnCalendar=*:17, Persistent=false"
 echo "  AnalyticsChartsRefresh.timer: disabled"
 echo "  AnalyticsHourlyNewRefresh.timer: disabled"
+echo "  CollectionCountRefresh.timer: stays disabled until its full-scan refresh is replaced"
 echo "  API/frontend: unchanged, reads analytics_chart_snapshot"
-echo "  source: presence, scheduled path does not use uniqExactMerge"
+echo "  source: presence event source ordered by ingested_at; scheduled path does not use uniqExactMerge or broad raw scans"
 echo "[presence-deploy] run_id=$RUN_ID periodic=$PERIODIC"
-
-echo "[presence-deploy] applying ClickHouse DDL"
-ch --multiquery < sql/clickhouse/004_analytics_chart_snapshot.sql
-ch --multiquery < sql/clickhouse/005_analytics_chart_rollups.sql
-ch --multiquery < sql/clickhouse/006_analytics_presence_pipeline.sql
 
 echo "[presence-deploy] loading ClickHouse env"
 set -a
@@ -104,8 +100,48 @@ set -a
 . "$ENV_FILE"
 set +a
 
-export CLICKHOUSE_MAX_THREADS="${CLICKHOUSE_MAX_THREADS:-2}"
+export CLICKHOUSE_MAX_THREADS="${CLICKHOUSE_MAX_THREADS:-1}"
 export CLICKHOUSE_MAX_INSERT_THREADS="${CLICKHOUSE_MAX_INSERT_THREADS:-1}"
+export CLICKHOUSE_MAX_MEMORY_USAGE="${CLICKHOUSE_MAX_MEMORY_USAGE:-3000000000}"
+export ANALYTICS_PRESENCE_BACKFILL_DAYS="${ANALYTICS_PRESENCE_BACKFILL_DAYS:-370}"
+
+echo "[presence-deploy] applying ClickHouse DDL"
+ch --multiquery < sql/clickhouse/004_analytics_chart_snapshot.sql
+ch --multiquery < sql/clickhouse/005_analytics_chart_rollups.sql
+ch --multiquery < sql/clickhouse/006_analytics_presence_pipeline.sql
+
+source_rows="$(ch --query "SELECT count() FROM ${DATABASE}.analytics_presence_event_source")"
+source_backfilled="$(ch --query "SELECT count() FROM ${DATABASE}.analytics_presence_watermarks WHERE name = 'event_source_backfill'")"
+if [[ "$source_backfilled" == "0" ]]; then
+  echo "[presence-deploy] backfilling analytics_presence_event_source once current_rows=$source_rows"
+  ch \
+    --max_threads=1 \
+    --max_insert_threads=1 \
+    --max_memory_usage="${CLICKHOUSE_MAX_MEMORY_USAGE:-3000000000}" \
+    --query "
+INSERT INTO ${DATABASE}.analytics_presence_event_source
+SELECT
+  event_key,
+  did,
+  collection,
+  assumeNotNull(created_at) AS created_at,
+  toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+  ingested_at
+FROM ${DATABASE}.collection_events
+WHERE isNotNull(created_at)
+  AND created_at >= now64(6, 'UTC') - toIntervalDay(${ANALYTICS_PRESENCE_BACKFILL_DAYS})
+"
+  ch --query "
+INSERT INTO ${DATABASE}.analytics_presence_watermarks
+SELECT
+  'event_source_backfill' AS name,
+  now64(3, 'UTC') AS processed_ingested_at,
+  toUUID('${RUN_ID}') AS run_id,
+  now64(3, 'UTC') AS updated_at
+"
+else
+  echo "[presence-deploy] analytics_presence_event_source backfill already recorded rows=$source_rows; skipping full source backfill"
+fi
 
 echo "[presence-deploy] preparing presence run"
 pnpm refresh:analytics-presence -- --confirm-production --run-id "$RUN_ID"
@@ -156,8 +192,8 @@ if [[ "$PERIODIC" != true ]]; then
   "${SUDO[@]}" systemctl daemon-reload
 
   echo "[presence-deploy] disabling legacy analytics timers"
-  "${SUDO[@]}" systemctl stop AnalyticsChartsRefresh.timer AnalyticsChartsRefresh.service AnalyticsHourlyNewRefresh.timer AnalyticsHourlyNewRefresh.service 2>/dev/null || true
-  "${SUDO[@]}" systemctl disable AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer 2>/dev/null || true
+  "${SUDO[@]}" systemctl stop AnalyticsChartsRefresh.timer AnalyticsChartsRefresh.service AnalyticsHourlyNewRefresh.timer AnalyticsHourlyNewRefresh.service CollectionCountRefresh.timer CollectionCountRefresh.service 2>/dev/null || true
+  "${SUDO[@]}" systemctl disable AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer 2>/dev/null || true
 
   echo "[presence-deploy] enabling presence timer"
   "${SUDO[@]}" systemctl enable --now AnalyticsPresencePipeline.timer
@@ -167,7 +203,7 @@ if [[ "$PERIODIC" != true ]]; then
   "${SUDO[@]}" systemctl --no-pager list-timers 'Analytics*' 'Collection*'
   "${SUDO[@]}" systemctl --no-pager --failed
 
-  active_legacy="$("${SUDO[@]}" systemctl is-enabled AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer 2>/dev/null | grep -c '^enabled$' || true)"
+  active_legacy="$("${SUDO[@]}" systemctl is-enabled AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer 2>/dev/null | grep -c '^enabled$' || true)"
   presence_enabled="$("${SUDO[@]}" systemctl is-enabled AnalyticsPresencePipeline.timer 2>/dev/null || true)"
   if [[ "$active_legacy" != "0" || "$presence_enabled" != "enabled" ]]; then
     echo "[presence-deploy] final timer state check failed legacy_enabled=$active_legacy presence_enabled=$presence_enabled" >&2

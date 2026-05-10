@@ -19,6 +19,7 @@ export type RefreshAnalyticsChartConfig = {
   clickhouseRefreshTimeoutMs: number;
   clickhouseMaxThreads: number;
   clickhouseMaxInsertThreads: number;
+  clickhouseMaxMemoryUsage: number;
 };
 
 export type AnalyticsChartSnapshotTarget = {
@@ -91,8 +92,9 @@ export function loadRefreshAnalyticsChartConfig(
     clickhouseUsername: readOptional(env.CLICKHOUSE_USERNAME),
     clickhousePassword: readOptional(env.CLICKHOUSE_PASSWORD),
     clickhouseRefreshTimeoutMs: readPositiveInteger(env.CLICKHOUSE_REFRESH_TIMEOUT_MS ?? '600000', 'CLICKHOUSE_REFRESH_TIMEOUT_MS'),
-    clickhouseMaxThreads: readPositiveInteger(env.CLICKHOUSE_MAX_THREADS ?? '2', 'CLICKHOUSE_MAX_THREADS'),
+    clickhouseMaxThreads: readPositiveInteger(env.CLICKHOUSE_MAX_THREADS ?? '1', 'CLICKHOUSE_MAX_THREADS'),
     clickhouseMaxInsertThreads: readPositiveInteger(env.CLICKHOUSE_MAX_INSERT_THREADS ?? '1', 'CLICKHOUSE_MAX_INSERT_THREADS'),
+    clickhouseMaxMemoryUsage: readPositiveInteger(env.CLICKHOUSE_MAX_MEMORY_USAGE ?? '3000000000', 'CLICKHOUSE_MAX_MEMORY_USAGE'),
   };
 }
 
@@ -997,6 +999,7 @@ async function main(): Promise<void> {
         clickhouse_settings: {
           max_threads: config.clickhouseMaxThreads,
           max_insert_threads: config.clickhouseMaxInsertThreads,
+          max_memory_usage: config.clickhouseMaxMemoryUsage,
           send_progress_in_http_headers: 1,
           http_headers_progress_interval_ms: '30000',
         },

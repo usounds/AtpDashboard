@@ -30,9 +30,12 @@ test('presence pipeline queries use ingested watermark and avoid uniqExactMerge'
 
   assert.match(sql, /cutoff_ingested_at/);
   assert.match(sql, /ingested_at <=/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_presence_event_source/);
+  assert.match(sql, /name = 'event_source_backfill' AND run_id = \{run_id:UUID\}/);
   assert.match(sql, /GROUP BY hour, did/);
   assert.match(sql, /GROUP BY hour, event_key/);
   assert.match(sql, /INSERT INTO atp_dashboard\.analytics_presence_watermarks/);
+  assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
   assert.doesNotMatch(sql, /uniqExactMerge/);
 });
 
