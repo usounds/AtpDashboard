@@ -1,5 +1,6 @@
 import flatpickr from 'flatpickr';
 import { useEffect, useRef } from 'react';
+import 'flatpickr/dist/flatpickr.min.css';
 
 interface DatePickerRangeProps {
   value?: [string, string];

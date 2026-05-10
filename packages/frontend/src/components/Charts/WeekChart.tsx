@@ -128,7 +128,7 @@ const options: ApexOptions = {
   },
 };
 
-interface ChartTwoState {
+interface WeekChartState {
   series: {
     name: string;
     data: number[];
@@ -136,7 +136,7 @@ interface ChartTwoState {
 }
 
 const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, title }) => {
-  const [state, setState] = useState<ChartTwoState>({
+  const [state, setState] = useState<WeekChartState>({
     series: [
 
     ],

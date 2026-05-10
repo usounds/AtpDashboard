@@ -1,10 +1,10 @@
-type CheckboxOneProps = {
+type CheckboxProps = {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
 };
 
-const Checkbox = ({ checked, onChange, label }: CheckboxOneProps) => {
+const Checkbox = ({ checked, onChange, label }: CheckboxProps) => {
   const handleCheckboxChange = () => {
     onChange(!checked);
   };

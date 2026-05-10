@@ -16,10 +16,13 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }: SidebarProps) => {
   const trigger = useRef<any>(null);
   const sidebar = useRef<any>(null);
 
-  const storedSidebarExpanded = localStorage.getItem('sidebar-expanded');
-  const [sidebarExpanded, setSidebarExpanded] = useState(
-    storedSidebarExpanded === null ? false : storedSidebarExpanded === 'true'
-  );
+  const [sidebarExpanded, setSidebarExpanded] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    return window.localStorage.getItem('sidebar-expanded') === 'true';
+  });
 
   // close on click outside
   useEffect(() => {
@@ -48,7 +51,7 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }: SidebarProps) => {
   });
 
   useEffect(() => {
-    localStorage.setItem('sidebar-expanded', sidebarExpanded.toString());
+    window.localStorage.setItem('sidebar-expanded', sidebarExpanded.toString());
     if (sidebarExpanded) {
       document.querySelector('body')?.classList.add('sidebar-expanded');
     } else {

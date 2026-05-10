@@ -151,13 +151,10 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
             onClick={() => handleSelectedCollection(item.collection)}
           >
             <div className="flex items-center gap-3 p-2.5 xl:p-5">
-              <p className="text-black dark:text-white 2xl:block break-words overflow-hidden break-all">
-                <div className="flex items-center">
-                  {item.isNew && <GoDotFill size={10} className="shrink-0 text-meta-3 mr-1" />}
-                  {item.collection}
-                </div>
-
-              </p>
+              <div className="flex items-center text-black dark:text-white break-words overflow-hidden break-all">
+                {item.isNew && <GoDotFill size={10} className="shrink-0 text-meta-3 mr-1" />}
+                {item.collection}
+              </div>
             </div>
 
             <div className="hidden 2xl:flex items-center justify-center p-2.5 xl:p-5">

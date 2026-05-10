@@ -59,7 +59,7 @@ function App() {
           path="/collectionChart"
           element={
             <>
-              <PageTitle title="Calendar | TailAdmin - Tailwind CSS Admin Dashboard Template" />
+              <PageTitle title="Collection Charts | ATProto Dashboard" />
               <ChartBoard />
             </>
           }

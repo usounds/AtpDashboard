@@ -121,7 +121,7 @@ const options: ApexOptions = {
   },
 };
 
-interface ChartOneState {
+interface CollectionChartState {
   series: {
     name: string;
     data: number[];
@@ -129,7 +129,7 @@ interface ChartOneState {
 }
 
 const CollectionChart: React.FC = () => {
-  const [state, setState] = useState<ChartOneState>({
+  const [state, setState] = useState<CollectionChartState>({
     series: [
     ],
   });
