@@ -336,6 +336,11 @@ export function buildBootstrapRawSourceQuery(limit: number): { query: string; qu
   return {
     query: `
 /* collection_count_bootstrap_bounded */
+WITH
+  (
+    SELECT coalesce(max(event_key), '')
+    FROM atp_dashboard.collection_count_event_existence_log
+  ) AS last_bootstrapped_event_key
 SELECT
   c.did,
   c.collection,
@@ -343,10 +348,8 @@ SELECT
   if(isNull(c.created_at), NULL, formatDateTime(c.created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS createdAt,
   formatDateTime(c.ingested_at, '%Y-%m-%d %H:%i:%S.%f', 'UTC') AS sourceIngestedAt
 FROM atp_dashboard.collection_events AS c
-LEFT JOIN atp_dashboard.collection_count_event_existence_log AS e
-  ON e.event_key = c.event_key
-WHERE e.event_key = ''
-ORDER BY c.ingested_at ASC, c.event_key ASC
+WHERE c.event_key > last_bootstrapped_event_key
+ORDER BY c.event_key ASC
 LIMIT {limit:UInt64}`,
     query_params: { limit },
   };

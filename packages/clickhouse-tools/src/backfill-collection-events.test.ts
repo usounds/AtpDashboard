@@ -167,9 +167,9 @@ test('bootstrap raw source queries are bounded and ordered by bootstrap high tup
   assert.match(high, /ORDER BY ingested_at DESC, event_key DESC/);
   assert.match(source.query, /collection_count_bootstrap_bounded/);
   assert.match(source.query, /FROM atp_dashboard\.collection_events/);
-  assert.match(source.query, /LEFT JOIN atp_dashboard\.collection_count_event_existence_log/);
-  assert.match(source.query, /WHERE e\.event_key = ''/);
-  assert.match(source.query, /ORDER BY c\.ingested_at ASC, c\.event_key ASC/);
+  assert.match(source.query, /FROM atp_dashboard\.collection_count_event_existence_log/);
+  assert.match(source.query, /WHERE c\.event_key > last_bootstrapped_event_key/);
+  assert.match(source.query, /ORDER BY c\.event_key ASC/);
   assert.match(source.query, /LIMIT \{limit:UInt64\}/);
   assert.deepEqual(source.query_params, { limit: 1000 });
 });
