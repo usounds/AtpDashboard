@@ -139,6 +139,11 @@ install_units_with_incremental_timer_disabled() {
   "${SUDO[@]}" systemctl disable CollectionCountIncrementalRefresh.timer 2>/dev/null || true
 }
 
+prepare_incremental_lock_file() {
+  log "preparing shared incremental lock file"
+  "${SUDO[@]}" install -m 0666 /dev/null /run/atpdashboard-collection-count-incremental.lock
+}
+
 deploy_enable_dual_write() {
   log "enabling dual-write collection event sync/rescan path"
   "${SUDO[@]}" systemctl enable --now CollectionEventsSync.timer
@@ -483,6 +488,7 @@ log "applying additive pre-cutover DDL"
 docker exec -i "$CLICKHOUSE_CONTAINER" clickhouse-client --multiquery < sql/clickhouse/007_collection_count_incremental.sql
 
 install_units_with_incremental_timer_disabled
+prepare_incremental_lock_file
 deploy_enable_dual_write
 verify_dual_write_static_paths
 record_bootstrap_high
