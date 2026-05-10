@@ -21,6 +21,19 @@ test('dry-run config does not require ClickHouse URL', () => {
   const config = loadRefreshAnalyticsChartConfig({}, { requireClickHouse: false });
 
   assert.equal(config.clickhouseUrl, 'http://localhost:8123');
+  assert.equal(config.clickhouseRefreshTimeoutMs, 600000);
+});
+
+test('loads refresh timeout from env', () => {
+  const config = loadRefreshAnalyticsChartConfig(
+    {
+      CLICKHOUSE_URL: 'http://example.test:8123',
+      CLICKHOUSE_REFRESH_TIMEOUT_MS: '1200000',
+    },
+    { requireClickHouse: true },
+  );
+
+  assert.equal(config.clickhouseRefreshTimeoutMs, 1200000);
 });
 
 test('snapshot query inserts every dashboard chart target', () => {

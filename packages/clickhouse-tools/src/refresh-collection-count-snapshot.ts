@@ -15,6 +15,7 @@ export type RefreshCollectionCountConfig = {
   clickhouseDatabase: string;
   clickhouseUsername: string | null;
   clickhousePassword: string | null;
+  clickhouseRefreshTimeoutMs: number;
 };
 
 type ClickHouseCommandLike = {
@@ -68,6 +69,7 @@ export function loadRefreshCollectionCountConfig(
     clickhouseDatabase: env.CLICKHOUSE_DATABASE ?? 'atp_dashboard',
     clickhouseUsername: readOptional(env.CLICKHOUSE_USERNAME),
     clickhousePassword: readOptional(env.CLICKHOUSE_PASSWORD),
+    clickhouseRefreshTimeoutMs: readPositiveInteger(env.CLICKHOUSE_REFRESH_TIMEOUT_MS ?? '600000', 'CLICKHOUSE_REFRESH_TIMEOUT_MS'),
   };
 }
 
@@ -253,6 +255,7 @@ async function main(): Promise<void> {
         username: config.clickhouseUsername ?? undefined,
         password: config.clickhousePassword ?? undefined,
         database: config.clickhouseDatabase,
+        request_timeout: config.clickhouseRefreshTimeoutMs,
       });
 
   try {
