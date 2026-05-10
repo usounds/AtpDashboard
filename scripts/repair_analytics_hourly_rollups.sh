@@ -66,7 +66,7 @@ echo "[repair] rebuilding hourly new did rollup"
 run_clickhouse <<SQL
 INSERT INTO ${DATABASE}.analytics_hourly_new_did_rollup
 SELECT
-    toDateTime(intDiv(toUnixTimestamp(first_seen_at), 3600) * 3600, 'UTC') AS hour,
+    dateTrunc('hour', first_seen_at) AS hour,
     count() AS new_count,
     now64(3, 'UTC') AS refreshed_at
 FROM
@@ -85,7 +85,7 @@ echo "[repair] rebuilding hourly new collection rollup"
 run_clickhouse <<SQL
 INSERT INTO ${DATABASE}.analytics_hourly_new_collection_rollup
 SELECT
-    toDateTime(intDiv(toUnixTimestamp(first_seen_at), 3600) * 3600, 'UTC') AS hour,
+    dateTrunc('hour', first_seen_at) AS hour,
     count() AS new_count,
     now64(3, 'UTC') AS refreshed_at
 FROM

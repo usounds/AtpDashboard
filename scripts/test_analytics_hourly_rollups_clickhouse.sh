@@ -75,6 +75,7 @@ ENGINE = ReplacingMergeTree(refreshed_at)
 ORDER BY hour;
 
 INSERT INTO atp_dashboard.collection_events VALUES
+  ('e0', 'did:plc:old', 'app.example.old', toDateTime64('1900-01-01 09:30:00.000000', 6, 'UTC')),
   ('e1', 'did:plc:alpha', 'app.example.post', toDateTime64('2025-01-16 15:28:16.123456', 6, 'UTC')),
   ('e2', 'did:plc:alpha', 'app.example.like', toDateTime64('2025-01-16 16:02:03.000000', 6, 'UTC')),
   ('e3', 'did:plc:beta', 'app.example.post', toDateTime64('2025-01-17 00:59:59.999999', 6, 'UTC')),
@@ -99,7 +100,7 @@ GROUP BY collection;
 
 INSERT INTO atp_dashboard.analytics_hourly_new_did_rollup
 SELECT
-    toDateTime(intDiv(toUnixTimestamp(first_seen_at), 3600) * 3600, 'UTC') AS hour,
+    dateTrunc('hour', first_seen_at) AS hour,
     count() AS new_count,
     now64(3, 'UTC') AS refreshed_at
 FROM
@@ -115,7 +116,7 @@ GROUP BY hour;
 
 INSERT INTO atp_dashboard.analytics_hourly_new_collection_rollup
 SELECT
-    toDateTime(intDiv(toUnixTimestamp(first_seen_at), 3600) * 3600, 'UTC') AS hour,
+    dateTrunc('hour', first_seen_at) AS hour,
     count() AS new_count,
     now64(3, 'UTC') AS refreshed_at
 FROM
@@ -160,8 +161,8 @@ FORMAT TSV
 
 IFS=$'\t' read -r rows future_rows non_hour_rows min_hour max_hour <<<"$summary"
 
-if [[ "$rows" != "6" ]]; then
-  echo "expected 6 hourly new rows, got $rows" >&2
+if [[ "$rows" != "8" ]]; then
+  echo "expected 8 hourly new rows, got $rows" >&2
   exit 1
 fi
 
