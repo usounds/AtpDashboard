@@ -96,8 +96,30 @@ args = ["-y", "mcp-remote", "https://dashboardapi.usounds.work/api/mcp"]
 
 If your Codex environment supports remote HTTP MCP URLs directly, configure the server URL as:
 
-```text
-https://dashboardapi.usounds.work/api/mcp
+```toml
+[mcp_servers.atpdashboard]
+url = "https://dashboardapi.usounds.work/api/mcp"
+enabled = true
+```
+
+### Gemini CLI configuration
+
+Gemini CLI distinguishes SSE and Streamable HTTP transports. Use `httpUrl` for this endpoint; `url` is treated as an SSE endpoint in Gemini CLI settings.
+
+```json
+{
+  "mcpServers": {
+    "atpdashboard": {
+      "httpUrl": "https://dashboardapi.usounds.work/api/mcp"
+    }
+  }
+}
+```
+
+You can also add it with the Gemini CLI:
+
+```bash
+gemini mcp add --transport http atpdashboard https://dashboardapi.usounds.work/api/mcp
 ```
 
 ## MCP tools
