@@ -38,6 +38,9 @@ test('loads refresh timeout from env', () => {
 test('snapshot query uses PostgREST-compatible counts and excludes lexicon store', () => {
   const sql = buildSnapshotInsertQuery();
 
+  assert.match(sql, /unique_did, unique_rkey, total_count/);
+  assert.match(sql, /uniqExact\(did\) AS unique_did/);
+  assert.match(sql, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
   assert.match(sql, /uniqExact\(event_key\) AS total_count/);
   assert.match(sql, /uniqExactIf\(event_key, isNotNull\(created_at\)/);
   assert.match(sql, /minIf\(created_at_key, created_at_key != '<NULL>'\)/);

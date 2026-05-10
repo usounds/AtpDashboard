@@ -176,16 +176,24 @@ export async function readCollectionStatsFromClickHouse(
 async function readCollectionStatsRows(client: ClickHouseQueryClient, collection: string): Promise<CollectionStatsRow[]> {
   const result = await client.query({
     query: `
+WITH latest_refresh AS
+(
+  SELECT refresh_id
+  FROM atp_dashboard.collection_count_refresh_manifest
+  WHERE status = 'completed'
+  ORDER BY completed_at DESC
+  LIMIT 1
+)
 SELECT
-  collection,
-  uniqExact(did) AS unique_did,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, formatDateTime(parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS min_createdat,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, formatDateTime(parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS max_createdat,
-  uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
-  uniqExact(event_key) AS total_count
-FROM atp_dashboard.collection_events
-WHERE collection = {collection:String}
-GROUP BY collection
+  snapshot.collection AS collection,
+  snapshot.unique_did AS unique_did,
+  if(isNull(snapshot.min_created_at), NULL, formatDateTime(snapshot.min_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS min_createdat,
+  if(isNull(snapshot.max_created_at), NULL, formatDateTime(snapshot.max_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS max_createdat,
+  snapshot.unique_rkey AS unique_rkey,
+  snapshot.total_count AS total_count
+FROM atp_dashboard.collection_count_snapshot snapshot
+INNER JOIN latest_refresh USING refresh_id
+WHERE snapshot.collection = {collection:String}
 LIMIT 1
 `,
     query_params: {

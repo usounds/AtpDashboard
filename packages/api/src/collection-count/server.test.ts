@@ -876,9 +876,11 @@ test('serves cached collection_stats endpoint from ClickHouse', async () => {
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
-  assert.match(capturedQuery, /uniqExact\(did\) AS unique_did/);
-  assert.match(capturedQuery, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
-  assert.match(capturedQuery, /uniqExact\(event_key\) AS total_count/);
+  assert.match(capturedQuery, /FROM atp_dashboard\.collection_count_snapshot snapshot/);
+  assert.match(capturedQuery, /INNER JOIN latest_refresh USING refresh_id/);
+  assert.match(capturedQuery, /snapshot\.unique_did AS unique_did/);
+  assert.match(capturedQuery, /snapshot\.unique_rkey AS unique_rkey/);
+  assert.doesNotMatch(capturedQuery, /FROM atp_dashboard\.collection_events/);
   assert.deepEqual(capturedParams, { collection: 'app.example.post' });
   assert.deepEqual(body, [
     {

@@ -121,10 +121,12 @@ VALUES
 export function buildSnapshotInsertQuery(): string {
   return `
 INSERT INTO atp_dashboard.collection_count_snapshot
-  (refresh_id, collection, total_count, recent_count, min_created_at, max_created_at, refreshed_at)
+  (refresh_id, collection, unique_did, unique_rkey, total_count, recent_count, min_created_at, max_created_at, refreshed_at)
 SELECT
   {refresh_id:UUID} AS refresh_id,
   collection,
+  uniqExact(did) AS unique_did,
+  uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
   uniqExact(event_key) AS total_count,
   uniqExactIf(event_key, isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
   if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
