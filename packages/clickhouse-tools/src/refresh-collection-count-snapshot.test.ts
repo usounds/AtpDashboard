@@ -40,13 +40,15 @@ test('snapshot query uses PostgREST-compatible counts and excludes lexicon store
   const sql = buildSnapshotInsertQuery();
 
   assert.match(sql, /unique_did, unique_rkey, total_count/);
+  assert.match(sql, /GROUP BY event_key/);
   assert.match(sql, /uniqExact\(did\) AS unique_did/);
   assert.match(sql, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
-  assert.match(sql, /uniqExact\(event_key\) AS total_count/);
-  assert.match(sql, /uniqExactIf\(event_key, isNotNull\(created_at\)/);
+  assert.match(sql, /count\(\) AS total_count/);
+  assert.match(sql, /countIf\(isNotNull\(created_at\)/);
   assert.match(sql, /minIf\(created_at_key, created_at_key != '<NULL>'\)/);
   assert.match(sql, /maxIf\(created_at_key, created_at_key != '<NULL>'\)/);
   assert.match(sql, /WHERE did != \{excluded_did:String\}/);
+  assert.match(sql, /optimize_aggregation_in_order = 1/);
 });
 
 test('DID first seen snapshot query stores one first_seen row per collection DID', () => {
@@ -85,6 +87,7 @@ test('refresh executes complete manifest only after snapshot inserts', async () 
       if (params.query.includes("VALUES\n  ({refresh_id:UUID}, 'running'")) operations.push('running');
       if (params.query.includes('INSERT INTO atp_dashboard.collection_count_snapshot')) operations.push('snapshot');
       if (params.query.includes('INSERT INTO atp_dashboard.collection_did_first_seen_snapshot')) operations.push('did_first_seen');
+      if (params.query.includes('collection_count_snapshot sanity failed')) operations.push('validate');
       if (params.query.includes("'completed' AS status")) operations.push('completed');
     },
   };
@@ -98,7 +101,7 @@ test('refresh executes complete manifest only after snapshot inserts', async () 
   });
 
   assert.equal(result.status, 'completed');
-  assert.deepEqual(operations, ['stale', 'running', 'snapshot', 'did_first_seen', 'completed']);
+  assert.deepEqual(operations, ['stale', 'running', 'snapshot', 'validate', 'completed']);
 });
 
 test('failed snapshot writes failed manifest and never completes', async () => {

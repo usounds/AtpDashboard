@@ -1,0 +1,9 @@
+[Unit]
+Description=Run AtpDashboard ClickHouse collection_count read model refresh every 10 minutes, staggered
+
+[Timer]
+OnCalendar=*:08/10
+Persistent=false
+
+[Install]
+WantedBy=timers.target

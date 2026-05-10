@@ -78,45 +78,49 @@ export async function createClickHouseClient(config: CollectionCountApiConfig): 
 
 export async function readCollectionCountFromClickHouse(
   client: ClickHouseQueryClient,
-  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  config: Pick<CollectionCountApiConfig, 'snapshotMaxAgeSeconds' | 'clickhouseTimeoutMs'>,
 ): Promise<CollectionCountResult> {
-  const rows = await withTimeout(
-    readLiveCollectionCountRows(client, null),
-    config.clickhouseTimeoutMs,
-    'ClickHouse live collection_count_view query timed out',
-  );
-
-  return {
-    rows,
-    headers: {
-      dataSource: 'clickhouse',
-      fallbackReason: null,
-      snapshotRefreshId: null,
-      snapshotRefreshedAt: null,
-      snapshotAgeSeconds: null,
-    },
-  };
+  return readCollectionCountSnapshot(client, config, null);
 }
 
 export async function readCollectionCountForCollectionFromClickHouse(
   client: ClickHouseQueryClient,
-  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  config: Pick<CollectionCountApiConfig, 'snapshotMaxAgeSeconds' | 'clickhouseTimeoutMs'>,
   collection: string,
 ): Promise<CollectionCountResult> {
+  return readCollectionCountSnapshot(client, config, collection);
+}
+
+async function readCollectionCountSnapshot(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'snapshotMaxAgeSeconds' | 'clickhouseTimeoutMs'>,
+  collection: string | null,
+): Promise<CollectionCountResult> {
+  const refresh = await withTimeout(readLatestCompletedRefresh(client), config.clickhouseTimeoutMs, 'ClickHouse latest refresh timed out');
+  if (!refresh) {
+    throw new Error('No completed collection_count refresh is available');
+  }
+
+  const completedAtMs = Date.parse(refresh.completed_at);
+  if (Number.isNaN(completedAtMs)) {
+    throw new Error(`Invalid completed_at from ClickHouse: ${refresh.completed_at}`);
+  }
+
+  const ageSeconds = Math.max(Math.floor((Date.now() - completedAtMs) / 1000), 0);
   const rows = await withTimeout(
-    readLiveCollectionCountRows(client, collection),
+    readSnapshotRows(client, refresh.refresh_id, collection),
     config.clickhouseTimeoutMs,
-    'ClickHouse live collection_count_view query timed out',
+    'ClickHouse collection_count read model query timed out',
   );
 
   return {
     rows,
     headers: {
       dataSource: 'clickhouse',
-      fallbackReason: null,
-      snapshotRefreshId: null,
-      snapshotRefreshedAt: null,
-      snapshotAgeSeconds: null,
+      fallbackReason: ageSeconds > config.snapshotMaxAgeSeconds ? 'stale_snapshot' : null,
+      snapshotRefreshId: refresh.refresh_id,
+      snapshotRefreshedAt: refresh.completed_at,
+      snapshotAgeSeconds: ageSeconds,
     },
   };
 }
@@ -139,7 +143,8 @@ LIMIT 1
   return rows[0] ?? null;
 }
 
-export async function readSnapshotRows(client: ClickHouseQueryClient, refreshId: string): Promise<CollectionCountRow[]> {
+export async function readSnapshotRows(client: ClickHouseQueryClient, refreshId: string, collection: string | null = null): Promise<CollectionCountRow[]> {
+  const collectionFilter = collection == null ? '' : '  AND collection = {collection:String}';
   const result = await client.query({
     query: `
 SELECT
@@ -150,10 +155,12 @@ SELECT
   if(isNull(max_created_at), NULL, formatDateTime(max_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS max
 FROM atp_dashboard.collection_count_snapshot
 WHERE refresh_id = {refresh_id:UUID}
+${collectionFilter}
 ORDER BY max_created_at DESC NULLS LAST, collection ASC
 `,
     query_params: {
       refresh_id: refreshId,
+      ...(collection == null ? {} : { collection }),
     },
     format: 'JSONEachRow',
   });
@@ -164,41 +171,6 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
     recent_count: Number(row.recent_count),
     min: toPostgrestTimestamp(row.min),
     max: toPostgrestTimestamp(row.max),
-  }));
-}
-
-async function readLiveCollectionCountRows(client: ClickHouseQueryClient, collection: string | null): Promise<CollectionCountRow[]> {
-  const collectionFilter = collection == null ? '' : '  AND collection = {collection:String}';
-  const result = await client.query({
-    query: `
-SELECT
-  collection,
-  uniqExact(event_key) AS count,
-  uniqExactIf(event_key, isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour(72)) AS recent_count,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at
-FROM atp_dashboard.collection_events
-WHERE did != 'did:web:lexicon.store'
-${collectionFilter}
-GROUP BY collection
-ORDER BY max_created_at DESC NULLS LAST, collection ASC
-`,
-    query_params: collection == null ? {} : { collection },
-    format: 'JSONEachRow',
-  });
-  const rows = await result.json<Array<{
-    collection: string;
-    count: string | number;
-    recent_count: string | number;
-    min_created_at: string | null;
-    max_created_at: string | null;
-  }>>();
-  return rows.map((row) => ({
-    collection: row.collection,
-    count: Number(row.count),
-    recent_count: Number(row.recent_count),
-    min: toPostgrestTimestamp(row.min_created_at),
-    max: toPostgrestTimestamp(row.max_created_at),
   }));
 }
 

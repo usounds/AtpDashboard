@@ -127,14 +127,41 @@ SELECT
   collection,
   uniqExact(did) AS unique_did,
   uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
-  uniqExact(event_key) AS total_count,
-  uniqExactIf(event_key, isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
+  count() AS total_count,
+  countIf(isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
   if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
   if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at,
   now64(3, 'UTC') AS refreshed_at
-FROM atp_dashboard.collection_events
-WHERE did != {excluded_did:String}
+FROM
+(
+  SELECT
+    event_key,
+    any(did) AS did,
+    any(collection) AS collection,
+    any(rkey) AS rkey,
+    any(created_at) AS created_at,
+    any(created_at_key) AS created_at_key
+  FROM atp_dashboard.collection_events
+  WHERE did != {excluded_did:String}
+  GROUP BY event_key
+)
 GROUP BY collection
+SETTINGS
+  max_threads = 1,
+  max_insert_threads = 1,
+  optimize_aggregation_in_order = 1,
+  max_bytes_before_external_group_by = 268435456,
+  max_bytes_before_external_sort = 268435456
+`;
+}
+
+export function buildSnapshotSanityQuery(): string {
+  return `
+SELECT
+  throwIf(count() = 0, 'collection_count_snapshot sanity failed: empty snapshot') AS non_empty,
+  throwIf(count() != uniqExact(collection), 'collection_count_snapshot sanity failed: duplicate collection rows') AS unique_collections
+FROM atp_dashboard.collection_count_snapshot
+WHERE refresh_id = {refresh_id:UUID}
 `;
 }
 
@@ -175,7 +202,7 @@ export async function refreshCollectionCountSnapshot(
       await client.command(query);
     }
     await client.command(queries.insertSnapshot);
-    await client.command(queries.insertDidFirstSeenSnapshot);
+    await client.command(queries.validateSnapshot);
     await client.command(queries.completeManifest);
     return {
       refreshId: options.refreshId,
@@ -199,6 +226,7 @@ export function buildRefreshQueryPlan(options: RefreshCollectionCountOptions): {
   beforeSnapshot: Array<{ query: string; query_params: Record<string, unknown> }>;
   insertSnapshot: { query: string; query_params: Record<string, unknown> };
   insertDidFirstSeenSnapshot: { query: string; query_params: Record<string, unknown> };
+  validateSnapshot: { query: string; query_params: Record<string, unknown> };
   completeManifest: { query: string; query_params: Record<string, unknown> };
 } {
   return {
@@ -230,6 +258,12 @@ export function buildRefreshQueryPlan(options: RefreshCollectionCountOptions): {
       query_params: {
         refresh_id: options.refreshId,
         excluded_did: LEXICON_STORE_DID,
+      },
+    },
+    validateSnapshot: {
+      query: buildSnapshotSanityQuery(),
+      query_params: {
+        refresh_id: options.refreshId,
       },
     },
     completeManifest: {
