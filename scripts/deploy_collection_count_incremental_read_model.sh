@@ -286,7 +286,7 @@ verify_visible_v2_marker() {
   marker_count="$(scalar "WITH $(latest_valid_cte) SELECT count() FROM latest_valid_completed")"
   snapshot_rows="$(scalar "WITH $(latest_valid_cte) SELECT count() FROM collection_count_snapshot WHERE refresh_id = (SELECT refresh_id FROM latest_valid_completed)")"
   cumulative_rows="$(scalar "WITH $(latest_valid_cte) SELECT count() FROM collection_count_cumulative_users_snapshot WHERE refresh_id = (SELECT refresh_id FROM latest_valid_completed)")"
-  sample_collection="$(scalar "WITH $(latest_valid_cte) SELECT collection FROM collection_count_snapshot WHERE refresh_id = (SELECT refresh_id FROM latest_valid_completed) ORDER BY count DESC LIMIT 1")"
+  sample_collection="$(scalar "WITH $(latest_valid_cte) SELECT collection FROM collection_count_snapshot WHERE refresh_id = (SELECT refresh_id FROM latest_valid_completed) ORDER BY total_count DESC LIMIT 1")"
 
   [[ "$marker_count" == "1" ]] || fail "latest valid v2 marker count is $marker_count"
   [[ "$snapshot_rows" != "0" ]] || fail "latest valid collection_count_snapshot is empty"
