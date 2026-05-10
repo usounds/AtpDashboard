@@ -10,6 +10,11 @@ import {
   buildEventChartSeries,
   buildEventCountsUrl,
 } from '../components/Charts/eventChart.ts';
+import {
+  buildCollectionCumulativeUsersCategories,
+  buildCollectionCumulativeUsersSeries,
+  buildCollectionCumulativeUsersUrl,
+} from '../components/Charts/collectionCumulativeUsers.ts';
 
 test('builds daily collections URL on ClickHouse analytics API', () => {
   assert.equal(
@@ -82,4 +87,42 @@ test('keeps yearly event count 30 day bucket offsets from the API', () => {
   ];
 
   assert.deepEqual(buildEventChartCategories(rows), ['-360', 'Today']);
+});
+
+test('builds collection cumulative users URL on ClickHouse analytics API', () => {
+  assert.equal(
+    buildCollectionCumulativeUsersUrl('app.example.post', '30 Days', {}),
+    'https://dashboardapi.usounds.work/api/analytics/collection_cumulative_users?collection=app.example.post&days=30',
+  );
+});
+
+test('builds yearly collection cumulative users URL with 30 day buckets', () => {
+  assert.equal(
+    buildCollectionCumulativeUsersUrl('app.example.post', '365 Days', {
+      VITE_ANALYTICS_API_BASE: 'https://example.com/api/analytics',
+    }),
+    'https://example.com/api/analytics/collection_cumulative_users?collection=app.example.post&days=365&bucket_days=30',
+  );
+});
+
+test('maps collection cumulative users rows to categories and series', () => {
+  const rows = [
+    { date: '2026-05-08', day_offset: -1, new: 3, cumulative: 100 },
+    { date: '2026-05-09', day_offset: 0, new: 2, cumulative: 102 },
+  ];
+
+  assert.deepEqual(buildCollectionCumulativeUsersCategories(rows), ['-1', '0']);
+  assert.deepEqual(buildCollectionCumulativeUsersSeries(rows), [
+    { name: 'Cumulative Users', data: [100, 102] },
+    { name: 'New Users', data: [3, 2] },
+  ]);
+});
+
+test('keeps yearly collection cumulative users 30 day bucket offsets from the API', () => {
+  const rows = [
+    { date: '2025-05-14', day_offset: -360, new: 50, cumulative: 50 },
+    { date: '2026-05-09', day_offset: 0, new: 12, cumulative: 300 },
+  ];
+
+  assert.deepEqual(buildCollectionCumulativeUsersCategories(rows), ['-360', '0']);
 });

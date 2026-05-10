@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS atp_dashboard.collection_count_snapshot
 (
     refresh_id UUID,
     collection String,
+    unique_did UInt64,
+    unique_rkey UInt64,
     total_count UInt64,
     recent_count UInt64,
     min_created_at Nullable(DateTime64(6, 'UTC')),
@@ -12,6 +14,12 @@ CREATE TABLE IF NOT EXISTS atp_dashboard.collection_count_snapshot
 )
 ENGINE = ReplacingMergeTree(refreshed_at)
 ORDER BY (refresh_id, collection);
+
+ALTER TABLE atp_dashboard.collection_count_snapshot
+    ADD COLUMN IF NOT EXISTS unique_did UInt64 AFTER collection;
+
+ALTER TABLE atp_dashboard.collection_count_snapshot
+    ADD COLUMN IF NOT EXISTS unique_rkey UInt64 AFTER unique_did;
 
 -- Snapshot retention policy:
 -- - API reads only refresh_id values marked completed in collection_count_refresh_manifest.

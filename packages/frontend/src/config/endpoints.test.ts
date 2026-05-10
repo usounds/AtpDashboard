@@ -35,6 +35,14 @@ test('uses ClickHouse analytics API base by default', () => {
         resolveAnalyticsEndpoint('unique_did_count', {}),
         'https://dashboardapi.usounds.work/api/analytics/unique_did_count',
     );
+    assert.equal(
+        resolveAnalyticsEndpoint('collection_stats', {}),
+        'https://dashboardapi.usounds.work/api/analytics/collection_stats',
+    );
+    assert.equal(
+        resolveAnalyticsEndpoint('collection_cumulative_users', {}),
+        'https://dashboardapi.usounds.work/api/analytics/collection_cumulative_users',
+    );
 });
 
 test('uses configured analytics API base when provided', () => {

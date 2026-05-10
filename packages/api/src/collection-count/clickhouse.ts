@@ -1,6 +1,8 @@
 import type { CollectionCountApiConfig } from './config.ts';
 import type { CollectionCountResult, CollectionCountRow } from './types.ts';
 
+const LEXICON_STORE_DID = 'did:web:lexicon.store';
+
 export type ClickHouseQueryClient = {
   query: (params: { query: string; query_params?: Record<string, unknown>; format?: 'JSONEachRow' }) => Promise<{
     json: <T>() => Promise<T>;
@@ -229,17 +231,28 @@ async function readCollectionCumulativeUsersRows(
   const result = await client.query({
     query: `
 WITH
+  latest_refresh AS
+  (
+    SELECT refresh_id
+    FROM atp_dashboard.collection_count_refresh_manifest
+    WHERE status = 'completed'
+    ORDER BY completed_at DESC
+    LIMIT 1
+  ),
+  latest_snapshot AS
+  (
+    SELECT
+      max_created_at
+    FROM atp_dashboard.collection_count_snapshot
+    INNER JOIN latest_refresh USING refresh_id
+    WHERE collection = {collection:String}
+    LIMIT 1
+  ),
   {days:UInt16} AS lookback_days,
   {bucket_days:UInt8} AS requested_bucket_days,
   toUInt16(ceil(lookback_days / requested_bucket_days)) AS bucket_count,
   requested_bucket_days * 86400 AS bucket_seconds,
-  (
-    SELECT max(created_at)
-    FROM atp_dashboard.collection_events
-    WHERE collection = {collection:String}
-      AND isNotNull(created_at)
-      AND created_at_key != '<NULL>'
-  ) AS latest_at,
+  (SELECT max_created_at FROM latest_snapshot) AS latest_at,
   latest_at - toIntervalDay(lookback_days) AS window_start_at,
   (
     SELECT uniqExact(did)
@@ -250,6 +263,7 @@ WITH
         min(created_at) AS first_seen_at
       FROM atp_dashboard.collection_events
       WHERE collection = {collection:String}
+        AND did != {excluded_did:String}
         AND isNotNull(created_at)
         AND created_at_key != '<NULL>'
       GROUP BY did
@@ -286,6 +300,7 @@ FROM
         min(created_at) AS first_seen_at
       FROM atp_dashboard.collection_events
       WHERE collection = {collection:String}
+        AND did != {excluded_did:String}
         AND isNotNull(created_at)
         AND created_at_key != '<NULL>'
       GROUP BY did
@@ -301,6 +316,7 @@ ORDER BY bucket_index DESC
       collection: params.collection,
       days: params.days,
       bucket_days: params.bucketDays,
+      excluded_did: LEXICON_STORE_DID,
     },
     format: 'JSONEachRow',
   });
