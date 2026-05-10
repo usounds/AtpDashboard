@@ -59,7 +59,7 @@ export function buildHourlyNewDidRollupInsertQuery(): string {
   return `
 INSERT INTO atp_dashboard.analytics_hourly_new_did_rollup
 SELECT
-  toDateTime64(toStartOfHour(first_seen_at), 0, 'UTC') AS hour,
+  toStartOfHour(first_seen_at) AS hour,
   count() AS new_count,
   now64(3, 'UTC') AS refreshed_at
 FROM
@@ -78,7 +78,7 @@ export function buildHourlyNewCollectionRollupInsertQuery(): string {
   return `
 INSERT INTO atp_dashboard.analytics_hourly_new_collection_rollup
 SELECT
-  toDateTime64(toStartOfHour(first_seen_at), 0, 'UTC') AS hour,
+  toStartOfHour(first_seen_at) AS hour,
   count() AS new_count,
   now64(3, 'UTC') AS refreshed_at
 FROM
