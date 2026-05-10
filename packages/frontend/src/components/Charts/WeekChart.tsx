@@ -216,6 +216,9 @@ const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, ti
           <div className="flex min-w-47.5">
             <div className="w-full">
               <span className="font-semibold text-black dark:text-white">{title}</span>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Aggregated data may lag by up to 1 hour.
+              </p>
             </div>
           </div>
         </div>

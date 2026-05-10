@@ -94,6 +94,65 @@ CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_daily_new_collection_rollup
 ENGINE = ReplacingMergeTree(refreshed_at)
 ORDER BY day;
 
+CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_hourly_activity_rollup
+(
+    hour DateTime64(0, 'UTC'),
+    event_count_state AggregateFunction(uniqExact, String),
+    active_did_state AggregateFunction(uniqExact, String),
+    latest_at_state AggregateFunction(max, DateTime64(6, 'UTC'))
+)
+ENGINE = AggregatingMergeTree
+PARTITION BY toYYYYMM(hour)
+ORDER BY hour;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_hourly_activity_rollup_mv
+TO atp_dashboard.analytics_hourly_activity_rollup AS
+SELECT
+    toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+    uniqExactState(event_key) AS event_count_state,
+    uniqExactState(did) AS active_did_state,
+    maxState(assumeNotNull(created_at)) AS latest_at_state
+FROM atp_dashboard.collection_events
+WHERE isNotNull(created_at)
+GROUP BY hour;
+
+CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_hourly_collection_activity_rollup
+(
+    hour DateTime64(0, 'UTC'),
+    active_collection_state AggregateFunction(uniqExact, String)
+)
+ENGINE = AggregatingMergeTree
+PARTITION BY toYYYYMM(hour)
+ORDER BY hour;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS atp_dashboard.analytics_hourly_collection_activity_rollup_mv
+TO atp_dashboard.analytics_hourly_collection_activity_rollup AS
+SELECT
+    toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+    uniqExactState(collection) AS active_collection_state
+FROM atp_dashboard.collection_events
+WHERE isNotNull(created_at)
+  AND did != 'did:web:lexicon.store'
+GROUP BY hour;
+
+CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_hourly_new_did_rollup
+(
+    hour DateTime64(0, 'UTC'),
+    new_count UInt64,
+    refreshed_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(refreshed_at)
+ORDER BY hour;
+
+CREATE TABLE IF NOT EXISTS atp_dashboard.analytics_hourly_new_collection_rollup
+(
+    hour DateTime64(0, 'UTC'),
+    new_count UInt64,
+    refreshed_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(refreshed_at)
+ORDER BY hour;
+
 -- Initial backfill order:
 -- 1. Create these tables and materialized views without POPULATE.
 -- 2. Choose a production cutoff timestamp.
@@ -103,6 +162,9 @@ ORDER BY day;
 --
 -- The daily_new_* rollups intentionally are not materialized views from raw events:
 -- the correct "new" day depends on global first_seen, including late or replayed events.
+-- The hourly_* rollups are the intended backend source for rolling chart windows.
+-- They keep the visible daily/monthly chart semantics close to the current latest_at
+-- windows while allowing the backend data to lag by up to one hour.
 --
 -- Review before running full-history backfill:
 --
@@ -171,3 +233,52 @@ ORDER BY day;
 --     GROUP BY collection
 -- )
 -- GROUP BY day;
+--
+-- INSERT INTO atp_dashboard.analytics_hourly_activity_rollup
+-- SELECT
+--     toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+--     uniqExactState(event_key) AS event_count_state,
+--     uniqExactState(did) AS active_did_state,
+--     maxState(assumeNotNull(created_at)) AS latest_at_state
+-- FROM atp_dashboard.collection_events
+-- WHERE isNotNull(created_at)
+-- GROUP BY hour;
+--
+-- INSERT INTO atp_dashboard.analytics_hourly_collection_activity_rollup
+-- SELECT
+--     toDateTime64(toStartOfHour(assumeNotNull(created_at)), 0, 'UTC') AS hour,
+--     uniqExactState(collection) AS active_collection_state
+-- FROM atp_dashboard.collection_events
+-- WHERE isNotNull(created_at)
+--   AND did != 'did:web:lexicon.store'
+-- GROUP BY hour;
+--
+-- INSERT INTO atp_dashboard.analytics_hourly_new_did_rollup
+-- SELECT
+--     toDateTime64(toStartOfHour(first_seen_at), 0, 'UTC') AS hour,
+--     count() AS new_count,
+--     now64(3, 'UTC') AS refreshed_at
+-- FROM
+-- (
+--     SELECT
+--         did,
+--         minMerge(first_seen_state) AS first_seen_at
+--     FROM atp_dashboard.analytics_did_first_seen_state
+--     GROUP BY did
+-- )
+-- GROUP BY hour;
+--
+-- INSERT INTO atp_dashboard.analytics_hourly_new_collection_rollup
+-- SELECT
+--     toDateTime64(toStartOfHour(first_seen_at), 0, 'UTC') AS hour,
+--     count() AS new_count,
+--     now64(3, 'UTC') AS refreshed_at
+-- FROM
+-- (
+--     SELECT
+--         collection,
+--         minMerge(first_seen_state) AS first_seen_at
+--     FROM atp_dashboard.analytics_collection_first_seen_state
+--     GROUP BY collection
+-- )
+-- GROUP BY hour;

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 export type RefreshStatus = 'running' | 'completed' | 'failed';
-export type AnalyticsChartRefreshSource = 'raw' | 'rollup';
+export type AnalyticsChartRefreshSource = 'raw' | 'rollup' | 'hourly';
 
 export type RefreshAnalyticsChartOptions = {
   refreshId: string;
@@ -94,10 +94,10 @@ export function loadRefreshAnalyticsChartConfig(
 
 export function readAnalyticsChartRefreshSource(value: string | undefined): AnalyticsChartRefreshSource {
   const source = value?.trim() || 'raw';
-  if (source === 'raw' || source === 'rollup') {
+  if (source === 'raw' || source === 'rollup' || source === 'hourly') {
     return source;
   }
-  throw new Error(`ANALYTICS_CHART_REFRESH_SOURCE must be "raw" or "rollup", got: ${source}`);
+  throw new Error(`ANALYTICS_CHART_REFRESH_SOURCE must be "raw", "rollup", or "hourly", got: ${source}`);
 }
 
 export function buildMarkStaleRunningQuery(): string {
@@ -250,6 +250,9 @@ export function buildRefreshQueryPlan(options: RefreshAnalyticsChartOptions): {
 function buildTargetSelectQuery(target: AnalyticsChartSnapshotTarget, source: AnalyticsChartRefreshSource): string {
   if (source === 'rollup') {
     return buildRollupTargetSelectQuery(target);
+  }
+  if (source === 'hourly') {
+    return buildHourlyTargetSelectQuery(target);
   }
   return buildRawTargetSelectQuery(target);
 }
@@ -588,6 +591,162 @@ LEFT JOIN
   FROM atp_dashboard.analytics_daily_activity_rollup
   WHERE day > latest_day - toIntervalDay(lookback_days)
     AND day <= latest_day
+  GROUP BY bucket_index
+) events USING bucket_index`;
+}
+
+function buildHourlyTargetSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  if (target.tool === 'daily_users') {
+    return buildHourlyDailyUsersSelectQuery(target);
+  }
+  if (target.tool === 'daily_collections') {
+    return buildHourlyDailyCollectionsSelectQuery(target);
+  }
+  return buildHourlyEventCountsSelectQuery(target);
+}
+
+function buildHourlyPrefix(target: AnalyticsChartSnapshotTarget): string {
+  return `
+WITH
+  ${target.days} AS lookback_days,
+  ${Math.ceil(target.days / target.bucketDays)} AS bucket_count,
+  ${target.bucketDays} AS chart_bucket_days,
+  ${target.bucketDays * 86400} AS bucket_seconds,
+  (
+    SELECT maxMerge(latest_at_state)
+    FROM atp_dashboard.analytics_hourly_activity_rollup
+  ) AS latest_at,
+  toStartOfHour(latest_at) AS latest_hour`;
+}
+
+function buildHourlyBucketsSelect(): string {
+  return `
+FROM
+(
+  SELECT
+    toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+    latest_hour - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at,
+    latest_hour - toIntervalSecond((bucket_index + 1) * bucket_seconds) AS bucket_start_at
+) buckets`;
+}
+
+function buildHourlyDailyUsersSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildHourlyPrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  buckets.bucket_index,
+  toDate(buckets.bucket_end_at, 'UTC') AS date,
+  -toInt16(buckets.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(coalesce(active.active, 0)) AS active,
+  toUInt64(coalesce(new_users.new, 0)) AS new,
+  toUInt64(0) AS count,
+  latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildHourlyBucketsSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, latest_hour), bucket_seconds)) AS bucket_index,
+    uniqExactMerge(active_did_state) AS active
+  FROM atp_dashboard.analytics_hourly_activity_rollup
+  WHERE hour > latest_hour - toIntervalDay(lookback_days)
+    AND hour <= latest_hour
+  GROUP BY bucket_index
+) active USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, latest_hour), bucket_seconds)) AS bucket_index,
+    sum(new_count) AS new
+  FROM
+  (
+    SELECT
+      hour,
+      argMax(new_count, refreshed_at) AS new_count
+    FROM atp_dashboard.analytics_hourly_new_did_rollup
+    GROUP BY hour
+  )
+  WHERE hour > latest_hour - toIntervalDay(lookback_days)
+    AND hour <= latest_hour
+  GROUP BY bucket_index
+) new_users USING bucket_index`;
+}
+
+function buildHourlyDailyCollectionsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildHourlyPrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  buckets.bucket_index,
+  toDate(buckets.bucket_end_at, 'UTC') AS date,
+  -toInt16(buckets.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(coalesce(active_collections.active, 0)) AS active,
+  toUInt64(coalesce(new_collections.new, 0)) AS new,
+  toUInt64(0) AS count,
+  latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildHourlyBucketsSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, latest_hour), bucket_seconds)) AS bucket_index,
+    uniqExactMerge(active_collection_state) AS active
+  FROM atp_dashboard.analytics_hourly_collection_activity_rollup
+  WHERE hour > latest_hour - toIntervalDay(lookback_days)
+    AND hour <= latest_hour
+  GROUP BY bucket_index
+) active_collections USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, latest_hour), bucket_seconds)) AS bucket_index,
+    sum(new_count) AS new
+  FROM
+  (
+    SELECT
+      hour,
+      argMax(new_count, refreshed_at) AS new_count
+    FROM atp_dashboard.analytics_hourly_new_collection_rollup
+    GROUP BY hour
+  )
+  WHERE hour > latest_hour - toIntervalDay(lookback_days)
+    AND hour <= latest_hour
+  GROUP BY bucket_index
+) new_collections USING bucket_index`;
+}
+
+function buildHourlyEventCountsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildHourlyPrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  buckets.bucket_index,
+  toDate(buckets.bucket_end_at, 'UTC') AS date,
+  -toInt16(buckets.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(0) AS active,
+  toUInt64(0) AS new,
+  toUInt64(coalesce(events.count, 0)) AS count,
+  latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildHourlyBucketsSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', hour, latest_hour), bucket_seconds)) AS bucket_index,
+    uniqExactMerge(event_count_state) AS count
+  FROM atp_dashboard.analytics_hourly_activity_rollup
+  WHERE hour > latest_hour - toIntervalDay(lookback_days)
+    AND hour <= latest_hour
   GROUP BY bucket_index
 ) events USING bucket_index`;
 }

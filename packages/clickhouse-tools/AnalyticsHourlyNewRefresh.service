@@ -1,0 +1,12 @@
+[Unit]
+Description=AtpDashboard ClickHouse hourly new analytics rollup refresh
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+ExecStart=pnpm refresh:analytics-hourly-new -- --confirm-production
+StandardOutput=append:/var/log/AnalyticsHourlyNewRefresh.log
+StandardError=append:/var/log/AnalyticsHourlyNewRefresh.log

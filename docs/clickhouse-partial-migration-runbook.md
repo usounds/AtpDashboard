@@ -140,6 +140,8 @@ packages/clickhouse-tools/CollectionEventsRescan.service
 packages/clickhouse-tools/CollectionEventsRescan.timer
 packages/clickhouse-tools/CollectionCountRefresh.service
 packages/clickhouse-tools/CollectionCountRefresh.timer
+packages/clickhouse-tools/AnalyticsHourlyNewRefresh.service
+packages/clickhouse-tools/AnalyticsHourlyNewRefresh.timer
 packages/clickhouse-tools/CollectionCountCompare.service
 packages/clickhouse-tools/CollectionCountCompare.timer
 ```
@@ -161,6 +163,8 @@ sudo cp packages/clickhouse-tools/CollectionEventsRescan.service /etc/systemd/sy
 sudo cp packages/clickhouse-tools/CollectionEventsRescan.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountRefresh.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountRefresh.timer /etc/systemd/system/
+sudo cp packages/clickhouse-tools/AnalyticsHourlyNewRefresh.service /etc/systemd/system/
+sudo cp packages/clickhouse-tools/AnalyticsHourlyNewRefresh.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/AnalyticsChartsRefresh.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/AnalyticsChartsRefresh.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountCompare.service /etc/systemd/system/
@@ -183,8 +187,9 @@ sudo systemctl status AtpDashboardAnalyticsApi.service
 sudo systemctl enable --now CollectionEventsSync.timer
 sudo systemctl enable --now CollectionEventsRescan.timer
 sudo systemctl enable --now CollectionCountRefresh.timer
+sudo systemctl enable --now AnalyticsHourlyNewRefresh.timer
 sudo systemctl enable --now CollectionCountCompare.timer
-sudo systemctl list-timers 'Collection*'
+sudo systemctl list-timers 'Collection*' 'Analytics*'
 ```
 
 ```ini

@@ -286,6 +286,12 @@ analytics_daily_new_collection_rollup
 analytics_daily_new_did_rollup
 analytics_did_first_seen_state
 analytics_did_first_seen_state_mv
+analytics_hourly_activity_rollup
+analytics_hourly_activity_rollup_mv
+analytics_hourly_collection_activity_rollup
+analytics_hourly_collection_activity_rollup_mv
+analytics_hourly_new_collection_rollup
+analytics_hourly_new_did_rollup
 ```
 
 ## 7. backfill dry-run

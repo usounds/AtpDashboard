@@ -1,0 +1,9 @@
+[Unit]
+Description=Run AtpDashboard ClickHouse hourly new analytics rollup refresh every hour
+
+[Timer]
+OnCalendar=*:17
+Persistent=true
+
+[Install]
+WantedBy=timers.target
