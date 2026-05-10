@@ -91,10 +91,12 @@ scalar() {
 
 require_file_without_pre_cutover_hazards() {
   local file="$1"
-  if grep -Ein '\b(RENAME|DETACH)\b|DROP[[:space:]]+(TABLE|VIEW|DATABASE)|CREATE[[:space:]]+OR[[:space:]]+REPLACE.*collection_count_refresh_manifest' "$file" >/dev/null; then
+  local sql_body
+  sql_body="$(grep -Ev '^[[:space:]]*--' "$file")"
+  if grep -Ein '\b(RENAME|DETACH)\b|DROP[[:space:]]+(TABLE|VIEW|DATABASE)|CREATE[[:space:]]+OR[[:space:]]+REPLACE.*collection_count_refresh_manifest' <<<"$sql_body" >/dev/null; then
     fail "pre-cutover path contains live manifest rename/drop/replace hazard: $file"
   fi
-  if grep -Ein 'collection_count_refresh_manifest[[:space:]]+AS|TO[[:space:]]+collection_count_refresh_manifest\b' "$file" | grep -v 'collection_count_refresh_manifest_v2' >/dev/null 2>&1; then
+  if grep -Ein 'collection_count_refresh_manifest[[:space:]]+AS|TO[[:space:]]+collection_count_refresh_manifest\b' <<<"$sql_body" | grep -v 'collection_count_refresh_manifest_v2' >/dev/null 2>&1; then
     fail "pre-cutover path can shadow live collection_count_refresh_manifest: $file"
   fi
 }
