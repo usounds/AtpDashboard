@@ -31,6 +31,7 @@ Docker化する場合でも、API/toolsはDBとは別コンテナにする。Cli
 POSTGRES_URL=postgres://readonly_or_sync_user:REDACTED@127.0.0.1:5432/atpdashboard
 CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123
 CLICKHOUSE_DATABASE=atp_dashboard
+ANALYTICS_CHART_REFRESH_SOURCE=raw
 ```
 
 Hono API:
@@ -185,10 +186,10 @@ ExecStart=/usr/bin/pnpm backfill:collection-events -- --confirm-production --max
 
 ```ini
 [Unit]
-Description=Run AtpDashboard ClickHouse collection_events sync every 10 minutes
+Description=Run AtpDashboard ClickHouse collection_events sync every 10 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/10
+OnCalendar=*:1/10
 Persistent=true
 
 [Install]
@@ -212,10 +213,10 @@ ExecStart=/usr/bin/pnpm refresh:collection-count -- --confirm-production --stale
 
 ```ini
 [Unit]
-Description=Run AtpDashboard ClickHouse collection_count snapshot refresh every 15 minutes
+Description=Run AtpDashboard ClickHouse collection_count snapshot refresh every 15 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*:3/15
 Persistent=true
 
 [Install]
@@ -239,10 +240,10 @@ ExecStart=/usr/bin/pnpm compare:collection-count -- --clickhouse-only --postgres
 
 ```ini
 [Unit]
-Description=Run AtpDashboard collection_count compare every 30 minutes
+Description=Run AtpDashboard collection_count compare every 30 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/30
+OnCalendar=*:13/30
 Persistent=true
 
 [Install]

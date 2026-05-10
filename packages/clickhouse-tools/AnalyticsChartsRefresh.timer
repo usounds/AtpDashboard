@@ -1,8 +1,8 @@
 [Unit]
-Description=Run AtpDashboard ClickHouse analytics chart snapshot refresh every 10 minutes
+Description=Run AtpDashboard ClickHouse analytics chart snapshot refresh every 10 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/10
+OnCalendar=*:9/10
 Persistent=true
 
 [Install]

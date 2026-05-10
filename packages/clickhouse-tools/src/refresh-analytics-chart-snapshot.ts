@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 export type RefreshStatus = 'running' | 'completed' | 'failed';
+export type AnalyticsChartRefreshSource = 'raw' | 'rollup';
 
 export type RefreshAnalyticsChartOptions = {
   refreshId: string;
   dryRun: boolean;
   confirmProduction: boolean;
   staleRunningMinutes: number;
+  source: AnalyticsChartRefreshSource;
 };
 
 export type RefreshAnalyticsChartConfig = {
@@ -48,6 +50,7 @@ export function parseRefreshAnalyticsChartOptions(argv: string[]): RefreshAnalyt
     dryRun: false,
     confirmProduction: false,
     staleRunningMinutes: 60,
+    source: 'raw',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -62,6 +65,8 @@ export function parseRefreshAnalyticsChartOptions(argv: string[]): RefreshAnalyt
       options.refreshId = readNext(argv, ++index, arg);
     } else if (arg === '--stale-running-minutes') {
       options.staleRunningMinutes = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--source') {
+      options.source = readAnalyticsChartRefreshSource(readNext(argv, ++index, arg));
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -85,6 +90,14 @@ export function loadRefreshAnalyticsChartConfig(
     clickhousePassword: readOptional(env.CLICKHOUSE_PASSWORD),
     clickhouseRefreshTimeoutMs: readPositiveInteger(env.CLICKHOUSE_REFRESH_TIMEOUT_MS ?? '600000', 'CLICKHOUSE_REFRESH_TIMEOUT_MS'),
   };
+}
+
+export function readAnalyticsChartRefreshSource(value: string | undefined): AnalyticsChartRefreshSource {
+  const source = value?.trim() || 'raw';
+  if (source === 'raw' || source === 'rollup') {
+    return source;
+  }
+  throw new Error(`ANALYTICS_CHART_REFRESH_SOURCE must be "raw" or "rollup", got: ${source}`);
 }
 
 export function buildMarkStaleRunningQuery(): string {
@@ -132,16 +145,22 @@ VALUES
 `;
 }
 
-export function buildSnapshotInsertQuery(targets: AnalyticsChartSnapshotTarget[] = ANALYTICS_CHART_TARGETS): string {
+export function buildSnapshotInsertQuery(
+  targets: AnalyticsChartSnapshotTarget[] = ANALYTICS_CHART_TARGETS,
+  source: AnalyticsChartRefreshSource = 'raw',
+): string {
   return `
 INSERT INTO atp_dashboard.analytics_chart_snapshot
   (refresh_id, tool, days, bucket_days, bucket_index, date, day_offset, active, new, count, latest_at, refreshed_at)
-${targets.map(buildTargetSelectQuery).join('\nUNION ALL\n')}
+${targets.map((target) => buildTargetSelectQuery(target, source)).join('\nUNION ALL\n')}
 `;
 }
 
-export function buildSnapshotInsertQueryForTarget(target: AnalyticsChartSnapshotTarget): string {
-  return buildSnapshotInsertQuery([target]);
+export function buildSnapshotInsertQueryForTarget(
+  target: AnalyticsChartSnapshotTarget,
+  source: AnalyticsChartRefreshSource = 'raw',
+): string {
+  return buildSnapshotInsertQuery([target], source);
 }
 
 export async function refreshAnalyticsChartSnapshot(
@@ -212,7 +231,7 @@ export function buildRefreshQueryPlan(options: RefreshAnalyticsChartOptions): {
     insertSnapshots: ANALYTICS_CHART_TARGETS.map((target) => ({
       target,
       command: {
-        query: buildSnapshotInsertQueryForTarget(target),
+        query: buildSnapshotInsertQueryForTarget(target, options.source),
         query_params: {
           refresh_id: options.refreshId,
           excluded_did: LEXICON_STORE_DID,
@@ -228,17 +247,24 @@ export function buildRefreshQueryPlan(options: RefreshAnalyticsChartOptions): {
   };
 }
 
-function buildTargetSelectQuery(target: AnalyticsChartSnapshotTarget): string {
-  if (target.tool === 'daily_users') {
-    return buildDailyUsersSelectQuery(target);
+function buildTargetSelectQuery(target: AnalyticsChartSnapshotTarget, source: AnalyticsChartRefreshSource): string {
+  if (source === 'rollup') {
+    return buildRollupTargetSelectQuery(target);
   }
-  if (target.tool === 'daily_collections') {
-    return buildDailyCollectionsSelectQuery(target);
-  }
-  return buildEventCountsSelectQuery(target);
+  return buildRawTargetSelectQuery(target);
 }
 
-function buildDailyUsersSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+function buildRawTargetSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  if (target.tool === 'daily_users') {
+    return buildRawDailyUsersSelectQuery(target);
+  }
+  if (target.tool === 'daily_collections') {
+    return buildRawDailyCollectionsSelectQuery(target);
+  }
+  return buildRawEventCountsSelectQuery(target);
+}
+
+function buildRawDailyUsersSelectQuery(target: AnalyticsChartSnapshotTarget): string {
   return `
 WITH
   ${target.days} AS lookback_days,
@@ -300,7 +326,7 @@ LEFT JOIN
 ) new_users USING bucket_index`;
 }
 
-function buildDailyCollectionsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+function buildRawDailyCollectionsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
   return `
 WITH
   ${target.days} AS lookback_days,
@@ -364,7 +390,7 @@ LEFT JOIN
 ) new_collections USING bucket_index`;
 }
 
-function buildEventCountsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+function buildRawEventCountsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
   return `
 WITH
   ${target.days} AS lookback_days,
@@ -408,6 +434,164 @@ LEFT JOIN
 ) events USING bucket_index`;
 }
 
+function buildRollupTargetSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  if (target.tool === 'daily_users') {
+    return buildRollupDailyUsersSelectQuery(target);
+  }
+  if (target.tool === 'daily_collections') {
+    return buildRollupDailyCollectionsSelectQuery(target);
+  }
+  return buildRollupEventCountsSelectQuery(target);
+}
+
+function buildRollupPrefix(target: AnalyticsChartSnapshotTarget): string {
+  return `
+WITH
+  ${target.days} AS lookback_days,
+  ${Math.ceil(target.days / target.bucketDays)} AS bucket_count,
+  ${target.bucketDays} AS chart_bucket_days,
+  (
+    SELECT max(day)
+    FROM atp_dashboard.analytics_daily_activity_rollup
+  ) AS latest_day,
+  (
+    SELECT maxMerge(latest_at_state)
+    FROM atp_dashboard.analytics_daily_activity_rollup
+  ) AS latest_at`;
+}
+
+function buildRollupDaysSelect(): string {
+  return `
+FROM
+(
+  SELECT
+    toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+    latest_day - toIntervalDay(bucket_index * chart_bucket_days) AS bucket_end_day,
+    latest_day - toIntervalDay(((bucket_index + 1) * chart_bucket_days) - 1) AS bucket_start_day
+) days`;
+}
+
+function buildRollupDailyUsersSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildRollupPrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  days.bucket_index,
+  days.bucket_end_day AS date,
+  -toInt16(days.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(coalesce(active.active, 0)) AS active,
+  toUInt64(coalesce(new_users.new, 0)) AS new,
+  toUInt64(0) AS count,
+  latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildRollupDaysSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('day', day, latest_day), chart_bucket_days)) AS bucket_index,
+    uniqExactMerge(active_did_state) AS active
+  FROM atp_dashboard.analytics_daily_activity_rollup
+  WHERE day > latest_day - toIntervalDay(lookback_days)
+    AND day <= latest_day
+  GROUP BY bucket_index
+) active USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('day', day, latest_day), chart_bucket_days)) AS bucket_index,
+    sum(new_count) AS new
+  FROM
+  (
+    SELECT
+      day,
+      argMax(new_count, refreshed_at) AS new_count
+    FROM atp_dashboard.analytics_daily_new_did_rollup
+    GROUP BY day
+  )
+  WHERE day > latest_day - toIntervalDay(lookback_days)
+    AND day <= latest_day
+  GROUP BY bucket_index
+) new_users USING bucket_index`;
+}
+
+function buildRollupDailyCollectionsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildRollupPrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  days.bucket_index,
+  days.bucket_end_day AS date,
+  -toInt16(days.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(coalesce(active_collections.active, 0)) AS active,
+  toUInt64(coalesce(new_collections.new, 0)) AS new,
+  toUInt64(0) AS count,
+  latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildRollupDaysSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('day', day, latest_day), chart_bucket_days)) AS bucket_index,
+    uniqExactMerge(active_collection_state) AS active
+  FROM atp_dashboard.analytics_daily_collection_activity_rollup
+  WHERE day > latest_day - toIntervalDay(lookback_days)
+    AND day <= latest_day
+  GROUP BY bucket_index
+) active_collections USING bucket_index
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('day', day, latest_day), chart_bucket_days)) AS bucket_index,
+    sum(new_count) AS new
+  FROM
+  (
+    SELECT
+      day,
+      argMax(new_count, refreshed_at) AS new_count
+    FROM atp_dashboard.analytics_daily_new_collection_rollup
+    GROUP BY day
+  )
+  WHERE day > latest_day - toIntervalDay(lookback_days)
+    AND day <= latest_day
+  GROUP BY bucket_index
+) new_collections USING bucket_index`;
+}
+
+function buildRollupEventCountsSelectQuery(target: AnalyticsChartSnapshotTarget): string {
+  return `
+${buildRollupPrefix(target)}
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  '${target.tool}' AS tool,
+  toUInt16(lookback_days) AS days,
+  toUInt8(chart_bucket_days) AS bucket_days,
+  days.bucket_index,
+  days.bucket_end_day AS date,
+  -toInt16(days.bucket_index * chart_bucket_days) AS day_offset,
+  toUInt64(0) AS active,
+  toUInt64(0) AS new,
+  toUInt64(coalesce(events.count, 0)) AS count,
+  latest_at,
+  now64(3, 'UTC') AS refreshed_at
+${buildRollupDaysSelect()}
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('day', day, latest_day), chart_bucket_days)) AS bucket_index,
+    uniqExactMerge(event_count_state) AS count
+  FROM atp_dashboard.analytics_daily_activity_rollup
+  WHERE day > latest_day - toIntervalDay(lookback_days)
+    AND day <= latest_day
+  GROUP BY bucket_index
+) events USING bucket_index`;
+}
+
 function readNext(argv: string[], index: number, flag: string): string {
   const value = argv[index];
   if (!value) {
@@ -439,6 +623,7 @@ function readOptional(value: string | undefined): string | null {
 
 async function main(): Promise<void> {
   const options = parseRefreshAnalyticsChartOptions(process.argv.slice(2));
+  options.source = readAnalyticsChartRefreshSource(process.env.ANALYTICS_CHART_REFRESH_SOURCE ?? options.source);
   const config = loadRefreshAnalyticsChartConfig(process.env, { requireClickHouse: !options.dryRun });
   const { createClient } = await import('@clickhouse/client');
   const client = options.dryRun

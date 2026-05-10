@@ -15,6 +15,8 @@ test('requires dry-run or confirm-production', () => {
   assert.equal(parseRefreshAnalyticsChartOptions(['--dry-run']).dryRun, true);
   assert.equal(parseRefreshAnalyticsChartOptions(['--', '--dry-run']).dryRun, true);
   assert.equal(parseRefreshAnalyticsChartOptions(['--confirm-production']).confirmProduction, true);
+  assert.equal(parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'rollup']).source, 'rollup');
+  assert.throws(() => parseRefreshAnalyticsChartOptions(['--dry-run', '--source', 'bad']), /raw.*rollup/);
 });
 
 test('dry-run config does not require ClickHouse URL', () => {
@@ -51,12 +53,27 @@ test('snapshot query inserts every dashboard chart target', () => {
   assert.match(sql, /uniqExact\(event_key\) AS count/);
 });
 
+test('rollup snapshot query reads daily rollups instead of raw events', () => {
+  const sql = buildSnapshotInsertQuery(undefined, 'rollup');
+
+  assert.match(sql, /INSERT INTO atp_dashboard\.analytics_chart_snapshot/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_daily_activity_rollup/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_daily_collection_activity_rollup/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_daily_new_did_rollup/);
+  assert.match(sql, /FROM atp_dashboard\.analytics_daily_new_collection_rollup/);
+  assert.match(sql, /uniqExactMerge\(event_count_state\) AS count/);
+  assert.match(sql, /uniqExactMerge\(active_did_state\) AS active/);
+  assert.match(sql, /uniqExactMerge\(active_collection_state\) AS active/);
+  assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
+});
+
 test('query plan marks stale running, creates running manifest, inserts snapshot, then completes manifest', () => {
   const plan = buildRefreshQueryPlan({
     refreshId: '00000000-0000-4000-8000-000000000001',
     dryRun: false,
     confirmProduction: true,
     staleRunningMinutes: 30,
+    source: 'raw',
   });
 
   assert.match(plan.beforeSnapshot[0].query, /status = 'running'/);
@@ -85,6 +102,7 @@ test('refresh executes complete manifest only after snapshot insert', async () =
     dryRun: false,
     confirmProduction: true,
     staleRunningMinutes: 60,
+    source: 'raw',
   });
 
   assert.equal(result.status, 'completed');
@@ -110,6 +128,7 @@ test('failed snapshot writes failed manifest and never completes', async () => {
         dryRun: false,
         confirmProduction: true,
         staleRunningMinutes: 60,
+        source: 'raw',
       }),
     /snapshot insert failed/,
   );

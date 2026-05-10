@@ -255,6 +255,13 @@ rtk docker exec -i atpdashboard-clickhouse clickhouse-client \
   --multiquery < sql/clickhouse/004_analytics_chart_snapshot.sql
 ```
 
+```bash
+rtk docker exec -i atpdashboard-clickhouse clickhouse-client \
+  --user default \
+  --password clickhouse \
+  --multiquery < sql/clickhouse/005_analytics_chart_rollups.sql
+```
+
 確認:
 
 ```bash
@@ -269,6 +276,16 @@ collection_count_snapshot
 collection_events
 analytics_chart_refresh_manifest
 analytics_chart_snapshot
+analytics_collection_first_seen_state
+analytics_collection_first_seen_state_mv
+analytics_daily_activity_rollup
+analytics_daily_activity_rollup_mv
+analytics_daily_collection_activity_rollup
+analytics_daily_collection_activity_rollup_mv
+analytics_daily_new_collection_rollup
+analytics_daily_new_did_rollup
+analytics_did_first_seen_state
+analytics_did_first_seen_state_mv
 ```
 
 ## 7. backfill dry-run

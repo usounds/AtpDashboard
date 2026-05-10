@@ -1,8 +1,8 @@
 [Unit]
-Description=Run AtpDashboard ClickHouse collection_count snapshot refresh every 15 minutes
+Description=Run AtpDashboard ClickHouse collection_count snapshot refresh every 15 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*:3/15
 Persistent=true
 
 [Install]

@@ -1,8 +1,8 @@
 [Unit]
-Description=Run AtpDashboard ClickHouse collection_events sync every 10 minutes
+Description=Run AtpDashboard ClickHouse collection_events sync every 10 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/10
+OnCalendar=*:1/10
 Persistent=true
 
 [Install]

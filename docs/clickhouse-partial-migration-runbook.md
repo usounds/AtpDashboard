@@ -408,10 +408,14 @@ analytics chart snapshot も初回デプロイ時に手動更新する:
 ```bash
 CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
   CLICKHOUSE_DATABASE=atp_dashboard \
+  ANALYTICS_CHART_REFRESH_SOURCE=raw \
   pnpm refresh:analytics-charts -- \
     --confirm-production \
     --stale-running-minutes 60
 ```
+
+`sql/clickhouse/005_analytics_chart_rollups.sql` の適用とrollup backfill/比較が完了した後は、
+`ANALYTICS_CHART_REFRESH_SOURCE=rollup` に切り替える。切り替え前の既定は `raw`。
 
 確認:
 

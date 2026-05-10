@@ -1,8 +1,8 @@
 [Unit]
-Description=Run AtpDashboard collection_count compare every 30 minutes
+Description=Run AtpDashboard collection_count compare every 30 minutes, staggered
 
 [Timer]
-OnCalendar=*:0/30
+OnCalendar=*:13/30
 Persistent=true
 
 [Install]
