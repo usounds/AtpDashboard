@@ -56,7 +56,8 @@ test('reads new collections by first record created_at instead of ingestion time
   assert.match(capturedQuery, /parseDateTime64BestEffort\(\{end_exclusive_at:String\}, 6, 'UTC'\)/);
   assert.match(capturedQuery, /WHERE first_seen_created_at >= range_start_at/);
   assert.match(capturedQuery, /AND first_seen_created_at < range_end_at/);
-  assert.match(capturedQuery, /countIf\(created_at >= range_start_at AND created_at < range_end_at\)/);
+  assert.match(capturedQuery, /uniqExactIf\(event_key, created_at >= range_start_at AND created_at < range_end_at\) AS event_count/);
+  assert.doesNotMatch(capturedQuery, /countIf\(created_at >= range_start_at AND created_at < range_end_at\) AS event_count/);
   assert.match(capturedQuery, /max\(created_at\) AS latest_record_created_at/);
   assert.match(capturedQuery, /argMax\(did, tuple\(created_at, event_key\)\) AS latest_record_did/);
   assert.match(capturedQuery, /argMax\(rkey, tuple\(created_at, event_key\)\) AS latest_record_rkey/);
@@ -190,7 +191,8 @@ test('reads event counts as rolling bucket series', async () => {
   assert.equal(capturedQueryParams.bucket_count, 13);
   assert.equal(capturedQueryParams.bucket_days, 30);
   assert.equal(capturedQueryParams.bucket_seconds, 2592000);
-  assert.match(capturedQuery, /count\(\) AS count/);
+  assert.match(capturedQuery, /uniqExact\(event_key\) AS count/);
+  assert.doesNotMatch(capturedQuery, /count\(\) AS count/);
   assert.match(capturedQuery, /toUInt16\(intDiv\(dateDiff\('second', created_at, latest_at\), bucket_seconds\)\) AS bucket_index/);
   assert.match(capturedQuery, /ORDER BY bucket_end_at ASC/);
   assert.deepEqual(rows, [
@@ -364,6 +366,8 @@ test('reads all observed collections under a namespace prefix', async () => {
 
   assert.equal(capturedQueryParams.namespace_prefix, 'app.chavatar');
   assert.match(capturedQuery, /startsWith\(collection, concat\(\{namespace_prefix:String\}, '\.'\)\)/);
+  assert.match(capturedQuery, /uniqExact\(event_key\) AS event_count/);
+  assert.doesNotMatch(capturedQuery, /count\(\) AS event_count/);
   assert.deepEqual(rows, [
     {
       collection: 'app.chavatar.schedules',

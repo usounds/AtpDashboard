@@ -346,7 +346,7 @@ FROM
   SELECT
     collection,
     min(created_at) AS first_seen_created_at,
-    countIf(created_at >= range_start_at AND created_at < range_end_at) AS event_count,
+    uniqExactIf(event_key, created_at >= range_start_at AND created_at < range_end_at) AS event_count,
     max(created_at) AS latest_record_created_at,
     argMax(did, tuple(created_at, event_key)) AS latest_record_did,
     argMax(rkey, tuple(created_at, event_key)) AS latest_record_rkey
@@ -586,7 +586,7 @@ LEFT JOIN
 (
   SELECT
     toUInt16(intDiv(dateDiff('second', created_at, latest_at), bucket_seconds)) AS bucket_index,
-    count() AS count
+    uniqExact(event_key) AS count
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
     AND created_at > latest_at - toIntervalDay(lookback_days)
@@ -648,7 +648,7 @@ SELECT
   collection,
   formatDateTime(min(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
   formatDateTime(max(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS last_seen_at,
-  count() AS event_count,
+  uniqExact(event_key) AS event_count,
   formatDateTime(max(created_at), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS latest_record_created_at,
   argMax(did, tuple(created_at, event_key)) AS latest_record_did,
   argMax(rkey, tuple(created_at, event_key)) AS latest_record_rkey
