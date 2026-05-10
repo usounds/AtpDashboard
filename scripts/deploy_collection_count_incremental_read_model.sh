@@ -201,7 +201,7 @@ backfill_through_bootstrap_high() {
     rows_read="$(node -e "const fs=require('fs'); const text=fs.readFileSync(process.argv[1],'utf8'); const match=text.match(/\\{[\\s\\S]*\\}/); if(!match) process.exit(2); const json=JSON.parse(match[0]); process.stdout.write(String(json.rowsRead ?? 0));" "$output")"
     rm -f "$output"
     log "bootstrap loop=$loop rows_read=$rows_read"
-    if [[ "$rows_read" -lt "$BOOTSTRAP_MAX_ROWS" ]]; then
+    if [[ "$rows_read" -eq 0 ]]; then
       return
     fi
   done
