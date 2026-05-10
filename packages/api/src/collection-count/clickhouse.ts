@@ -91,22 +91,39 @@ export async function readCollectionCountFromClickHouse(
   }
 
   const ageSeconds = Math.max(Math.floor((Date.now() - completedAtMs) / 1000), 0);
-  if (ageSeconds > config.snapshotMaxAgeSeconds) {
-    const error = new Error(`Snapshot is stale: ${ageSeconds}s`);
-    error.name = 'StaleSnapshotError';
-    throw error;
-  }
-
   const rows = await withTimeout(readSnapshotRows(client, refresh.refresh_id), config.clickhouseTimeoutMs, 'ClickHouse snapshot query timed out');
 
   return {
     rows,
     headers: {
       dataSource: 'clickhouse',
-      fallbackReason: null,
+      fallbackReason: ageSeconds > config.snapshotMaxAgeSeconds ? 'stale_snapshot' : null,
       snapshotRefreshId: refresh.refresh_id,
       snapshotRefreshedAt: refresh.completed_at,
       snapshotAgeSeconds: ageSeconds,
+    },
+  };
+}
+
+export async function readCollectionCountForCollectionFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  collection: string,
+): Promise<CollectionCountResult> {
+  const rows = await withTimeout(
+    readLiveCollectionCountRows(client, collection),
+    config.clickhouseTimeoutMs,
+    'ClickHouse live collection_count_view query timed out',
+  );
+
+  return {
+    rows,
+    headers: {
+      dataSource: 'clickhouse',
+      fallbackReason: null,
+      snapshotRefreshId: null,
+      snapshotRefreshedAt: null,
+      snapshotAgeSeconds: null,
     },
   };
 }
@@ -157,6 +174,41 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
   }));
 }
 
+async function readLiveCollectionCountRows(client: ClickHouseQueryClient, collection: string): Promise<CollectionCountRow[]> {
+  const result = await client.query({
+    query: `
+SELECT
+  collection,
+  uniqExact(event_key) AS count,
+  uniqExactIf(event_key, isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour(72)) AS recent_count,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at
+FROM atp_dashboard.collection_events
+WHERE collection = {collection:String}
+GROUP BY collection
+LIMIT 1
+`,
+    query_params: {
+      collection,
+    },
+    format: 'JSONEachRow',
+  });
+  const rows = await result.json<Array<{
+    collection: string;
+    count: string | number;
+    recent_count: string | number;
+    min_created_at: string | null;
+    max_created_at: string | null;
+  }>>();
+  return rows.map((row) => ({
+    collection: row.collection,
+    count: Number(row.count),
+    recent_count: Number(row.recent_count),
+    min: toPostgrestTimestamp(row.min_created_at),
+    max: toPostgrestTimestamp(row.max_created_at),
+  }));
+}
+
 export async function readCollectionStatsFromClickHouse(
   client: ClickHouseQueryClient,
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
@@ -176,24 +228,16 @@ export async function readCollectionStatsFromClickHouse(
 async function readCollectionStatsRows(client: ClickHouseQueryClient, collection: string): Promise<CollectionStatsRow[]> {
   const result = await client.query({
     query: `
-WITH latest_refresh AS
-(
-  SELECT refresh_id
-  FROM atp_dashboard.collection_count_refresh_manifest
-  WHERE status = 'completed'
-  ORDER BY completed_at DESC
-  LIMIT 1
-)
 SELECT
-  snapshot.collection AS collection,
-  snapshot.unique_did AS unique_did,
-  if(isNull(snapshot.min_created_at), NULL, formatDateTime(snapshot.min_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS min_createdat,
-  if(isNull(snapshot.max_created_at), NULL, formatDateTime(snapshot.max_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS max_createdat,
-  snapshot.unique_rkey AS unique_rkey,
-  snapshot.total_count AS total_count
-FROM atp_dashboard.collection_count_snapshot snapshot
-INNER JOIN latest_refresh USING refresh_id
-WHERE snapshot.collection = {collection:String}
+  collection,
+  uniqExact(did) AS unique_did,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_createdat,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_createdat,
+  uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
+  uniqExact(event_key) AS total_count
+FROM atp_dashboard.collection_events
+WHERE collection = {collection:String}
+GROUP BY collection
 LIMIT 1
 `,
     query_params: {
@@ -300,10 +344,6 @@ ORDER BY bucket_index DESC
     format: 'JSONEachRow',
   });
   return result.json<CollectionCumulativeUsersRow[]>();
-}
-
-export function isStaleSnapshotError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'StaleSnapshotError';
 }
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

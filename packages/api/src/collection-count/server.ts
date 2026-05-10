@@ -5,9 +5,9 @@ import { secureHeaders } from 'hono/secure-headers';
 import { loadCollectionCountApiConfig, getPublicRoute, type CollectionCountApiConfig, type FallbackReason } from './config.ts';
 import {
   createClickHouseClient,
-  isStaleSnapshotError,
   readCollectionCumulativeUsersFromClickHouse,
   readCollectionStatsFromClickHouse,
+  readCollectionCountForCollectionFromClickHouse,
   readCollectionCountFromClickHouse,
   type ClickHouseQueryClient,
   type CollectionCumulativeUsersResultRow,
@@ -235,6 +235,28 @@ export function createCollectionCountApp(
 
   app.get(getPublicRoute(config, '/collection_count_view'), async (c) => {
     const disableFallback = c.req.header('X-Disable-Fallback')?.toLowerCase() === 'true';
+    const collection = parseOptionalCollectionStatsCollection(c.req.query('collection'));
+    if (collection) {
+      try {
+        const result = await resolveCollectionCountForCollection({
+          config,
+          clickhouseClient,
+          collection,
+          getClickHouseClient: async () => {
+            clickhouseClient ??= await createClickHouseClient(config);
+            return clickhouseClient ?? null;
+          },
+        });
+        setCollectionCountHeaders(c, result);
+        return c.json(result.rows);
+      } catch (error) {
+        console.error('[atpdashboard-api] collection_count_view live collection failed', sanitizeError(error));
+        c.header('Retry-After', '30');
+        setCollectionCountHeaders(c, unavailable('clickhouse_error').result);
+        return c.json({ error: error instanceof Error ? error.message : 'unavailable' }, error instanceof InvalidRequestError ? 400 : 503);
+      }
+    }
+
     const cached = cache && cache.expiresAt > Date.now() ? cache.result : null;
     if (cached && !disableFallback && !config.forceCollectionCountFallback) {
       setCollectionCountHeaders(c, cached);
@@ -758,6 +780,18 @@ function parseCollectionStatsCollection(value: string | undefined): string {
   const raw = value?.trim();
   if (!raw) {
     throw new InvalidRequestError('collection is required');
+  }
+  const collection = parseOptionalCollectionStatsCollection(raw);
+  if (!collection) {
+    throw new InvalidRequestError('invalid collection');
+  }
+  return collection;
+}
+
+function parseOptionalCollectionStatsCollection(value: string | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) {
+    return null;
   }
   const collection = raw.startsWith('eq.') ? raw.slice(3) : raw;
   if (!collection || collection.length > 512) {
@@ -1861,9 +1895,7 @@ async function resolveCollectionCount(params: {
     updateRuntimeStatus(runtimeStatus, result.headers);
     return { status: 200, result };
   } catch (error) {
-    const reason: FallbackReason = isStaleSnapshotError(error)
-      ? 'stale_snapshot'
-      : error instanceof Error && error.message.toLowerCase().includes('timed out')
+    const reason: FallbackReason = error instanceof Error && error.message.toLowerCase().includes('timed out')
         ? 'clickhouse_timeout'
         : 'clickhouse_error';
     recordClickHouseFailure(runtimeStatus, config);
@@ -1876,6 +1908,19 @@ async function resolveCollectionCount(params: {
       return unavailable('fallback_failed');
     }
   }
+}
+
+async function resolveCollectionCountForCollection(params: {
+  config: CollectionCountApiConfig;
+  clickhouseClient: ClickHouseQueryClient | null | undefined;
+  collection: string;
+  getClickHouseClient: () => Promise<ClickHouseQueryClient | null>;
+}): Promise<CollectionCountResult> {
+  const client = params.clickhouseClient ?? (await params.getClickHouseClient());
+  if (!client) {
+    throw new Error('ClickHouse client is not configured');
+  }
+  return readCollectionCountForCollectionFromClickHouse(client, params.config, params.collection);
 }
 
 async function fallback(

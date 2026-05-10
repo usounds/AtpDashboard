@@ -140,6 +140,65 @@ test('serves collection_count_view from latest completed ClickHouse snapshot', a
   ]);
 });
 
+test('serves collection_count_view collection filter directly from ClickHouse events', async () => {
+  let queryCount = 0;
+  let capturedQuery = '';
+  let capturedParams: Record<string, unknown> | undefined;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+      responseCacheTtlMs: 30_000,
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          queryCount += 1;
+          capturedQuery = params.query;
+          capturedParams = params.query_params;
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.post',
+                  count: 42,
+                  recent_count: 7,
+                  min_created_at: '2026-05-01T00:00:00.000000Z',
+                  max_created_at: '2026-05-09T00:00:00.123000Z',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/collection_count_view?collection=eq.app.example.post');
+  const second = await app.request('/api/analytics/collection_count_view?collection=eq.app.example.post');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(second.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(second.headers.get('X-Snapshot-Refresh-Id'), '');
+  assert.equal(queryCount, 2);
+  assert.match(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.match(capturedQuery, /WHERE collection = \{collection:String\}/);
+  assert.doesNotMatch(capturedQuery, /collection_count_snapshot/);
+  assert.doesNotMatch(capturedQuery, /collection_count_refresh_manifest/);
+  assert.deepEqual(capturedParams, { collection: 'app.example.post' });
+  assert.deepEqual(body, [
+    {
+      collection: 'app.example.post',
+      count: 42,
+      recent_count: 7,
+      min: '2026-05-01T00:00:00',
+      max: '2026-05-09T00:00:00.123',
+    },
+  ]);
+});
+
 test('forced fallback skips ClickHouse and returns PostgREST-compatible rows', async () => {
   let clickhouseCalled = false;
   const app = createCollectionCountApp(
@@ -169,7 +228,7 @@ test('forced fallback skips ClickHouse and returns PostgREST-compatible rows', a
   assert.deepEqual(body, postgrestRows);
 });
 
-test('stale snapshot falls back to PostgREST', async () => {
+test('stale snapshot still serves ClickHouse snapshot with stale header', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -185,7 +244,17 @@ test('stale snapshot falls back to PostgREST', async () => {
             row_count: 1,
           },
         ],
-        snapshotRows: [],
+        snapshotRows: [
+          {
+            collection: 'app.example.stale',
+            count: 42,
+            recent_count: 0,
+            min: '2026-01-01T00:00:00.000000Z',
+            max: '2026-01-01T00:00:00.000000Z',
+            refresh_id: '00000000-0000-4000-8000-000000000002',
+            refreshed_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
       }),
       fetch: createJsonFetch(postgrestRows),
     },
@@ -195,9 +264,17 @@ test('stale snapshot falls back to PostgREST', async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get('X-Data-Source'), 'fallback');
+  assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), 'stale_snapshot');
-  assert.deepEqual(body, postgrestRows);
+  assert.deepEqual(body, [
+    {
+      collection: 'app.example.stale',
+      count: 42,
+      recent_count: 0,
+      min: '2026-01-01T00:00:00',
+      max: '2026-01-01T00:00:00',
+    },
+  ]);
 });
 
 test('clickhouse-only request fails instead of falling back', async () => {
@@ -229,10 +306,10 @@ test('clickhouse-only request fails instead of falling back', async () => {
   });
   const body = await response.json();
 
-  assert.equal(response.status, 503);
-  assert.equal(response.headers.get('X-Data-Source'), 'unavailable');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), 'stale_snapshot');
-  assert.equal(body.error, 'unavailable');
+  assert.deepEqual(body, []);
 });
 
 test('returns 503 when ClickHouse and fallback both fail', async () => {
@@ -876,11 +953,10 @@ test('serves cached collection_stats endpoint from ClickHouse', async () => {
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
-  assert.match(capturedQuery, /FROM atp_dashboard\.collection_count_snapshot snapshot/);
-  assert.match(capturedQuery, /INNER JOIN latest_refresh USING refresh_id/);
-  assert.match(capturedQuery, /snapshot\.unique_did AS unique_did/);
-  assert.match(capturedQuery, /snapshot\.unique_rkey AS unique_rkey/);
-  assert.doesNotMatch(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.match(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.match(capturedQuery, /uniqExact\(did\) AS unique_did/);
+  assert.match(capturedQuery, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
+  assert.doesNotMatch(capturedQuery, /collection_count_snapshot/);
   assert.deepEqual(capturedParams, { collection: 'app.example.post' });
   assert.deepEqual(body, [
     {
