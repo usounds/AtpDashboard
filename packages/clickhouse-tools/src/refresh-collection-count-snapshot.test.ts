@@ -27,6 +27,8 @@ test('snapshot query uses PostgREST-compatible counts and excludes lexicon store
 
   assert.match(sql, /uniqExact\(event_key\) AS total_count/);
   assert.match(sql, /uniqExactIf\(event_key, isNotNull\(created_at\)/);
+  assert.match(sql, /minIf\(created_at_key, created_at_key != '<NULL>'\)/);
+  assert.match(sql, /maxIf\(created_at_key, created_at_key != '<NULL>'\)/);
   assert.match(sql, /WHERE did != \{excluded_did:String\}/);
 });
 

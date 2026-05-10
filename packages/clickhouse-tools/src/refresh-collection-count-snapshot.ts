@@ -125,8 +125,8 @@ SELECT
   collection,
   uniqExact(event_key) AS total_count,
   uniqExactIf(event_key, isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
-  min(created_at) AS min_created_at,
-  max(created_at) AS max_created_at,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
+  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at,
   now64(3, 'UTC') AS refreshed_at
 FROM atp_dashboard.collection_events
 WHERE did != {excluded_did:String}
