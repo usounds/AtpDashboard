@@ -10,7 +10,6 @@ import { BiTachometer } from "react-icons/bi";
 import { MdDomain } from "react-icons/md";
 import { useModeStore } from "../../zustand/preference";
 import { useCollectionStore } from "../../zustand/collectionStore";
-import { resolveAnalyticsEndpoint } from '../../config/endpoints';
 import pslData from '../../data/publicSuffixList.json';
 
 const pslSet = new Set(pslData);
@@ -160,13 +159,13 @@ const ATmosphere: React.FC = () => {
     }
     setNsidLv2(distinctNsidLv2.size);
 
-    const did = await fetch(resolveAnalyticsEndpoint('unique_did_count'));
+    const did = await fetch('https://collectiondata.usounds.work/unique_did_count_view');
     if (!did.ok) {
       setIsLoading(false)
       throw new Error(`Error: ${did.statusText}`);
     }
     const result2 = await did.json();
-    setDid(result2.unique_did_count);
+    setDid(result2[0].unique_did_count);
 
     setIsLoading(false)
 
