@@ -59,6 +59,7 @@ test('presence pipeline commits watermark after snapshot build commands', async 
     backfillDays: 370,
     chunkDays: 370,
     safetyLagSeconds: 300,
+    refreshedAt: '2026-05-10T09:41:00.000Z',
   });
 
   assert.equal(result.status, 'completed');

@@ -105,6 +105,7 @@ test('query plan marks stale running, creates running manifest, inserts snapshot
     confirmProduction: true,
     staleRunningMinutes: 30,
     source: 'raw',
+    refreshedAt: '2026-05-10T09:41:00.000Z',
   });
 
   assert.match(plan.beforeSnapshot[0].query, /status = 'running'/);
@@ -113,6 +114,7 @@ test('query plan marks stale running, creates running manifest, inserts snapshot
   assert.equal(plan.insertSnapshots.length, 9);
   assert.deepEqual(plan.insertSnapshots.map((query) => query.target), ANALYTICS_CHART_TARGETS);
   assert.equal(plan.insertSnapshots[0].command.query_params.excluded_did, LEXICON_STORE_DID);
+  assert.equal(plan.insertSnapshots[0].command.query_params.refreshed_at, '2026-05-10T09:41:00.000Z');
   assert.match(plan.insertSnapshots[0].command.query, /INSERT INTO atp_dashboard\.analytics_chart_snapshot/);
   assert.match(plan.completeManifest.query, /'completed'/);
 });
@@ -134,6 +136,7 @@ test('refresh executes complete manifest only after snapshot insert', async () =
     confirmProduction: true,
     staleRunningMinutes: 60,
     source: 'raw',
+    refreshedAt: '2026-05-10T09:41:00.000Z',
   });
 
   assert.equal(result.status, 'completed');
@@ -160,6 +163,7 @@ test('failed snapshot writes failed manifest and never completes', async () => {
         confirmProduction: true,
         staleRunningMinutes: 60,
         source: 'raw',
+        refreshedAt: '2026-05-10T09:41:00.000Z',
       }),
     /snapshot insert failed/,
   );

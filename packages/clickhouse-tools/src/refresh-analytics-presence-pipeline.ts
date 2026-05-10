@@ -16,6 +16,7 @@ export type RefreshAnalyticsPresencePipelineOptions = {
   backfillDays: number;
   chunkDays: number;
   safetyLagSeconds: number;
+  refreshedAt: string;
 };
 
 export type RefreshAnalyticsPresencePipelineConfig = {
@@ -42,6 +43,7 @@ export function parseRefreshAnalyticsPresencePipelineOptions(argv: string[]): Re
     backfillDays: 370,
     chunkDays: 1,
     safetyLagSeconds: 300,
+    refreshedAt: new Date().toISOString(),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -382,6 +384,7 @@ export async function refreshAnalyticsPresencePipeline(
           backfill_days: options.backfillDays,
           safety_lag_seconds: options.safetyLagSeconds,
           excluded_did: LEXICON_STORE_DID,
+          refreshed_at: options.refreshedAt,
           chunk_start: chunk.start,
           chunk_end: chunk.end,
         },
@@ -397,6 +400,7 @@ export async function refreshAnalyticsPresencePipeline(
         backfill_days: options.backfillDays,
         safety_lag_seconds: options.safetyLagSeconds,
         excluded_did: LEXICON_STORE_DID,
+        refreshed_at: options.refreshedAt,
       },
     });
   }

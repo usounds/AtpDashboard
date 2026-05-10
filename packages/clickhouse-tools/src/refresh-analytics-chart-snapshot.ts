@@ -9,6 +9,7 @@ export type RefreshAnalyticsChartOptions = {
   confirmProduction: boolean;
   staleRunningMinutes: number;
   source: AnalyticsChartRefreshSource;
+  refreshedAt: string;
 };
 
 export type RefreshAnalyticsChartConfig = {
@@ -54,6 +55,7 @@ export function parseRefreshAnalyticsChartOptions(argv: string[]): RefreshAnalyt
     confirmProduction: false,
     staleRunningMinutes: 60,
     source: 'raw',
+    refreshedAt: new Date().toISOString(),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -241,6 +243,7 @@ export function buildRefreshQueryPlan(options: RefreshAnalyticsChartOptions): {
         query_params: {
           refresh_id: options.refreshId,
           excluded_did: LEXICON_STORE_DID,
+          refreshed_at: options.refreshedAt,
         },
       },
     })),
@@ -300,7 +303,7 @@ SELECT
   toUInt64(coalesce(new_users.new, 0)) AS new,
   toUInt64(0) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 FROM
 (
   SELECT
@@ -362,7 +365,7 @@ SELECT
   toUInt64(coalesce(new_collections.new, 0)) AS new,
   toUInt64(0) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 FROM
 (
   SELECT
@@ -426,7 +429,7 @@ SELECT
   toUInt64(0) AS new,
   toUInt64(coalesce(events.count, 0)) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 FROM
 (
   SELECT
@@ -498,7 +501,7 @@ SELECT
   toUInt64(coalesce(new_users.new, 0)) AS new,
   toUInt64(0) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildRollupDaysSelect()}
 LEFT JOIN
 (
@@ -544,7 +547,7 @@ SELECT
   toUInt64(coalesce(new_collections.new, 0)) AS new,
   toUInt64(0) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildRollupDaysSelect()}
 LEFT JOIN
 (
@@ -590,7 +593,7 @@ SELECT
   toUInt64(0) AS new,
   toUInt64(coalesce(events.count, 0)) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildRollupDaysSelect()}
 LEFT JOIN
 (
@@ -654,7 +657,7 @@ SELECT
   toUInt64(coalesce(new_users.new, 0)) AS new,
   toUInt64(0) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildHourlyBucketsSelect()}
 LEFT JOIN
 (
@@ -700,7 +703,7 @@ SELECT
   toUInt64(coalesce(new_collections.new, 0)) AS new,
   toUInt64(0) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildHourlyBucketsSelect()}
 LEFT JOIN
 (
@@ -746,7 +749,7 @@ SELECT
   toUInt64(0) AS new,
   toUInt64(coalesce(events.count, 0)) AS count,
   latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildHourlyBucketsSelect()}
 LEFT JOIN
 (
@@ -824,7 +827,7 @@ SELECT
   toUInt64(coalesce(new_users.new, 0)) AS new,
   toUInt64(0) AS count,
   source_latest_at AS latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildPresenceBucketsSelect()}
 LEFT JOIN
 (
@@ -877,7 +880,7 @@ SELECT
   toUInt64(coalesce(new_collections.new, 0)) AS new,
   toUInt64(0) AS count,
   source_latest_at AS latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildPresenceBucketsSelect()}
 LEFT JOIN
 (
@@ -930,7 +933,7 @@ SELECT
   toUInt64(0) AS new,
   toUInt64(coalesce(events.count, 0)) AS count,
   source_latest_at AS latest_at,
-  now64(3, 'UTC') AS refreshed_at
+  parseDateTime64BestEffort({refreshed_at:String}, 3, 'UTC') AS refreshed_at
 ${buildPresenceBucketsSelect()}
 LEFT JOIN
 (
