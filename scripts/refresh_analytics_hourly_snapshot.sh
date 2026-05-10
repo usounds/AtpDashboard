@@ -223,15 +223,19 @@ set +a
 echo "[hourly-snapshot] publishing analytics chart snapshot from hourly rollups"
 ANALYTICS_CHART_REFRESH_SOURCE=hourly pnpm refresh:analytics-charts -- --confirm-production
 
+published_refresh_id="$(query_clickhouse "
+SELECT toString(refresh_id)
+FROM ${DATABASE}.analytics_chart_refresh_manifest
+WHERE status = 'completed'
+ORDER BY completed_at DESC
+LIMIT 1
+")"
+
 echo "[hourly-snapshot] latest published snapshot"
 query_clickhouse "
 WITH latest AS
 (
-  SELECT refresh_id
-  FROM ${DATABASE}.analytics_chart_refresh_manifest
-  WHERE status = 'completed'
-  ORDER BY completed_at DESC
-  LIMIT 1
+  SELECT toUUID('${published_refresh_id}') AS refresh_id
 )
 SELECT
   toString(refresh_id) AS refresh_id,
@@ -248,5 +252,8 @@ WHERE refresh_id IN latest
 GROUP BY refresh_id, tool, days, bucket_days
 ORDER BY tool, days, bucket_days
 "
+
+echo "[hourly-snapshot] verifying published hourly snapshot"
+scripts/verify_analytics_hourly_snapshot.sh --refresh-id "$published_refresh_id"
 
 echo "[hourly-snapshot] completed"

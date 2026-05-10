@@ -188,6 +188,7 @@ sudo systemctl enable --now CollectionEventsSync.timer
 sudo systemctl enable --now CollectionEventsRescan.timer
 sudo systemctl enable --now CollectionCountRefresh.timer
 sudo systemctl enable --now AnalyticsHourlyNewRefresh.timer
+sudo systemctl enable --now AnalyticsChartsRefresh.timer
 sudo systemctl enable --now CollectionCountCompare.timer
 sudo systemctl list-timers 'Collection*' 'Analytics*'
 ```

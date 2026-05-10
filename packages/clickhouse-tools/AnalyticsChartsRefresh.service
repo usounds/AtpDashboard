@@ -7,6 +7,8 @@ Type=oneshot
 User=root
 WorkingDirectory=/srv/AtpDashboard
 EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+Environment=ANALYTICS_CHART_REFRESH_SOURCE=hourly
 ExecStart=pnpm refresh:analytics-charts -- --confirm-production --stale-running-minutes 60
+ExecStartPost=/srv/AtpDashboard/scripts/verify_analytics_hourly_snapshot.sh
 StandardOutput=append:/var/log/AnalyticsChartsRefresh.log
 StandardError=append:/var/log/AnalyticsChartsRefresh.log
