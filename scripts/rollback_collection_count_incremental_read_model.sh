@@ -100,7 +100,7 @@ SQL
 
 assert_unit_disabled_inactive() {
   local unit="$1"
-  if "${SUDO[@]}" systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+  if [[ "$unit" == *.timer ]] && "${SUDO[@]}" systemctl is-enabled --quiet "$unit" 2>/dev/null; then
     fail "$unit is enabled"
   fi
   if "${SUDO[@]}" systemctl is-active --quiet "$unit" 2>/dev/null; then

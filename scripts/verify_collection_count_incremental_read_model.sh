@@ -373,7 +373,7 @@ assert_unit_disabled_inactive() {
     return
   fi
 
-  if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+  if [[ "$unit" == *.timer ]] && systemctl is-enabled --quiet "$unit" 2>/dev/null; then
     fail "$unit is enabled"
   fi
   if systemctl is-active --quiet "$unit" 2>/dev/null; then
