@@ -9,6 +9,7 @@ import {
   type DailyChartRange,
   type DailyChartResponse,
 } from './dailyChart';
+import { removeApexSvgTitle } from './chartLabels';
 
 interface WeekChartProps {
   metric: DailyChartMetric;
@@ -39,6 +40,10 @@ const options: ApexOptions = {
 
     toolbar: {
       show: false,
+    },
+    events: {
+      mounted: (chartContext) => removeApexSvgTitle(chartContext),
+      updated: (chartContext) => removeApexSvgTitle(chartContext),
     },
   },
   responsive: [

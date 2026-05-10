@@ -1,4 +1,5 @@
 import { resolveAnalyticsEndpoint, type FrontendEndpointEnv } from '../../config/endpoints.ts';
+import { buildRelativeDayOffsetCategories, formatRelativeDayOffsetLabel } from './chartLabels.ts';
 
 export type CollectionCumulativeUsersRange = '7 Days' | '30 Days' | '365 Days';
 
@@ -38,7 +39,11 @@ export function buildCollectionCumulativeUsersUrl(
 }
 
 export function buildCollectionCumulativeUsersCategories(rows: CollectionCumulativeUsersRow[]): string[] {
-  return rows.map((row) => (row.day_offset === 0 ? '0' : String(row.day_offset)));
+  return buildRelativeDayOffsetCategories(rows);
+}
+
+export function formatCollectionCumulativeUsersOffset(dayOffset: number, isMonthlyBucket: boolean): string {
+  return formatRelativeDayOffsetLabel(dayOffset, isMonthlyBucket);
 }
 
 export function buildCollectionCumulativeUsersSeries(rows: CollectionCumulativeUsersRow[]): CollectionCumulativeUsersSeries[] {

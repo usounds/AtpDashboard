@@ -1,4 +1,5 @@
 import { resolveAnalyticsEndpoint, type FrontendEndpointEnv } from '../../config/endpoints.ts';
+import { buildRelativeDayOffsetCategories } from './chartLabels.ts';
 
 export type DailyChartMetric = 'collections' | 'users';
 export type DailyChartRange = '7 Days' | '30 Days' | '365 Days';
@@ -38,7 +39,7 @@ export function buildDailyChartUrl(metric: DailyChartMetric, range: DailyChartRa
 }
 
 export function buildDailyChartCategories(rows: DailyChartRow[]): string[] {
-  return rows.map((row) => (row.day_offset === 0 ? '0' : String(row.day_offset)));
+  return buildRelativeDayOffsetCategories(rows);
 }
 
 export function buildDailyChartSeries(

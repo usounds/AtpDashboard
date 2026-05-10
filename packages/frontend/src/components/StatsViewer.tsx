@@ -11,6 +11,7 @@ import {
   type CollectionCumulativeUsersRange,
   type CollectionCumulativeUsersResponse,
 } from './Charts/collectionCumulativeUsers';
+import { removeApexSvgTitle } from './Charts/chartLabels';
 
 type Stats = {
   unique_did: number;
@@ -32,10 +33,6 @@ type CumulativeChartState = {
     data: number[];
   }[];
 };
-
-function removeApexSvgTitle(chartContext: { el?: Element } | undefined): void {
-  chartContext?.el?.querySelectorAll('svg title').forEach((element) => element.remove());
-}
 
 const cumulativeUsersOptions: ApexOptions = {
   legend: {
@@ -60,8 +57,8 @@ const cumulativeUsersOptions: ApexOptions = {
       show: false,
     },
     events: {
-      mounted: (_chartContext, config) => removeApexSvgTitle(config),
-      updated: (_chartContext, config) => removeApexSvgTitle(config),
+      mounted: (chartContext) => removeApexSvgTitle(chartContext),
+      updated: (chartContext) => removeApexSvgTitle(chartContext),
     },
   },
   fill: {
@@ -309,7 +306,7 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
               </button>
             </div>
           </div>
-          <div className="relative -ml-5 pb-2">
+          <div className="relative pb-2">
             {isCumulativeLoading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-boxdark/60" aria-label="Loading cumulative users">
                 <span className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary" />

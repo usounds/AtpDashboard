@@ -8,6 +8,7 @@ import {
   type EventChartRange,
   type EventCountsResponse,
 } from './eventChart';
+import { removeApexSvgTitle } from './chartLabels';
 
 const options: ApexOptions = {
   legend: {
@@ -31,6 +32,10 @@ const options: ApexOptions = {
 
     toolbar: {
       show: false,
+    },
+    events: {
+      mounted: (chartContext) => removeApexSvgTitle(chartContext),
+      updated: (chartContext) => removeApexSvgTitle(chartContext),
     },
   },
   responsive: [

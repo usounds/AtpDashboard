@@ -1,4 +1,5 @@
 import { resolveAnalyticsEndpoint, type FrontendEndpointEnv } from '../../config/endpoints.ts';
+import { buildRelativeDayOffsetCategories } from './chartLabels.ts';
 
 export type EventChartRange = '7 Days' | '30 Days' | '365 Days';
 
@@ -26,7 +27,7 @@ export function buildEventCountsUrl(range: EventChartRange, env?: FrontendEndpoi
 }
 
 export function buildEventChartCategories(rows: EventCountRow[]): string[] {
-  return rows.map((row) => (row.day_offset === 0 ? 'Today' : String(row.day_offset)));
+  return buildRelativeDayOffsetCategories(rows);
 }
 
 export function buildEventChartSeries(rows: EventCountRow[]): { name: string; data: number[] }[] {

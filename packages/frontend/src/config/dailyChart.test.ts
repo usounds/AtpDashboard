@@ -14,6 +14,7 @@ import {
   buildCollectionCumulativeUsersCategories,
   buildCollectionCumulativeUsersSeries,
   buildCollectionCumulativeUsersUrl,
+  formatCollectionCumulativeUsersOffset,
 } from '../components/Charts/collectionCumulativeUsers.ts';
 
 test('builds daily collections URL on ClickHouse analytics API', () => {
@@ -38,7 +39,7 @@ test('maps daily chart rows to categories and series', () => {
     { date: '2026-05-09', day_offset: 0, active: 489, new: 31 },
   ];
 
-  assert.deepEqual(buildDailyChartCategories(rows), ['-1', '0']);
+  assert.deepEqual(buildDailyChartCategories(rows), ['1d', 'Today']);
   assert.deepEqual(buildDailyChartSeries(rows, 'Active', 'New'), [
     { name: 'Active', data: [452, 489] },
     { name: 'New', data: [18, 31] },
@@ -51,7 +52,7 @@ test('keeps yearly 30 day bucket offsets from the API', () => {
     { date: '2026-05-09', day_offset: 0, active: 150, new: 12 },
   ];
 
-  assert.deepEqual(buildDailyChartCategories(rows), ['-360', '0']);
+  assert.deepEqual(buildDailyChartCategories(rows), ['12m', 'Today']);
 });
 
 test('builds event counts URL on ClickHouse analytics API', () => {
@@ -76,7 +77,7 @@ test('maps event count rows to categories and series', () => {
     { date: '2026-05-09', day_offset: 0, count: 150 },
   ];
 
-  assert.deepEqual(buildEventChartCategories(rows), ['-1', 'Today']);
+  assert.deepEqual(buildEventChartCategories(rows), ['1d', 'Today']);
   assert.deepEqual(buildEventChartSeries(rows), [{ name: 'Events', data: [120, 150] }]);
 });
 
@@ -86,7 +87,7 @@ test('keeps yearly event count 30 day bucket offsets from the API', () => {
     { date: '2026-05-09', day_offset: 0, count: 1530 },
   ];
 
-  assert.deepEqual(buildEventChartCategories(rows), ['-360', 'Today']);
+  assert.deepEqual(buildEventChartCategories(rows), ['12m', 'Today']);
 });
 
 test('builds collection cumulative users URL on ClickHouse analytics API', () => {
@@ -111,7 +112,7 @@ test('maps collection cumulative users rows to categories and series', () => {
     { date: '2026-05-09', day_offset: 0, new: 2, cumulative: 102 },
   ];
 
-  assert.deepEqual(buildCollectionCumulativeUsersCategories(rows), ['-1', '0']);
+  assert.deepEqual(buildCollectionCumulativeUsersCategories(rows), ['1d', 'Today']);
   assert.deepEqual(buildCollectionCumulativeUsersSeries(rows), [
     { name: 'Cumulative Users', data: [100, 102] },
     { name: 'New Users', data: [3, 2] },
@@ -124,5 +125,12 @@ test('keeps yearly collection cumulative users 30 day bucket offsets from the AP
     { date: '2026-05-09', day_offset: 0, new: 12, cumulative: 300 },
   ];
 
-  assert.deepEqual(buildCollectionCumulativeUsersCategories(rows), ['-360', '0']);
+  assert.deepEqual(buildCollectionCumulativeUsersCategories(rows), ['12m', 'Today']);
+});
+
+test('formats collection cumulative users offsets for daily and monthly buckets', () => {
+  assert.equal(formatCollectionCumulativeUsersOffset(0, false), 'Today');
+  assert.equal(formatCollectionCumulativeUsersOffset(-29, false), '29d');
+  assert.equal(formatCollectionCumulativeUsersOffset(-360, true), '12m');
+  assert.equal(formatCollectionCumulativeUsersOffset(-30, true), '1m');
 });
