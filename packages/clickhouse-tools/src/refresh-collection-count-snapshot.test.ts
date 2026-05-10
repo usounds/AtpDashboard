@@ -41,13 +41,15 @@ test('snapshot query uses PostgREST-compatible counts and excludes lexicon store
 
   assert.match(sql, /unique_did, unique_rkey, total_count/);
   assert.match(sql, /GROUP BY event_key/);
-  assert.match(sql, /uniqExact\(did\) AS unique_did/);
-  assert.match(sql, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
+  assert.match(sql, /any\(did\) AS dedup_did/);
+  assert.match(sql, /uniqExact\(dedup_did\) AS unique_did/);
+  assert.match(sql, /uniqExact\(tuple\(dedup_did, dedup_collection, dedup_rkey\)\) AS unique_rkey/);
   assert.match(sql, /count\(\) AS total_count/);
-  assert.match(sql, /countIf\(isNotNull\(created_at\)/);
-  assert.match(sql, /minIf\(created_at_key, created_at_key != '<NULL>'\)/);
-  assert.match(sql, /maxIf\(created_at_key, created_at_key != '<NULL>'\)/);
+  assert.match(sql, /countIf\(isNotNull\(dedup_created_at\)/);
+  assert.match(sql, /minIf\(dedup_created_at_key, dedup_created_at_key != '<NULL>'\)/);
+  assert.match(sql, /maxIf\(dedup_created_at_key, dedup_created_at_key != '<NULL>'\)/);
   assert.match(sql, /WHERE did != \{excluded_did:String\}/);
+  assert.match(sql, /GROUP BY dedup_collection/);
   assert.match(sql, /optimize_aggregation_in_order = 1/);
 });
 

@@ -124,28 +124,28 @@ INSERT INTO atp_dashboard.collection_count_snapshot
   (refresh_id, collection, unique_did, unique_rkey, total_count, recent_count, min_created_at, max_created_at, refreshed_at)
 SELECT
   {refresh_id:UUID} AS refresh_id,
-  collection,
-  uniqExact(did) AS unique_did,
-  uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
+  dedup_collection AS collection,
+  uniqExact(dedup_did) AS unique_did,
+  uniqExact(tuple(dedup_did, dedup_collection, dedup_rkey)) AS unique_rkey,
   count() AS total_count,
-  countIf(isNotNull(created_at) AND created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at,
+  countIf(isNotNull(dedup_created_at) AND dedup_created_at >= now64(6, 'UTC') - toIntervalHour({recent_hours:UInt32})) AS recent_count,
+  if(countIf(dedup_created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(dedup_created_at_key, dedup_created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
+  if(countIf(dedup_created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(dedup_created_at_key, dedup_created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at,
   now64(3, 'UTC') AS refreshed_at
 FROM
 (
   SELECT
     event_key,
-    any(did) AS did,
-    any(collection) AS collection,
-    any(rkey) AS rkey,
-    any(created_at) AS created_at,
-    any(created_at_key) AS created_at_key
+    any(did) AS dedup_did,
+    any(collection) AS dedup_collection,
+    any(rkey) AS dedup_rkey,
+    any(created_at) AS dedup_created_at,
+    any(created_at_key) AS dedup_created_at_key
   FROM atp_dashboard.collection_events
   WHERE did != {excluded_did:String}
   GROUP BY event_key
 )
-GROUP BY collection
+GROUP BY dedup_collection
 SETTINGS
   max_threads = 1,
   max_insert_threads = 1,
