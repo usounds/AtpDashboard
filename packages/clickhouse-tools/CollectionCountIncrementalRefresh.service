@@ -1,0 +1,13 @@
+[Unit]
+Description=AtpDashboard ClickHouse incremental collection_count refresh
+After=network.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/AtpDashboard/packages/clickhouse-tools
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+Environment=CLICKHOUSE_REFRESH_TIMEOUT_MS=600000
+ExecStart=/usr/bin/flock -n /run/atpdashboard-collection-count-incremental.lock /usr/bin/env pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows 500000 --max-queued-at-span-seconds 600 --max-estimated-bytes 536870912
+NoNewPrivileges=true
+StandardOutput=append:/var/log/CollectionCountIncrementalRefresh.log
+StandardError=append:/var/log/CollectionCountIncrementalRefresh.log

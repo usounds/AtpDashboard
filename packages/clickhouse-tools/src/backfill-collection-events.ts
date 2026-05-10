@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import {
+  QueueSequenceGenerator,
+  buildCanonicalPayloadTuple,
+  buildPayloadHash,
+  ensureQueueCursorAfterCutoffs,
+} from './collection-count-incremental.ts';
 import { buildCollectionEventKey, normalizeCreatedAtKey } from './event-key.ts';
 
 export type CollectionSourceRow = {
@@ -8,6 +14,10 @@ export type CollectionSourceRow = {
   createdAt: string | null;
 };
 
+export type CollectionSidecarSourceRow = CollectionSourceRow & {
+  sourceIngestedAt: string;
+};
+
 export type CollectionEventInsertRow = {
   event_key: string;
   did: string;
@@ -15,6 +25,40 @@ export type CollectionEventInsertRow = {
   rkey: string;
   created_at: string | null;
   created_at_key: string;
+  ingested_at: string;
+};
+
+export type CollectionCountExistenceLogInsertRow = {
+  event_key: string;
+  payload_hash: string;
+  collection: string;
+  did: string;
+  rkey: string;
+  created_at: string | null;
+  created_at_key: string;
+  created_hour: string | null;
+  source_ingested_at: string;
+  written_at: string;
+};
+
+export type CollectionCountQueueInsertRow = {
+  event_key: string;
+  collection: string;
+  did: string;
+  rkey: string;
+  created_at: string | null;
+  created_at_key: string;
+  created_hour: string | null;
+  source_ingested_at: string;
+  queued_at: string;
+  queue_seq: string;
+  payload_hash: string;
+};
+
+export type CollectionEventDualWriteRows = {
+  events: CollectionEventInsertRow[];
+  existence: CollectionCountExistenceLogInsertRow[];
+  queue: CollectionCountQueueInsertRow[];
 };
 
 export type BackfillWatermark = {
@@ -33,6 +77,7 @@ export type BackfillCliOptions = {
   maxRuntimeMinutes: number | null;
   maxRows: number | null;
   rescanDays: number | null;
+  bootstrapQueueFromRaw: boolean;
   confirmProduction: boolean;
   checkpointName: string;
   lockName: string;
@@ -54,9 +99,14 @@ type PgClientLike = {
 };
 
 type ClickHouseClientLike = {
-  insert: (params: { table: string; values: CollectionEventInsertRow[]; format: 'JSONEachRow' }) => Promise<unknown>;
+  insert: (params: { table: string; values: ClickHouseInsertRow[]; format: 'JSONEachRow' }) => Promise<unknown>;
+  query?: <T = unknown>(params: { query: string; query_params?: Record<string, unknown>; format: 'JSONEachRow' }) => Promise<{
+    json: () => Promise<{ data: T[] }>;
+  }>;
   close?: () => Promise<void>;
 };
+
+type ClickHouseInsertRow = CollectionEventInsertRow | CollectionCountExistenceLogInsertRow | CollectionCountQueueInsertRow;
 
 export const DEFAULT_CHECKPOINT_NAME = 'collection_events_backfill_v2_unique_index';
 export const NULL_CREATED_AT_ORDER_NOTE =
@@ -71,6 +121,7 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
     maxRuntimeMinutes: null,
     maxRows: null,
     rescanDays: null,
+    bootstrapQueueFromRaw: false,
     confirmProduction: false,
     checkpointName: DEFAULT_CHECKPOINT_NAME,
     lockName: DEFAULT_CHECKPOINT_NAME,
@@ -95,6 +146,8 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
       options.maxRows = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--rescan-days') {
       options.rescanDays = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--bootstrap-queue-from-raw') {
+      options.bootstrapQueueFromRaw = true;
     } else if (arg === '--resume-from') {
       options.resumeFrom = parseWatermark(readNext(argv, ++index, arg));
     } else if (arg === '--checkpoint-name') {
@@ -116,6 +169,9 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
   if (options.rescanDays != null && options.limit == null && options.maxRows == null) {
     throw new Error('Refusing unbounded rescan. Provide --limit or --max-rows with --rescan-days.');
   }
+  if (options.bootstrapQueueFromRaw && options.limit == null && options.maxRows == null) {
+    throw new Error('Refusing unbounded raw bootstrap. Provide --limit or --max-rows with --bootstrap-queue-from-raw.');
+  }
   return options;
 }
 
@@ -132,7 +188,7 @@ export function loadBackfillConfig(
   };
 }
 
-export function buildCollectionEventRows(rows: CollectionSourceRow[]): CollectionEventInsertRow[] {
+export function buildCollectionEventRows(rows: CollectionSourceRow[], ingestedAt: string = toClickHouseDateTime64(new Date().toISOString())): CollectionEventInsertRow[] {
   return rows.map((row) => {
     const createdAtKey = normalizeCreatedAtKey(row.createdAt);
     const { eventKey } = buildCollectionEventKey({
@@ -149,8 +205,151 @@ export function buildCollectionEventRows(rows: CollectionSourceRow[]): Collectio
       rkey: row.rkey,
       created_at: createdAtKey === '<NULL>' ? null : toClickHouseDateTime64(createdAtKey),
       created_at_key: createdAtKey,
+      ingested_at: ingestedAt,
     };
   });
+}
+
+export function buildCollectionEventDualWriteRows(
+  rows: CollectionSourceRow[],
+  options: {
+    writtenAt?: string;
+    queueSequenceGenerator?: QueueSequenceGenerator;
+    latestCompletedCutoff?: { queuedAt: string; eventKey: string; queueSeq: string } | null;
+    activeReservedCutoff?: { queuedAt: string; eventKey: string; queueSeq: string } | null;
+  } = {},
+): CollectionEventDualWriteRows {
+  const writtenAt = options.writtenAt ?? toClickHouseDateTime64(new Date().toISOString());
+  const sidecar = buildCollectionCountSidecarRows(
+    rows.map((row) => ({ ...row, sourceIngestedAt: writtenAt })),
+    {
+      writtenAt,
+      queueSequenceGenerator: options.queueSequenceGenerator,
+      latestCompletedCutoff: options.latestCompletedCutoff,
+      activeReservedCutoff: options.activeReservedCutoff,
+    },
+  );
+  const events = rows.map((row) => {
+    const createdAtKey = normalizeCreatedAtKey(row.createdAt);
+    const createdAt = createdAtKey === '<NULL>' ? null : toClickHouseDateTime64(createdAtKey);
+    const { eventKey } = buildCollectionEventKey({
+      did: row.did,
+      collection: row.collection,
+      rkey: row.rkey,
+      createdAt: row.createdAt,
+    });
+
+    return {
+      event_key: eventKey,
+      did: row.did,
+      collection: row.collection,
+      rkey: row.rkey,
+      created_at: createdAt,
+      created_at_key: createdAtKey,
+      ingested_at: writtenAt,
+    };
+  });
+
+  return { events, existence: sidecar.existence, queue: sidecar.queue };
+}
+
+export function buildCollectionCountSidecarRows(
+  rows: CollectionSidecarSourceRow[],
+  options: {
+    writtenAt?: string;
+    queueSequenceGenerator?: QueueSequenceGenerator;
+    latestCompletedCutoff?: { queuedAt: string; eventKey: string; queueSeq: string } | null;
+    activeReservedCutoff?: { queuedAt: string; eventKey: string; queueSeq: string } | null;
+  } = {},
+): Pick<CollectionEventDualWriteRows, 'existence' | 'queue'> {
+  const writtenAt = options.writtenAt ?? toClickHouseDateTime64(new Date().toISOString());
+  const generator = options.queueSequenceGenerator ?? new QueueSequenceGenerator({ writerId: 'collection-events' });
+  const existence: CollectionCountExistenceLogInsertRow[] = [];
+  const queue: CollectionCountQueueInsertRow[] = [];
+
+  for (const row of rows) {
+    const createdAtKey = normalizeCreatedAtKey(row.createdAt);
+    const createdAt = createdAtKey === '<NULL>' ? null : toClickHouseDateTime64(createdAtKey);
+    const { eventKey } = buildCollectionEventKey({
+      did: row.did,
+      collection: row.collection,
+      rkey: row.rkey,
+      createdAt: row.createdAt,
+    });
+    const payloadTuple = buildCanonicalPayloadTuple({
+      did: row.did,
+      collection: row.collection,
+      rkey: row.rkey,
+      createdAt: row.createdAt,
+    });
+    const payloadHash = buildPayloadHash(payloadTuple);
+    const cursor = ensureQueueCursorAfterCutoffs(
+      {
+        queuedAt: writtenAt,
+        eventKey,
+        queueSeq: generator.next(new Date(`${writtenAt.replace(' ', 'T')}Z`)),
+      },
+      [options.latestCompletedCutoff, options.activeReservedCutoff],
+    );
+
+    existence.push({
+      event_key: eventKey,
+      payload_hash: payloadHash,
+      collection: row.collection,
+      did: row.did,
+      rkey: row.rkey,
+      created_at: createdAt,
+      created_at_key: createdAtKey,
+      created_hour: payloadTuple.createdHourKey === '<NULL_HOUR>' ? null : payloadTuple.createdHourKey.replace('T', ' ').replace(/Z$/, ''),
+      source_ingested_at: row.sourceIngestedAt,
+      written_at: writtenAt,
+    });
+    queue.push({
+      event_key: eventKey,
+      collection: row.collection,
+      did: row.did,
+      rkey: row.rkey,
+      created_at: createdAt,
+      created_at_key: createdAtKey,
+      created_hour: payloadTuple.createdHourKey === '<NULL_HOUR>' ? null : payloadTuple.createdHourKey.replace('T', ' ').replace(/Z$/, ''),
+      source_ingested_at: row.sourceIngestedAt,
+      queued_at: cursor.queuedAt,
+      queue_seq: cursor.queueSeq,
+      payload_hash: payloadHash,
+    });
+  }
+
+  return { existence, queue };
+}
+
+export function buildBootstrapHighQuery(): string {
+  return `
+SELECT
+  event_key,
+  ingested_at
+FROM atp_dashboard.collection_events
+ORDER BY ingested_at DESC, event_key DESC
+LIMIT 1`;
+}
+
+export function buildBootstrapRawSourceQuery(limit: number): { query: string; query_params: Record<string, unknown> } {
+  return {
+    query: `
+/* collection_count_bootstrap_bounded */
+SELECT
+  c.did,
+  c.collection,
+  c.rkey,
+  if(isNull(c.created_at), NULL, formatDateTime(c.created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS createdAt,
+  formatDateTime(c.ingested_at, '%Y-%m-%d %H:%i:%S.%f', 'UTC') AS sourceIngestedAt
+FROM atp_dashboard.collection_events AS c
+LEFT JOIN atp_dashboard.collection_count_event_existence_log AS e
+  ON e.event_key = c.event_key
+WHERE e.event_key = ''
+ORDER BY c.ingested_at ASC, c.event_key ASC
+LIMIT {limit:UInt64}`,
+    query_params: { limit },
+  };
 }
 
 export function toClickHouseDateTime64(createdAtKey: string): string {
@@ -263,6 +462,25 @@ export async function runBackfill(
   }
 
   try {
+    if (options.bootstrapQueueFromRaw) {
+      const effectiveLimit = options.maxRows ?? options.limit ?? options.batchSize;
+      const result = await readBootstrapRawSourceRows(clients.clickhouse, effectiveLimit);
+      rowsRead += result.length;
+
+      if (!options.dryRun && result.length > 0) {
+        const sidecarRows = buildCollectionCountSidecarRows(result);
+        await insertSidecarRows(clients.clickhouse, sidecarRows);
+        rowsInserted += result.length;
+      }
+
+      return {
+        rowsRead,
+        rowsInserted,
+        finalWatermark: watermark,
+        dryRun: options.dryRun,
+      };
+    }
+
     if (options.rescanDays != null) {
       const effectiveLimit = options.maxRows ?? options.limit ?? options.batchSize;
       const { sql, params } = buildRecentRescanQuery(options.rescanDays, effectiveLimit);
@@ -270,13 +488,9 @@ export async function runBackfill(
       rowsRead += result.rows.length;
 
       if (!options.dryRun && result.rows.length > 0) {
-        const eventRows = buildCollectionEventRows(result.rows);
-        await clients.clickhouse.insert({
-          table: 'atp_dashboard.collection_events',
-          values: eventRows,
-          format: 'JSONEachRow',
-        });
-        rowsInserted += eventRows.length;
+        const dualWriteRows = buildCollectionEventDualWriteRows(result.rows);
+        await insertDualWriteRows(clients.clickhouse, dualWriteRows);
+        rowsInserted += dualWriteRows.events.length;
       }
 
       return {
@@ -304,20 +518,16 @@ export async function runBackfill(
         break;
       }
 
-      const eventRows = buildCollectionEventRows(result.rows);
+      const dualWriteRows = buildCollectionEventDualWriteRows(result.rows);
       const nextWatermark = getLastWatermark(result.rows);
       rowsRead += result.rows.length;
 
       if (!options.dryRun) {
-        await clients.clickhouse.insert({
-          table: 'atp_dashboard.collection_events',
-          values: eventRows,
-          format: 'JSONEachRow',
-        });
+        await insertDualWriteRows(clients.clickhouse, dualWriteRows);
         if (nextWatermark) {
           await writeCheckpoint(clients.pg, options.checkpointName, nextWatermark);
         }
-        rowsInserted += eventRows.length;
+        rowsInserted += dualWriteRows.events.length;
       }
 
       watermark = nextWatermark;
@@ -337,6 +547,65 @@ export async function runBackfill(
     finalWatermark: watermark,
     dryRun: options.dryRun,
   };
+}
+
+async function insertDualWriteRows(clickhouse: ClickHouseClientLike, rows: CollectionEventDualWriteRows): Promise<void> {
+  if (rows.events.length === 0) {
+    return;
+  }
+
+  await clickhouse.insert({
+    table: 'atp_dashboard.collection_events',
+    values: rows.events,
+    format: 'JSONEachRow',
+  });
+  await clickhouse.insert({
+    table: 'atp_dashboard.collection_count_event_existence_log',
+    values: rows.existence,
+    format: 'JSONEachRow',
+  });
+  await clickhouse.insert({
+    table: 'atp_dashboard.collection_count_ingest_queue',
+    values: rows.queue,
+    format: 'JSONEachRow',
+  });
+}
+
+async function insertSidecarRows(
+  clickhouse: ClickHouseClientLike,
+  rows: Pick<CollectionEventDualWriteRows, 'existence' | 'queue'>,
+): Promise<void> {
+  if (rows.existence.length === 0) {
+    return;
+  }
+
+  await clickhouse.insert({
+    table: 'atp_dashboard.collection_count_event_existence_log',
+    values: rows.existence,
+    format: 'JSONEachRow',
+  });
+  await clickhouse.insert({
+    table: 'atp_dashboard.collection_count_ingest_queue',
+    values: rows.queue,
+    format: 'JSONEachRow',
+  });
+}
+
+async function readBootstrapRawSourceRows(clickhouse: ClickHouseClientLike, limit: number): Promise<CollectionSidecarSourceRow[]> {
+  if (!clickhouse.query) {
+    throw new Error('ClickHouse query client is required for --bootstrap-queue-from-raw');
+  }
+  const { query, query_params } = buildBootstrapRawSourceQuery(limit);
+  const response = await clickhouse.query<CollectionSidecarSourceRow>({
+    query,
+    query_params,
+    format: 'JSONEachRow',
+  });
+  const json = await response.json();
+  if (Array.isArray(json)) {
+    return json as CollectionSidecarSourceRow[];
+  }
+  return (json as { data?: CollectionSidecarSourceRow[] }).data ?? [];
 }
 
 async function readCheckpoint(pg: PgClientLike, name: string): Promise<BackfillWatermark | null> {

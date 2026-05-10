@@ -28,7 +28,7 @@
     "refresh:analytics-hourly-new": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-hourly-new",
     "refresh:analytics-presence": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-presence",
     "refresh:analytics-charts": "pnpm --filter @atpdashboard/clickhouse-tools refresh:analytics-charts",
-    "refresh:collection-count": "pnpm --filter @atpdashboard/clickhouse-tools refresh:collection-count",
+    "refresh:collection-count": "pnpm --filter @atpdashboard/clickhouse-tools refresh:collection-count-incremental",
     "verify:analytics-presence": "pnpm --filter @atpdashboard/clickhouse-tools verify:analytics-presence",
     "test:clickhouse-tools": "pnpm --filter @atpdashboard/clickhouse-tools test",
     "update": "pnpm dlx npm-check-updates && pnpm install"

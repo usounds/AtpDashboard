@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildCollectionEventDualWriteRows,
   buildBatchQuery,
+  buildBootstrapHighQuery,
+  buildBootstrapRawSourceQuery,
   buildCollectionEventRows,
   buildRecentRescanQuery,
   getLastWatermark,
@@ -19,6 +22,8 @@ test('requires dry-run or confirm-production', () => {
   assert.equal(parseBackfillCliOptions(['--', '--dry-run', '--limit', '1']).limit, 1);
   assert.throws(() => parseBackfillCliOptions(['--dry-run', '--max-runtime-minutes', '1', '--rescan-days', '1']), /unbounded rescan/);
   assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--rescan-days', '1']).rescanDays, 1);
+  assert.throws(() => parseBackfillCliOptions(['--dry-run', '--max-runtime-minutes', '1', '--bootstrap-queue-from-raw']), /unbounded raw bootstrap/);
+  assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--bootstrap-queue-from-raw']).bootstrapQueueFromRaw, true);
 });
 
 test('dry-run config does not require ClickHouse URL', () => {
@@ -36,10 +41,11 @@ test('builds deterministic event rows with microsecond createdAt key', () => {
       rkey: 'abc',
       createdAt: '2026-05-09T05:34:10.123456Z',
     },
-  ]);
+  ], '2026-05-10 00:00:00.001');
 
   assert.equal(row.created_at, '2026-05-09 05:34:10.123456');
   assert.equal(row.created_at_key, '2026-05-09T05:34:10.123456Z');
+  assert.equal(row.ingested_at, '2026-05-10 00:00:00.001');
   assert.match(row.event_key, /2026-05-09T05:34:10\.123456Z/);
 });
 
@@ -50,6 +56,47 @@ test('maps null createdAt to null ClickHouse timestamp and sentinel key', () => 
 
   assert.equal(row.created_at, null);
   assert.equal(row.created_at_key, '<NULL>');
+});
+
+test('builds queue and existence log rows with payload hash and queue sequence', () => {
+  const rows = buildCollectionEventDualWriteRows(
+    [
+      {
+        did: 'did:plc:example',
+        collection: 'app.example.post',
+        rkey: 'abc',
+        createdAt: '2026-05-09T05:34:10.123456Z',
+      },
+    ],
+    { writtenAt: '2026-05-10 00:00:00.001' },
+  );
+
+  assert.equal(rows.events.length, 1);
+  assert.equal(rows.existence.length, 1);
+  assert.equal(rows.queue.length, 1);
+  assert.equal(rows.events[0].event_key, rows.existence[0].event_key);
+  assert.equal(rows.events[0].event_key, rows.queue[0].event_key);
+  assert.equal(rows.existence[0].payload_hash, rows.queue[0].payload_hash);
+  assert.equal(rows.existence[0].source_ingested_at, '2026-05-10 00:00:00.001');
+  assert.equal(rows.queue[0].queued_at, '2026-05-10 00:00:00.001');
+  assert.notEqual(rows.queue[0].queue_seq, '');
+  assert.equal(rows.queue[0].created_hour, '2026-05-09 05:00:00');
+});
+
+test('dual-write queue rows are bumped after completed cutoff', () => {
+  const rows = buildCollectionEventDualWriteRows(
+    [{ did: 'did:plc:a', collection: 'app.a', rkey: 'r1', createdAt: null }],
+    {
+      writtenAt: '2026-05-10 00:00:00.000',
+      latestCompletedCutoff: {
+        queuedAt: '2026-05-10 00:00:00.000',
+        eventKey: 'zzzz',
+        queueSeq: '9999',
+      },
+    },
+  );
+
+  assert.equal(rows.queue[0].queued_at, '2026-05-10 00:00:00.001');
 });
 
 test('batch query uses unique index order and exclusive tuple watermark', () => {
@@ -113,6 +160,20 @@ test('recent rescan query reads by createdAt window without checkpoint tuple', (
   assert.deepEqual(params, [1, 1000]);
 });
 
+test('bootstrap raw source queries are bounded and ordered by bootstrap high tuple', () => {
+  const high = buildBootstrapHighQuery();
+  const source = buildBootstrapRawSourceQuery(1000);
+
+  assert.match(high, /ORDER BY ingested_at DESC, event_key DESC/);
+  assert.match(source.query, /collection_count_bootstrap_bounded/);
+  assert.match(source.query, /FROM atp_dashboard\.collection_events/);
+  assert.match(source.query, /LEFT JOIN atp_dashboard\.collection_count_event_existence_log/);
+  assert.match(source.query, /WHERE e\.event_key = ''/);
+  assert.match(source.query, /ORDER BY c\.ingested_at ASC, c\.event_key ASC/);
+  assert.match(source.query, /LIMIT \{limit:UInt64\}/);
+  assert.deepEqual(source.query_params, { limit: 1000 });
+});
+
 test('rescan mode inserts recent rows without moving checkpoint', async () => {
   const operations: string[] = [];
   const pg = {
@@ -148,8 +209,8 @@ test('rescan mode inserts recent rows without moving checkpoint', async () => {
     },
   };
   const clickhouse = {
-    async insert() {
-      operations.push('insert-clickhouse');
+    async insert(params: { table: string }) {
+      operations.push(`insert:${params.table}`);
     },
   };
 
@@ -172,7 +233,13 @@ test('rescan mode inserts recent rows without moving checkpoint', async () => {
 
   assert.equal(result.rowsRead, 1);
   assert.equal(result.rowsInserted, 1);
-  assert.deepEqual(operations, ['read-checkpoint', 'read-recent-source', 'insert-clickhouse']);
+  assert.deepEqual(operations, [
+    'read-checkpoint',
+    'read-recent-source',
+    'insert:atp_dashboard.collection_events',
+    'insert:atp_dashboard.collection_count_event_existence_log',
+    'insert:atp_dashboard.collection_count_ingest_queue',
+  ]);
 });
 
 test('runBackfill updates checkpoint only after ClickHouse insert succeeds', async () => {
@@ -203,8 +270,8 @@ test('runBackfill updates checkpoint only after ClickHouse insert succeeds', asy
     },
   };
   const clickhouse = {
-    async insert(params: { values: unknown[] }) {
-      operations.push('insert-clickhouse');
+    async insert(params: { table: string; values: unknown[] }) {
+      operations.push(`insert:${params.table}`);
       inserted.push(...params.values);
     },
   };
@@ -224,14 +291,134 @@ test('runBackfill updates checkpoint only after ClickHouse insert succeeds', asy
   };
 
   const result = await runBackfill(options, { pg, clickhouse });
-  const insertIndex = operations.indexOf('insert-clickhouse');
+  const insertIndex = operations.indexOf('insert:atp_dashboard.collection_count_ingest_queue');
   const checkpointIndex = operations.indexOf('write-checkpoint');
 
   assert.equal(result.rowsRead, 2);
   assert.equal(result.rowsInserted, 2);
-  assert.equal(inserted.length, 2);
+  assert.equal(inserted.length, 6);
   assert.ok(insertIndex >= 0);
   assert.ok(checkpointIndex > insertIndex);
+});
+
+test('runBackfill does not checkpoint if queue write fails after raw insert', async () => {
+  const operations: string[] = [];
+  const pg = {
+    async connect() {},
+    async end() {},
+    async query<T>(sql: string): Promise<{ rows: T[] }> {
+      if (sql.includes('clickhouse_sync_checkpoints') && sql.includes('SELECT')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM public.collection')) {
+        return {
+          rows: [{ did: 'did:plc:a', collection: 'app.a', rkey: 'r1', createdAt: null }] as T[],
+        };
+      }
+      if (sql.includes('public.clickhouse_sync_checkpoints') && sql.includes('ON CONFLICT (name) DO UPDATE')) {
+        operations.push('write-checkpoint');
+      }
+      return { rows: [{ ok: true }] as T[] };
+    },
+  };
+  const clickhouse = {
+    async insert(params: { table: string }) {
+      operations.push(`insert:${params.table}`);
+      if (params.table === 'atp_dashboard.collection_count_ingest_queue') {
+        throw new Error('queue insert failed');
+      }
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      runBackfill(
+        {
+          dryRun: false,
+          limit: 1,
+          resumeFrom: null,
+          batchSize: 1,
+          maxRuntimeMinutes: null,
+          maxRows: null,
+          rescanDays: null,
+          confirmProduction: true,
+          checkpointName: 'test',
+          lockName: 'test',
+          lockTtlSeconds: 60,
+        },
+        { pg, clickhouse },
+      ),
+    /queue insert failed/,
+  );
+
+  assert.deepEqual(operations, [
+    'insert:atp_dashboard.collection_events',
+    'insert:atp_dashboard.collection_count_event_existence_log',
+    'insert:atp_dashboard.collection_count_ingest_queue',
+  ]);
+});
+
+test('bootstrap queue from raw inserts only existence log and queue', async () => {
+  const operations: string[] = [];
+  const pg = {
+    async connect() {},
+    async end() {},
+    async query<T>(sql: string): Promise<{ rows: T[] }> {
+      if (sql.includes('clickhouse_sync_checkpoints') && sql.includes('SELECT')) {
+        return { rows: [] };
+      }
+      return { rows: [{ ok: true }] as T[] };
+    },
+  };
+  const clickhouse = {
+    async query() {
+      operations.push('query-raw');
+      return {
+        async json() {
+          return {
+            data: [
+              {
+                did: 'did:plc:a',
+                collection: 'app.a',
+                rkey: 'r1',
+                createdAt: '2026-05-09T00:00:00.000001Z',
+                sourceIngestedAt: '2026-05-10 00:00:00.000',
+              },
+            ],
+          };
+        },
+      };
+    },
+    async insert(params: { table: string }) {
+      operations.push(`insert:${params.table}`);
+    },
+  };
+
+  const result = await runBackfill(
+    {
+      dryRun: false,
+      limit: 1,
+      resumeFrom: null,
+      batchSize: 1,
+      maxRuntimeMinutes: null,
+      maxRows: null,
+      rescanDays: null,
+      bootstrapQueueFromRaw: true,
+      confirmProduction: true,
+      checkpointName: 'test',
+      lockName: 'test',
+      lockTtlSeconds: 60,
+    },
+    { pg, clickhouse },
+  );
+
+  assert.equal(result.rowsRead, 1);
+  assert.equal(result.rowsInserted, 1);
+  assert.deepEqual(operations, [
+    'query-raw',
+    'insert:atp_dashboard.collection_count_event_existence_log',
+    'insert:atp_dashboard.collection_count_ingest_queue',
+  ]);
 });
 
 test('dry-run reads rows but does not insert or checkpoint', async () => {

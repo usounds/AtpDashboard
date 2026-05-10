@@ -306,6 +306,9 @@ function readOptional(value: string | undefined): string | null {
 
 async function main(): Promise<void> {
   const options = parseRefreshCollectionCountOptions(process.argv.slice(2));
+  if (!options.dryRun && process.env.ALLOW_LEGACY_COLLECTION_COUNT_REFRESH !== '1') {
+    throw new Error('Legacy collection_count full refresh is disabled. Use refresh:collection-count-incremental.');
+  }
   const config = loadRefreshCollectionCountConfig(process.env, { requireClickHouse: !options.dryRun });
   const { createClient } = await import('@clickhouse/client');
   const client = options.dryRun

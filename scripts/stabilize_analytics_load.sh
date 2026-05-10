@@ -15,10 +15,11 @@ This is an operational safety script, not a deploy script.
 
 Final target state:
   keep enabled: CollectionEventsSync.timer
+  keep enabled: CollectionEventsRescan.timer
   disable: AnalyticsPresencePipeline.timer
   disable: AnalyticsChartsRefresh.timer
   disable: AnalyticsHourlyNewRefresh.timer
-  disable: CollectionEventsRescan.timer
+  disable: CollectionCountReadModelRefresh.timer
   disable: CollectionCountRefresh.timer
   remove from user crontab: REFRESH MATERIALIZED VIEW CONCURRENTLY collection_stats
 USAGE
@@ -58,10 +59,11 @@ cd "$APP_DIR"
 
 echo "[stabilize] final target state:"
 echo "  CollectionEventsSync.timer: enabled/running"
+echo "  CollectionEventsRescan.timer: enabled/running"
 echo "  AnalyticsPresencePipeline.timer: disabled"
 echo "  AnalyticsChartsRefresh.timer: disabled"
 echo "  AnalyticsHourlyNewRefresh.timer: disabled"
-echo "  CollectionEventsRescan.timer: disabled"
+echo "  CollectionCountReadModelRefresh.timer: disabled"
 echo "  CollectionCountRefresh.timer: disabled"
 echo "  user crontab hourly collection_stats materialized view refresh: removed"
 
@@ -82,7 +84,7 @@ echo "[stabilize] stopping heavy timers/services"
   AnalyticsPresencePipeline.timer AnalyticsPresencePipeline.service \
   AnalyticsChartsRefresh.timer AnalyticsChartsRefresh.service \
   AnalyticsHourlyNewRefresh.timer AnalyticsHourlyNewRefresh.service \
-  CollectionEventsRescan.timer CollectionEventsRescan.service \
+  CollectionCountReadModelRefresh.timer CollectionCountReadModelRefresh.service \
   CollectionCountRefresh.timer CollectionCountRefresh.service \
   2>/dev/null || true
 
@@ -91,12 +93,14 @@ echo "[stabilize] disabling heavy timers"
   AnalyticsPresencePipeline.timer \
   AnalyticsChartsRefresh.timer \
   AnalyticsHourlyNewRefresh.timer \
-  CollectionEventsRescan.timer \
+  CollectionCountReadModelRefresh.timer \
   CollectionCountRefresh.timer \
   2>/dev/null || true
 
 echo "[stabilize] keeping CollectionEventsSync.timer enabled"
 "${SUDO[@]}" systemctl enable --now CollectionEventsSync.timer 2>/dev/null || true
+echo "[stabilize] keeping CollectionEventsRescan.timer enabled"
+"${SUDO[@]}" systemctl enable --now CollectionEventsRescan.timer 2>/dev/null || true
 
 echo "[stabilize] checking active materialized view refresh"
 if docker ps --format '{{.Names}}' | grep -Fx "$CUSTOMFEEDDB_CONTAINER" >/dev/null 2>&1; then
@@ -123,7 +127,7 @@ active_heavy="$("${SUDO[@]}" systemctl is-enabled \
   AnalyticsPresencePipeline.timer \
   AnalyticsChartsRefresh.timer \
   AnalyticsHourlyNewRefresh.timer \
-  CollectionEventsRescan.timer \
+  CollectionCountReadModelRefresh.timer \
   CollectionCountRefresh.timer \
   2>/dev/null | grep -c '^enabled$' || true)"
 

@@ -1,9 +1,6 @@
 [Unit]
-Description=Run AtpDashboard ClickHouse collection_count read model refresh every 10 minutes, staggered
+Description=LEGACY DISABLED-ONLY AtpDashboard ClickHouse collection_count full read model refresh
 
 [Timer]
 OnCalendar=*:08/10
 Persistent=false
-
-[Install]
-WantedBy=timers.target

@@ -9,7 +9,9 @@
     "refresh:analytics-hourly-new": "node --experimental-strip-types src/refresh-analytics-hourly-new-rollups.ts",
     "refresh:analytics-presence": "node --experimental-strip-types src/refresh-analytics-presence-pipeline.ts",
     "refresh:analytics-charts": "node --experimental-strip-types src/refresh-analytics-chart-snapshot.ts",
-    "refresh:collection-count": "node --experimental-strip-types src/refresh-collection-count-snapshot.ts",
+    "refresh:collection-count": "node --experimental-strip-types src/refresh-collection-count-incremental.ts",
+    "refresh:collection-count-incremental": "node --experimental-strip-types src/refresh-collection-count-incremental.ts",
+    "refresh:collection-count-legacy": "node --experimental-strip-types src/refresh-collection-count-snapshot.ts",
     "verify:analytics-presence": "node --experimental-strip-types src/verify-analytics-presence-pipeline.ts",
     "test": "node --test src/*.test.ts"
   },

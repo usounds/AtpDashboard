@@ -56,6 +56,64 @@ export type CollectionCumulativeUsersResultRow = {
   cumulative: number;
 };
 
+const LATEST_VALID_COLLECTION_COUNT_REFRESH_CTE = `
+latest_manifest AS
+(
+  SELECT
+    refresh_id,
+    argMax(status, tuple(updated_at, status_version)) AS latest_status,
+    argMax(completed_at, tuple(updated_at, status_version)) AS latest_completed_at,
+    argMax(row_count, tuple(updated_at, status_version)) AS row_count,
+    argMax(run_id, tuple(updated_at, status_version)) AS run_id,
+    argMax(cutoff_queued_at, tuple(updated_at, status_version)) AS cutoff_queued_at,
+    argMax(cutoff_event_key, tuple(updated_at, status_version)) AS cutoff_event_key,
+    argMax(cutoff_queue_seq, tuple(updated_at, status_version)) AS cutoff_queue_seq,
+    argMax(snapshot_anchor_at, tuple(updated_at, status_version)) AS snapshot_anchor_at,
+    argMax(snapshot_written, tuple(updated_at, status_version)) AS snapshot_written,
+    argMax(event_seen_written, tuple(updated_at, status_version)) AS event_seen_written,
+    argMax(event_conflict_written, tuple(updated_at, status_version)) AS event_conflict_written,
+    argMax(first_seen_written, tuple(updated_at, status_version)) AS first_seen_written,
+    argMax(did_seen_written, tuple(updated_at, status_version)) AS did_seen_written,
+    argMax(rkey_seen_written, tuple(updated_at, status_version)) AS rkey_seen_written,
+    argMax(hourly_written, tuple(updated_at, status_version)) AS hourly_written,
+    argMax(cumulative_users_written, tuple(updated_at, status_version)) AS cumulative_users_written,
+    argMax(validation_passed, tuple(updated_at, status_version)) AS validation_passed,
+    argMax(invalidated_at, tuple(updated_at, status_version)) AS invalidated_at,
+    argMax(is_bootstrap_seed, tuple(updated_at, status_version)) AS is_bootstrap_seed
+  FROM atp_dashboard.collection_count_refresh_manifest_v2
+  GROUP BY refresh_id
+),
+valid_completed_all AS
+(
+  SELECT *
+  FROM latest_manifest
+  WHERE latest_status = 'completed'
+    AND latest_completed_at IS NOT NULL
+    AND invalidated_at IS NULL
+    AND is_bootstrap_seed = 0
+    AND run_id IS NOT NULL
+    AND snapshot_anchor_at IS NOT NULL
+    AND cutoff_queued_at IS NOT NULL
+    AND cutoff_event_key IS NOT NULL
+    AND cutoff_queue_seq != ''
+    AND snapshot_written = 1
+    AND event_seen_written = 1
+    AND event_conflict_written = 1
+    AND first_seen_written = 1
+    AND did_seen_written = 1
+    AND rkey_seen_written = 1
+    AND hourly_written = 1
+    AND cumulative_users_written = 1
+    AND validation_passed = 1
+),
+latest_valid_completed AS
+(
+  SELECT *
+  FROM valid_completed_all
+  ORDER BY latest_completed_at DESC, cutoff_queued_at DESC, cutoff_event_key DESC, cutoff_queue_seq DESC, refresh_id DESC
+  LIMIT 1
+)`;
+
 export function toPostgrestTimestamp(value: string | null): string | null {
   if (value == null) {
     return null;
@@ -128,13 +186,13 @@ async function readCollectionCountSnapshot(
 export async function readLatestCompletedRefresh(client: ClickHouseQueryClient): Promise<CompletedRefresh | null> {
   const result = await client.query({
     query: `
+WITH
+${LATEST_VALID_COLLECTION_COUNT_REFRESH_CTE}
 SELECT
   toString(refresh_id) AS refresh_id,
-  formatDateTime(completed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS completed_at,
+  formatDateTime(latest_completed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS completed_at,
   row_count
-FROM atp_dashboard.collection_count_refresh_manifest
-WHERE status = 'completed'
-ORDER BY completed_at DESC
+FROM latest_valid_completed
 LIMIT 1
 `,
     format: 'JSONEachRow',
@@ -179,7 +237,11 @@ export async function readCollectionStatsFromClickHouse(
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
   collection: string,
 ): Promise<CollectionStatsResultRow[]> {
-  const rows = await withTimeout(readCollectionStatsRows(client, collection), config.clickhouseTimeoutMs, 'ClickHouse collection_stats query timed out');
+  const refresh = await withTimeout(readLatestCompletedRefresh(client), config.clickhouseTimeoutMs, 'ClickHouse latest refresh timed out');
+  if (!refresh) {
+    throw new Error('No completed collection_count refresh is available');
+  }
+  const rows = await withTimeout(readCollectionStatsRows(client, refresh.refresh_id, collection), config.clickhouseTimeoutMs, 'ClickHouse collection_stats query timed out');
   return rows.map((row) => ({
     collection: row.collection,
     unique_did: Number(row.unique_did),
@@ -190,22 +252,23 @@ export async function readCollectionStatsFromClickHouse(
   }));
 }
 
-async function readCollectionStatsRows(client: ClickHouseQueryClient, collection: string): Promise<CollectionStatsRow[]> {
+async function readCollectionStatsRows(client: ClickHouseQueryClient, refreshId: string, collection: string): Promise<CollectionStatsRow[]> {
   const result = await client.query({
     query: `
 SELECT
   collection,
-  uniqExact(did) AS unique_did,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_createdat,
-  if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_createdat,
-  uniqExact(tuple(did, collection, rkey)) AS unique_rkey,
-  uniqExact(event_key) AS total_count
-FROM atp_dashboard.collection_events
-WHERE collection = {collection:String}
-GROUP BY collection
+  unique_did,
+  min_created_at AS min_createdat,
+  max_created_at AS max_createdat,
+  unique_rkey,
+  total_count
+FROM atp_dashboard.collection_count_snapshot
+WHERE refresh_id = {refresh_id:UUID}
+  AND collection = {collection:String}
 LIMIT 1
 `,
     query_params: {
+      refresh_id: refreshId,
       collection,
     },
     format: 'JSONEachRow',
@@ -218,8 +281,12 @@ export async function readCollectionCumulativeUsersFromClickHouse(
   config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
   params: { collection: string; days: number; bucketDays: number },
 ): Promise<CollectionCumulativeUsersResultRow[]> {
+  const refresh = await withTimeout(readLatestCompletedRefresh(client), config.clickhouseTimeoutMs, 'ClickHouse latest refresh timed out');
+  if (!refresh) {
+    throw new Error('No completed collection_count refresh is available');
+  }
   const rows = await withTimeout(
-    readCollectionCumulativeUsersRows(client, params),
+    readCollectionCumulativeUsersRows(client, refresh.refresh_id, params),
     config.clickhouseTimeoutMs,
     'ClickHouse collection_cumulative_users query timed out',
   );
@@ -233,75 +300,44 @@ export async function readCollectionCumulativeUsersFromClickHouse(
 
 async function readCollectionCumulativeUsersRows(
   client: ClickHouseQueryClient,
+  refreshId: string,
   params: { collection: string; days: number; bucketDays: number },
 ): Promise<CollectionCumulativeUsersRow[]> {
   const result = await client.query({
     query: `
 WITH
-  latest_refresh AS
-  (
-    SELECT refresh_id
-    FROM atp_dashboard.collection_count_refresh_manifest
-    WHERE status = 'completed'
-    ORDER BY completed_at DESC
-    LIMIT 1
-  ),
-  latest_snapshot AS
-  (
-    SELECT
-      max_created_at
-    FROM atp_dashboard.collection_count_snapshot
-    INNER JOIN latest_refresh USING refresh_id
-    WHERE collection = {collection:String}
-    LIMIT 1
-  ),
   {days:UInt16} AS lookback_days,
   {bucket_days:UInt8} AS requested_bucket_days,
-  toUInt16(ceil(lookback_days / requested_bucket_days)) AS bucket_count,
-  requested_bucket_days * 86400 AS bucket_seconds,
-  (SELECT max_created_at FROM latest_snapshot) AS latest_at,
-  latest_at - toIntervalDay(lookback_days) AS window_start_at,
   (
-    SELECT uniqExact(did)
-    FROM atp_dashboard.collection_did_first_seen_snapshot
-    INNER JOIN latest_refresh USING refresh_id
-    WHERE collection = {collection:String}
-      AND first_seen_at <= window_start_at
-  ) AS baseline_users
+    SELECT max(day)
+    FROM atp_dashboard.collection_count_cumulative_users_snapshot
+    WHERE refresh_id = {refresh_id:UUID}
+      AND collection = {collection:String}
+  ) AS latest_day
 SELECT
-  toString(date) AS date,
-  day_offset,
-  new,
-  baseline_users + sum(new) OVER (ORDER BY bucket_index DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative
+  toString(max(day)) AS date,
+  -toInt16(bucket_index * requested_bucket_days) AS day_offset,
+  sum(new_users) AS new,
+  max(cumulative_users) AS cumulative
 FROM
 (
   SELECT
-    days.bucket_index AS bucket_index,
-    toString(toDate(days.bucket_end_at, 'UTC')) AS date,
-    -toInt16(days.bucket_index * requested_bucket_days) AS day_offset,
-    toUInt64(coalesce(new_users.new, 0)) AS new
-  FROM
-  (
-    SELECT
-      toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
-      latest_at - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at
-  ) AS days
-  LEFT JOIN
-  (
-    SELECT
-      toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), bucket_seconds)) AS bucket_index,
-      uniqExact(did) AS new
-    FROM atp_dashboard.collection_did_first_seen_snapshot
-    INNER JOIN latest_refresh USING refresh_id
-    WHERE first_seen_at > window_start_at
-      AND first_seen_at <= latest_at
-      AND collection = {collection:String}
-    GROUP BY bucket_index
-  ) AS new_users USING (bucket_index)
+    day,
+    new_users,
+    cumulative_users,
+    toUInt16(intDiv(dateDiff('day', day, latest_day), requested_bucket_days)) AS bucket_index
+  FROM atp_dashboard.collection_count_cumulative_users_snapshot
+  WHERE refresh_id = {refresh_id:UUID}
+    AND collection = {collection:String}
+    AND day > latest_day - toIntervalDay(lookback_days)
+    AND day <= latest_day
 )
+GROUP BY bucket_index
 ORDER BY bucket_index DESC
+LIMIT 365
 `,
     query_params: {
+      refresh_id: refreshId,
       collection: params.collection,
       days: params.days,
       bucket_days: params.bucketDays,

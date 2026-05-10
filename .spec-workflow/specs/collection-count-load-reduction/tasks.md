@@ -1,0 +1,280 @@
+# Tasks: collection-count-load-reduction
+
+- [x] 1. Add immediate stabilization script
+  - Files:
+    - `scripts/stabilize_collection_count_load.sh`
+    - `scripts/stabilize_analytics_load.sh`
+  - Stop the current load source before longer migration work: print final state and semantic impact first, disable `CollectionCountReadModelRefresh.timer/service` and `CollectionCountRefresh.timer/service`, keep `CollectionEventsSync.timer` and `CollectionEventsRescan.timer` enabled/active, verify failed units, API response, and timer/service states.
+  - Ensure old full refresh timers are disabled before any later root package script reroute, incremental unit activation, or deploy attempt.
+  - _Leverage: `scripts/stabilize_analytics_load.sh`, `scripts/diagnose_analytics_load.sh`_
+  - _Requirements: 1, 6, 8_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: production stabilization engineer | Task: Add immediate stabilization scripts for collection count load before any migration work | Restrictions: Print final state before changes; do not disable `CollectionEventsRescan`; do not re-enable old collection count full refresh timers; do not require ad hoc verification commands | _Leverage: existing stabilization and diagnosis scripts | _Requirements: 1, 6, 8 | Success: `bash -n` passes, final state is printed first, old timer/service are disabled/inactive, sync/rescan are enabled/active, API/failure checks are automatic._
+
+- [x] 2. Add ClickHouse DDL for incremental collection count model
+  - Files:
+    - `sql/clickhouse/007_collection_count_incremental.sql`
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+  - Create DDL/migration for exact tables/views:
+    - `collection_count_refresh_manifest_v2`
+    - additive pre-cutover objects for preserving existing `collection_count_refresh_manifest` without renaming, dropping, or replacing the live object
+    - post-cutover migration shape for safe rename/preserve from existing `collection_count_refresh_manifest` to `collection_count_refresh_manifest_legacy`
+    - post-cutover compatibility view `collection_count_refresh_manifest`
+    - existing API publish table `collection_count_snapshot` compatibility verification
+    - `collection_count_incremental_runs`
+    - `collection_count_ingest_queue`
+    - `collection_count_event_existence_log`
+    - `collection_count_event_raw_candidate_stage` preserving every physical queue row before conflict detection
+    - canonical `collection_count_event_stage`
+    - `collection_count_event_seen_log`
+    - `collection_count_event_conflicts`
+    - `collection_count_queue_orphans`
+    - `collection_count_collection_delta`
+    - `collection_count_did_delta`
+    - `collection_count_rkey_delta`
+    - `collection_count_did_first_seen_delta`
+    - `collection_count_recent_hourly_delta`
+    - `collection_count_did_seen_state`
+    - `collection_count_rkey_seen_state`
+    - `collection_count_did_first_seen_state`
+    - `collection_count_recent_hourly_state`
+    - `collection_count_cumulative_users_snapshot`
+    - run-scoped key/probe artifacts for bounded state reads: `current_stage_did_keys`, `current_stage_rkey_keys`, `current_stage_affected_collections`, and `current_stage_hour_keys`
+  - Include critical semantics: `collection_count_queue_orphans.resolved_at/resolution`, raw candidate stage columns/order key for all queue fields including `queued_at`, `event_key`, `queue_seq`, `payload_hash`, canonical stage columns/order key, manifest v2 invalidation/bootstrap/status-version fields, non-empty `queue_seq`, queue `payload_hash`, append-only manifest v2, and no `ReplacingMergeTree` dependency for commit status.
+  - DDL/tests must define whether current-stage key/probe artifacts are temporary, Memory, or run-scoped MergeTree artifacts, and must prove they are used to bound state probes instead of broad all-state scans.
+  - `collection_count_incremental_runs` DDL/tests must include required columns and statuses: `running`, `snapshot_written`, `failed`.
+  - Manifest v2 DDL/tests must include latest-valid gates: all written markers, `validation_passed`, `invalidated_at IS NULL`, `is_bootstrap_seed = 0`, `latest_status = 'completed'`, `completed_at IS NOT NULL`, non-null `run_id`, non-null cutoff tuple, `cutoff_queue_seq != ''`, non-null `snapshot_anchor_at`, and row-count marker fields.
+  - DDL/tests must distinguish `valid_completed_all` semantics from `latest_valid_completed` semantics.
+  - Pre-cutover DDL/tests must be additive only and must prove they cannot make the current API read an empty v2-only manifest view; no pre-cutover script may rename, drop, replace, or shadow the live `collection_count_refresh_manifest` object.
+  - Post-cutover compatibility view must project only latest valid completed rows from `collection_count_refresh_manifest_v2` using approved `argMax(..., tuple(updated_at, status_version))` semantics, expose only legacy-compatible columns, never read/copy legacy rows, and never be a write/commit source.
+  - `collection_count_snapshot` must keep API-compatible columns and `refresh_id` compatibility; DDL/tests must assert required columns/types rather than silently changing the publish contract.
+  - _Leverage: `sql/clickhouse/002_collection_count_snapshot.sql`, `sql/clickhouse/006_analytics_presence_pipeline.sql`, `packages/clickhouse-tools/src/refresh-analytics-presence-pipeline.test.ts`_
+  - _Requirements: 4, 5_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: ClickHouse schema engineer | Task: Add the complete incremental collection count DDL and schema tests so all new tables/views match the approved design | Restrictions: Do not change `collection_events` engine, do not add raw event physical deletion, do not rely on `OPTIMIZE FINAL`; pre-cutover DDL must be additive and must not rename/drop/replace the live legacy manifest; preserve old manifest data via guarded post-cutover legacy rename, not empty recreation; compatibility view is not a write/commit source | _Leverage: existing ClickHouse DDL files and analytics presence tests | _Requirements: 4, 5 | Success: pre-cutover DDL is idempotent and additive, post-cutover compatibility view projects latest valid completed v2 only, `collection_count_snapshot` compatibility is verified, v2 manifest fields are present, raw/canonical stage tables are distinct, queue/existence/seen/state tables include all required fields, and tests assert the invariants._
+
+- [x] 3. Implement queue sequence, cursor, and payload helpers
+  - Files:
+    - `packages/clickhouse-tools/src/collection-count-incremental.ts`
+    - `packages/clickhouse-tools/src/collection-count-incremental.test.ts`
+  - Add shared helpers for canonical normalized payload tuple, `payload_hash`, `queue_seq` generation, cursor tuple comparison, cutoff bumping, latest/active cutoff checks, and shared lock path constants.
+  - Enforce empty/null `queue_seq` rejection and consistent payload hash generation across sync, rescan, backfill, repair, deploy, manual CLI, systemd timer, and refresh.
+  - _Leverage: `packages/clickhouse-tools/src/event-key.ts`, `packages/clickhouse-tools/src/event-key.test.ts`_
+  - _Requirements: 4, 5_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: TypeScript data pipeline developer | Task: Build reusable helpers for queue cursor ordering, canonical payload hashing, and shared lock metadata | Restrictions: Do not introduce non-deterministic payload semantics; do not use `source_ingested_at` as queue watermark; helpers must be usable by CLI and tests without production side effects | _Leverage: existing event-key helper style | _Requirements: 4, 5 | Success: unit tests cover queue_seq monotonicity/collision shape, empty queue_seq rejection, payload hash stability, tuple comparison, active cutoff protection, cutoff bump logic, and shared lock constant usage._
+
+- [x] 4. Dual-write collection event sync/backfill/rescan into queue and existence log
+  - Files:
+    - `packages/clickhouse-tools/src/backfill-collection-events.ts`
+    - `packages/clickhouse-tools/src/backfill-collection-events.test.ts`
+    - `packages/clickhouse-tools/CollectionEventsSync.service`
+    - `packages/clickhouse-tools/CollectionEventsRescan.service`
+  - Update the shared `backfill:collection-events` path used by both `CollectionEventsSync.service` and `CollectionEventsRescan.service` so every successful raw event write also writes `collection_count_event_existence_log` and `collection_count_ingest_queue`, or idempotently verifies all three before advancing upstream checkpoint.
+  - Add bootstrap queue/existence-log backfill mode from existing `collection_events` for `bootstrap_high = max(collection_events.ingested_at, event_key)`.
+  - Verify overlap from `dual_write_started_at` through `bootstrap_high`; bounded source verification must prove queue missing = 0, existence missing = 0, and duplicate conflicts = 0 before deploy can proceed.
+  - Add bounded retry behavior for raw-success / queue-or-existence failure without broad raw scans.
+  - Every sync/rescan/backfill queue insert path must machine-check `(queued_at, event_key, queue_seq) > latest completed cutoff` and greater than any active reserved cutoff, bump `queued_at` when required, and fail closed before checkpoint advance if the invariant cannot be proven.
+  - Verify service invocations still call the updated shared path and continuously supply queue/existence log in sync and rescan modes.
+  - _Leverage: `packages/clickhouse-tools/src/backfill-collection-events.ts`, `packages/clickhouse-tools/src/backfill-collection-events.test.ts`, `packages/clickhouse-tools/CollectionEventsSync.service`, `packages/clickhouse-tools/CollectionEventsRescan.service`_
+  - _Requirements: 4, 7_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: ETL reliability engineer | Task: Add dual-write, bootstrap backfill, overlap verification, and bounded retry semantics to the shared collection event ingestion path used by sync, rescan, and backfill | Restrictions: Do not advance checkpoint unless raw, existence log, and queue are written or verified; repair only from the same bounded upstream cursor batch or `collection_count_event_existence_log`; no periodic raw `collection_events` anti-join or broad repair scan; do not break existing sync/rescan behavior | _Leverage: current backfill checkpoint, insert code, and service files | _Requirements: 4, 7 | Success: tests simulate partial failures and confirm checkpoint does not advance, bootstrap_high uses `max(collection_events.ingested_at, event_key)`, overlap from dual_write_started_at through bootstrap_high has queue missing = 0 / existence missing = 0 / duplicate conflicts = 0, missing queue/existence rows are repaired only from bounded upstream cursor or existence log, queue rows contain `payload_hash` and non-empty `queue_seq`, and service commands exercise the updated shared path._
+
+- [x] 5. Implement refresh cutoff controls, raw staging, orphan detection, and event canonicalization
+  - Files:
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.ts`
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+  - Implement CLI options/config for `safety_lag`, `max_rows`, `max_queued_at_span`, `max_estimated_bytes`, lower-bound/cutoff semantics, reserved cutoff selection, backlog batch completion, and tests proving no unseen queue rows are skipped.
+  - Implement raw candidate staging from `collection_count_ingest_queue`, bounded orphan anti-join against `collection_count_event_existence_log`, orphan recording in `collection_count_queue_orphans`, orphan-triggered failed run behavior with no watermark advance, conflict detection before canonical collapse, conflict recording/exclusion, and canonical one-row-per-event stage.
+  - Implement cross-run duplicate `event_key` behavior as first-completed-wins: existing payload selection must join `valid_completed_all` and choose the approved ordered canonical existing row before comparing payload hash or writing new deltas.
+  - Clarify behavior: orphan detection is run-fatal; same-run/cross-run payload conflicts are written to `collection_count_event_conflicts`, excluded from stage, and do not by themselves fail the run.
+  - Enforce exclusion semantics: `did = 'did:web:lexicon.store'` excluded from collection count / first-seen / unique paths; `created_at IS NULL` excluded from recent/hourly/cumulative paths.
+  - _Leverage: tasks 2-4 helpers, DDL, and dual-write path_
+  - _Requirements: 3, 4, 5_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: ClickHouse pipeline developer | Task: Implement incremental refresh cutoff controls, input staging, orphan handling, and duplicate/conflict canonicalization | Restrictions: Do not stage orphan rows; do not advance watermark on orphan failure; payload conflicts are recorded/excluded but not run-fatal by themselves; do not collapse by `event_key` before conflict detection; do not read raw `collection_events` in the periodic path | _Leverage: helper module and DDL from earlier tasks | _Requirements: 3, 4, 5 | Success: tests verify safety lag/batch limits, reserved cutoff, backlog continuation, empty predicate handling, raw candidate preservation, orphan failure/no watermark advance, first-completed-wins existing payload selection through `valid_completed_all`, same-run/cross-run conflict recording and exclusion without run failure, identical duplicate collapse, did:web exclusion, null-created_at exclusions, and no raw broad scan SQL._
+
+- [x] 6. Implement compact state deltas and snapshot publish artifacts
+  - Files:
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.ts`
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+  - Implement completed seen/state probes from current stage keys, exact current-stage key tables (`current_stage_did_keys`, `current_stage_rkey_keys`, `current_stage_affected_collections`, `current_stage_hour_keys`), run-scoped deltas, did/rkey/first-seen/hourly state writes, affected-collection copy-forward, snapshot publish, and publish-time validation before manifest completion.
+  - All visible seen/state probes must join `valid_completed_all`; raw `status = 'completed'` joins are forbidden.
+  - Keep broad did/rkey/hourly/full-history scans out of periodic validation.
+  - Add unit/integration assertions that keyed probes use the exact current-stage key tables and `EXPLAIN indexes=1` shows primary-key/hour-range pruning for the relevant state reads.
+  - _Leverage: `packages/clickhouse-tools/src/refresh-collection-count-snapshot.ts`, task 5 canonical stage_
+  - _Requirements: 3, 4, 5_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: ClickHouse read-model engineer | Task: Build compact state delta generation and snapshot artifact publish for the incremental collection count model | Restrictions: Do not use broad raw `collection_events` scans; do not use raw `status = 'completed'` joins; do not write completed manifest in this task; do not publish incomplete artifacts as valid completed | _Leverage: existing snapshot refresh and canonical stage from task 5 | _Requirements: 3, 4, 5 | Success: tests verify total_count/unique/min/max/recent_count from deltas and copy-forward, visible probes join `valid_completed_all`, current-stage key tables prevent broad state hash scans, affected collection recalculation works, `EXPLAIN indexes=1` is asserted, and validation SQL covers snapshot/state consistency._
+
+- [x] 7. Implement cumulative users and zero-source aging refresh
+  - Files:
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.ts`
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+  - Implement 365-day daily `collection_count_cumulative_users_snapshot` generation for affected collections, API-bounded artifact shape, zero-source aging refresh with previous cutoff unchanged, all written markers set, and validation distinguishing zero-row artifacts from missing artifacts.
+  - Publish-time cumulative-user regeneration must read first-seen state only for affected collections keyed by the union of `current_stage_affected_collections` and collections with previous daily cumulative rows whose snapshot anchor day advances; all-collection first-seen scans are forbidden in both request-time and publish-time paths.
+  - Validate zero-source aging by regenerating/copying daily rows for previous cumulative collections when the anchor day advances even if no current-stage event exists.
+  - Ensure API read shape can read only `collection_count_cumulative_users_snapshot` for the selected collection and at most 365 daily rows.
+  - _Leverage: task 6 first-seen state and snapshot anchor logic_
+  - _Requirements: 2, 4, 5_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: ClickHouse analytics engineer | Task: Add cumulative users daily artifact generation and zero-source aging refresh semantics | Restrictions: Do not broad scan first-seen state across all collections at request time or publish time; do not advance beyond unseen queue rows; do not treat missing artifacts as zero-row artifacts | _Leverage: first-seen state and snapshot anchor from task 6 | _Requirements: 2, 4, 5 | Success: tests cover daily rows max 365, selected-collection-only artifact reads, affected-collection-plus-previous-daily first-seen reads, static checks preventing all-collection first-seen scans, bucket-ready output, late old first-seen regeneration, copy-forward, zero-source marker semantics, and recent_count aging with no source rows._
+
+- [x] 8. Implement manifest commit, retry safety, bootstrap finalization, and invalidation
+  - Files:
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.ts`
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+  - Insert completed `collection_count_refresh_manifest_v2` only after all artifacts and validation pass; implement linear commit guard, unknown artifact/manifest retry semantics, private bootstrap seed checkpoints, final non-bootstrap bootstrap publish, overlapping completed invalidation, and descendant invalidation.
+  - Commit/invalidation reads used for cross-run duplicate handling must use `valid_completed_all` and the approved ordered canonical existing row rule so already completed payloads win deterministically over later duplicate `event_key` rows.
+  - Implement exact status-version rules: `running=10`, `completed=30`, `failed=90` lower bounds, completed terminal status, no failed after completed, invalidation rows with higher `status_version`, and `argMax(..., tuple(updated_at, status_version))` for latest/stale/retry/invalidation reads.
+  - No manifest latest/stale/retry/invalidation path may use `FINAL` or `WHERE status = 'completed' ORDER BY completed_at DESC`.
+  - _Leverage: tasks 5-7 publish artifacts_
+  - _Requirements: 4, 5, 7_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: distributed commit safety engineer | Task: Implement manifest v2 commit, retry, bootstrap, and invalidation semantics for incremental collection count refresh | Restrictions: Do not write completed manifest before all artifacts are valid; do not reuse refresh_id after unknown artifact insert; do not expose private bootstrap seed as valid completed; do not use `FINAL` or direct completed-status ordering for manifest latest reads; invalidate descendants of invalidated overlapping completed refreshes | _Leverage: publish artifacts from tasks 5-7 | _Requirements: 4, 5, 7 | Success: tests verify completed manifest last, status-version ordering, completed terminal behavior, valid_completed CTE behavior, deterministic first-completed-wins duplicate reads, forbidden manifest query patterns absent, failed/running invisibility, unknown insert retry behavior, private seed invisibility, final bootstrap materialization, overlapping completed detection, and descendant invalidation._
+
+- [x] 9. Add isolated systemd units and package scripts
+  - Files:
+    - `packages/clickhouse-tools/CollectionCountIncrementalRefresh.service`
+    - `packages/clickhouse-tools/CollectionCountIncrementalRefresh.timer`
+    - `packages/clickhouse-tools/CollectionCountReadModelRefresh.service`
+    - `packages/clickhouse-tools/CollectionCountReadModelRefresh.timer`
+    - `packages/clickhouse-tools/CollectionCountRefresh.service`
+    - `packages/clickhouse-tools/CollectionCountRefresh.timer`
+    - `packages/clickhouse-tools/package.json`
+  - Add new incremental systemd unit with `OnCalendar=*:08/10`, `Persistent=false`, shared `flock`, constrained ClickHouse settings, and progress headers.
+  - Add isolated incremental and legacy package scripts in `packages/clickhouse-tools/package.json`, but do not reroute the root `refresh:collection-count` normal path in this task.
+  - Mark or rename old unit files as legacy-only, or make them excluded from normal install/copy targets.
+  - Enforce the same lock path for systemd, manual CLI, and deploy CLI paths with tests/static checks.
+  - _Leverage: `packages/clickhouse-tools/CollectionCountReadModelRefresh.service`, `packages/clickhouse-tools/CollectionEventsSync.timer`, `packages/clickhouse-tools/package.json`_
+  - _Requirements: 3, 6, 8_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: systemd and package script maintainer | Task: Add the new incremental timer/service and isolate legacy full-refresh entrypoints | Restrictions: Do not expose incomplete incremental behavior through root `refresh:collection-count`; do not keep any normal path that enables old full refresh timers; do not change analytics timer activation; service/manual/deploy paths must share the approved lock | _Leverage: existing systemd unit files and package scripts | _Requirements: 3, 6, 8 | Success: new isolated package scripts exist, root script reroute is left to the later gated task, new unit/timer match design, old units are legacy-only or excluded from normal install, shared lock usage is tested, and static checks catch accidental old timer enablement._
+
+- [x] 10. Update collection count API read paths
+  - Files:
+    - `packages/api/src/collection-count/clickhouse.ts`
+    - `packages/api/src/collection-count/server.ts`
+    - `packages/api/src/collection-count/server.test.ts`
+  - Replace `collection_count_view` latest completed direct read with manifest v2 latest-valid CTE and read only `collection_count_snapshot` for that refresh.
+  - Replace raw `collection_events` reads in `collection_stats` and broad first-seen scans in `collection_cumulative_users` with latest valid manifest v2 CTE and bounded snapshot/artifact reads.
+  - Forbid legacy manifest direct selection and `WHERE status = 'completed' ORDER BY completed_at` in all three endpoints.
+  - Keep response shape and headers for `collection_count_view`, `collection_stats`, and `collection_cumulative_users`.
+  - Add tests that no valid completed manifest/snapshot does not return normal successful ClickHouse data, stale valid snapshot preserves body plus stale headers, and fallback/error behavior remains compatible without masking missing valid completed state.
+  - _Leverage: `packages/api/src/collection-count/clickhouse.ts`, `packages/api/src/collection-count/server.ts`, `packages/api/src/collection-count/server.test.ts`_
+  - _Requirements: 2, 3, 5_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: API backend developer | Task: Move all collection count API endpoints to latest valid manifest v2 and bounded read model artifacts | Restrictions: Do not read raw `collection_events` for `collection_stats`; do not broad scan first-seen state for cumulative users; do not use legacy completed-status ordering; preserve JSON shapes and headers; do not add frontend changes | _Leverage: existing API tests and response formatting helpers | _Requirements: 2, 3, 5 | Success: tests prove `collection_count_view` uses latest valid manifest v2 snapshot, no raw event reads for target endpoints, no direct completed-status ordering, no-valid-completed state is not masked as normal success, stale valid snapshot preserves body plus stale headers, fallback/error behavior remains compatible, and response bodies/headers remain compatible._
+
+- [x] 11. Harden legacy scripts and documentation
+  - Files:
+    - `scripts/deploy_collection_count_read_model.sh`
+    - `scripts/deploy_analytics_presence_pipeline.sh`
+    - `scripts/rollback_analytics_presence_pipeline.sh`
+    - `docs/clickhouse-partial-migration-runbook.md`
+    - `packages/clickhouse-tools/schedule-notes.md`
+  - Hard-fail the old read model deploy path, update presence deploy/rollback to keep old collection count full refresh disabled, and remove old full refresh normal operation guidance from docs.
+  - Any shipped manual/CLI path that still targets old `collection_count_refresh_manifest` must hard-fail with migration guidance or write only to an explicitly legacy target; no normal or manual path may commit to the compatibility view.
+  - _Leverage: existing production scripts and docs_
+  - _Requirements: 1, 6, 8_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: release safety engineer | Task: Remove or hard-block legacy full refresh paths from normal scripts and docs | Restrictions: Do not drop historical analytics tables; do not re-enable analytics timers; do not leave instructions that ask the operator to manually enable old collection count timers | _Leverage: current shell scripts and runbooks | _Requirements: 1, 6, 8 | Success: static checks find no normal `enable --now CollectionCountReadModelRefresh.timer` or `CollectionCountRefresh.timer`, docs point to incremental flow, and presence rollback/deploy keep old timers disabled._
+
+- [x] 12. Add embedded repair and catch-up verification
+  - Files:
+    - `scripts/verify_collection_count_incremental_read_model.sh`
+    - `scripts/deploy_collection_count_incremental_read_model.sh`
+  - Implement embedded repair/catch-up logic used by deploy/verify: use `collection_count_event_existence_log` and bounded upstream cursor data, never periodic raw `collection_events` broad repair scans.
+  - Verify queue missing = 0, existence missing = 0, queue orphan = 0, duplicate conflict accounting, and bootstrap overlap coverage before publish.
+  - All repair queue inserts must machine-check `(queued_at, event_key, queue_seq) > latest completed cutoff` and greater than any active reserved cutoff, bump `queued_at` when required, and fail closed if the invariant cannot be proven.
+  - Raw `collection_events` reads are allowed only for initial bootstrap bounded by `bootstrap_high`/overlap or the same bounded upstream cursor retry; normal verify/repair after cutover must use existence log and queue artifacts, and must not raw anti-join `collection_events`.
+  - _Leverage: tasks 1-11 outputs, `scripts/verify_analytics_presence_pipeline.sh`_
+  - _Requirements: 4, 7_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: production repair engineer | Task: Add bounded embedded repair and catch-up verification for the incremental collection count deployment | Restrictions: Do not add a separate manual repair command requirement; do not broad scan raw `collection_events`; fail closed if queue/existence/orphan checks do not pass; after cutover do not raw anti-join `collection_events` for repair | _Leverage: completed DDL/dual-write/verify patterns | _Requirements: 4, 7 | Success: verify/deploy can repair from existence log or bounded source cursor, proves missing/orphan counts are zero, enforces queue insert cutoff invariants, separates allowed bootstrap raw reads from forbidden post-cutover raw anti-joins, and exits non-zero before publish when checks fail._
+
+- [x] 13. Add P1 release gates and gated root package reroute
+  - Files:
+    - `scripts/verify_collection_count_incremental_read_model.sh`
+    - `package.json`
+    - `packages/clickhouse-tools/package.json`
+  - Add explicit P1 release-blocker checks:
+    - `packages/api/src/collection-count/clickhouse.ts` uses manifest v2 latest-valid CTE for `collection_count_view`
+    - `collection_stats` raw `collection_events` read removed
+    - `collection_cumulative_users` broad first-seen/raw scan removed
+    - `scripts/deploy_collection_count_read_model.sh` hard-fails
+    - `docs/clickhouse-partial-migration-runbook.md` old full refresh normal path removed
+    - `packages/clickhouse-tools/schedule-notes.md` updated to incremental timer
+    - shipped `CollectionCountReadModelRefresh.service/timer` and `CollectionCountRefresh.service/timer` excluded from normal install targets or renamed legacy
+    - old timers/services disabled/inactive
+    - shared lock present in deploy/manual/systemd paths
+    - new unit installed but enabled only after verification
+    - all `collection_events` write paths dual-write before `bootstrap_high` is recorded
+    - no normal/manual shipped path writes to `collection_count_refresh_manifest`; legacy paths hard-fail or write only to explicit legacy targets
+  - Reroute root `refresh:collection-count` to the incremental path only in this gated task; keep legacy full refresh available only as `refresh:collection-count-legacy`.
+  - _Leverage: tasks 1-12 outputs_
+  - _Requirements: 3, 6, 8_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: release gate engineer | Task: Add exact P1 release gates and only then reroute the root collection-count refresh script | Restrictions: Do not reroute root `refresh:collection-count` until all P1 gates are implemented; do not leave old full refresh as a normal timer/script path | _Leverage: package scripts and verification script | _Requirements: 3, 6, 8 | Success: P1 gates fail closed, root script reroute happens only with the gates, legacy full refresh is isolated, and static checks prove old normal paths are gone._
+
+- [x] 14. Wire retention and cleanup safeguards before deploy enablement
+  - Files:
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.ts`
+    - `scripts/deploy_collection_count_incremental_read_model.sh`
+    - `scripts/verify_collection_count_incremental_read_model.sh`
+  - Implement or gate retention for stage/run/queue/snapshot/hourly/cumulative artifacts, conflict rows, orphan rows, and delta tables according to the design before the deploy script can enable the incremental timer.
+  - Deploy verification must fail closed unless retention/cleanup is safely implemented or explicitly disabled with safe no-delete behavior.
+  - Preserve Phase1 permanent state tables explicitly: `collection_count_event_seen_log`, `collection_count_did_seen_state`, `collection_count_rkey_seen_state`, and `collection_count_did_first_seen_state`.
+  - Include 90-day conflict retention, resolved-orphan cleanup after 30 days, and completed/failed delta cleanup after 30 days.
+  - Validate hourly coverage before cleanup and keep rollback generations for snapshot and cumulative users.
+  - _Leverage: incremental refresh CLI and deploy verification from earlier tasks_
+  - _Requirements: 4, 5, 7_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: data retention engineer | Task: Add safe retention and cleanup safeguards for incremental collection count artifacts before deploy enablement | Restrictions: Do not delete `collection_count_event_seen_log`, `collection_count_did_seen_state`, `collection_count_rkey_seen_state`, or `collection_count_did_first_seen_state` in Phase1; do not remove hourly data before coverage verification; do not remove rollback snapshots; do not let deploy enable the incremental timer unless cleanup is implemented or explicitly safe-disabled | _Leverage: refresh CLI and verification scripts | _Requirements: 4, 5, 7 | Success: retention is either safely implemented or explicitly safe-disabled for stage/run/queue/snapshot/hourly/cumulative/conflict/orphan/delta artifacts, verification prevents unsafe cleanup, rollback generations remain available, and deploy cannot enable the timer until this gate passes._
+
+- [x] 15. Add one-shot deploy script
+  - Files:
+    - `scripts/deploy_collection_count_incremental_read_model.sh`
+    - `scripts/verify_collection_count_incremental_read_model.sh`
+  - Add one-shot production deployment after DDL, helpers, dual-write, CLI, systemd, API, and legacy hardening exist.
+  - Exact deploy sequence: print final state and semantic impact, stop/disable old full refresh timer/service, apply only pre-cutover additive DDL that cannot rename/drop/replace the live `collection_count_refresh_manifest`, install systemd units while keeping `CollectionCountIncrementalRefresh.timer` disabled/inactive, install/deploy dual-write Sync/Rescan path, record `dual_write_started_at` immediately after dual-write is deployed/enabled, verify queue/existence supply and all raw write paths are dual-write, record `bootstrap_high`, backfill through `bootstrap_high` including overlap from `dual_write_started_at`, catch up/repair, publish snapshot, create and verify the required visible v2 completed marker or rollback-visible marker, run local/public API continuity checks against the current live read path, only then run the guarded compatibility-view/API-read-path cutover, restart API, run ClickHouse verification, run local API verification for `collection_count_view`, `collection_stats`, and `collection_cumulative_users`, run public API verification for `collection_count_view`, `collection_stats`, and `collection_cumulative_users`, verify response shapes and headers for all three endpoints, verify failed units, verify old full refresh disabled/inactive, verify retention/cleanup gate, verify load-reduction gate, enable new incremental timer only after all checks pass, and verify final timer/service convergence.
+  - API continuity gate: deploy must fail closed before live manifest compatibility replacement if it cannot prove there is no window where the live API reads an empty v2 compatibility view.
+  - Pre-cutover hard gate/static check: the DDL/script path used before the visible v2 marker is verified must not contain operations that rename, drop, replace, or shadow the live `collection_count_refresh_manifest` object.
+  - Machine-check that the incremental timer cannot run before dual-write, bootstrap, repair/catch-up, publish, API verification, P1 gates, retention gate, and load-reduction gate all pass.
+  - Load-reduction gate must prove the old 10-minute full-refresh spike source is absent using concrete pass/fail checks: old full refresh timers/services disabled/inactive; no old full refresh package/script path active; no legacy full-refresh tagged query or untagged broad `collection_events` aggregation from collection-count refresh in recent `system.processes`/`query_log`; and no recurring 10-minute `CollectionCountReadModelRefresh`/`CollectionCountRefresh` service executions in recent journal. Approved bootstrap/catch-up queries must be tagged separately so this gate can distinguish bounded bootstrap work from forbidden periodic full refresh work.
+  - Final deploy timer state must be exact: `CollectionEventsSync.timer`, `CollectionEventsRescan.timer`, and `CollectionCountIncrementalRefresh.timer` enabled/active; `CollectionCountReadModelRefresh.timer` and `CollectionCountRefresh.timer` disabled/inactive; no failed units.
+  - _Leverage: tasks 1-14 outputs, `scripts/deploy_collection_count_read_model.sh`, `scripts/deploy_analytics_presence_pipeline.sh`_
+  - _Requirements: 1, 6, 7, 8_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: production deployment engineer | Task: Create the one-shot deploy script for the complete incremental collection count migration | Restrictions: Print final state and semantic impact before mutating; never re-enable `CollectionCountReadModelRefresh` or `CollectionCountRefresh`; keep the incremental timer disabled until dual-write/bootstrap/repair/publish/API/P1/retention/load checks pass; do not replace the live compatibility view/API read path until v2 visible marker continuity is proven; verify all three affected API endpoints locally and publicly; deploy/manual/systemd paths must share the lock; keep failure finalizer converging old timers/services disabled | _Leverage: completed DDL/CLI/API/systemd/legacy tasks | _Requirements: 1, 6, 7, 8 | Success: `bash -n` passes, deploy performs the exact sequence, cutover boundaries are unambiguous, API continuity is proven before compatibility switch, exact P1 gates fail closed, local/public API checks cover all three endpoints, load-reduction gate is machine-checkable with tagged-query distinction, final timer/service convergence is exact, and old full refresh stays disabled._
+
+- [x] 16. Add rollback script
+  - Files:
+    - `scripts/rollback_collection_count_incremental_read_model.sh`
+    - `scripts/verify_collection_count_incremental_read_model.sh`
+  - Rollback must disable `CollectionCountIncrementalRefresh.timer`, preserve API reads from the last valid completed snapshot, never enable `CollectionCountReadModelRefresh` or `CollectionCountRefresh`, verify local/public API, verify timer states, verify failed units, and verify old full refresh disabled/inactive.
+  - Rollback final timer state must be exact: `CollectionEventsSync.timer` and `CollectionEventsRescan.timer` remain enabled/active; `CollectionCountIncrementalRefresh.timer`, `CollectionCountReadModelRefresh.timer`, and `CollectionCountRefresh.timer` are disabled/inactive.
+  - _Leverage: `scripts/rollback_analytics_presence_pipeline.sh`, deploy/verify scripts_
+  - _Requirements: 1, 6, 7, 8_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: rollback engineer | Task: Create rollback script for the incremental collection count deployment | Restrictions: Do not restore old full refresh timers; do not discard the last valid completed snapshot; fail closed if API/timer verification fails | _Leverage: existing rollback scripts and verify script | _Requirements: 1, 6, 7, 8 | Success: rollback disables incremental timer, preserves last valid snapshot for API, verifies local/public API and timer/failed-unit state, and leaves old full refresh disabled._
+
+- [x] 17. Add ClickHouse integration and failure-injection tests
+  - Files:
+    - `scripts/test_collection_count_incremental_clickhouse.sh`
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+  - Add integration fixtures for duplicate/replay/conflicting event keys, same DID/rkey across windows, late recent/old events, null `created_at`, `did:web:lexicon.store`, orphan queue, missing queue repair, zero-source aging, bootstrap seed/final publish, descendant invalidation, and no broad raw scan periodic path.
+  - Include cross-run duplicate tests proving first-completed-wins behavior through `valid_completed_all` and the ordered canonical existing row rule.
+  - _Leverage: `scripts/test_analytics_presence_pipeline_clickhouse.sh`, `scripts/test_analytics_hourly_rollups_clickhouse.sh`, existing clickhouse-tools tests_
+  - _Requirements: 3, 4, 5, 7_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: data pipeline test engineer | Task: Add focused unit/integration/failure-injection coverage for the incremental collection count pipeline | Restrictions: Tests must not depend on production data; do not hide broad raw scans behind fixtures; ensure shell scripts are self-contained | _Leverage: existing ClickHouse container test scripts | _Requirements: 3, 4, 5, 7 | Success: tests cover duplicate/conflict/replay semantics including first-completed-wins cross-run duplicates, watermark retry safety, zero-source aging, bootstrap, orphan/missing repair, lexicon/null exclusions, descendant invalidation, API artifact shape, and raw full refresh absence._
+
+- [x] 18. Extend diagnostics and deploy verification
+  - Files:
+    - `scripts/verify_collection_count_incremental_read_model.sh`
+    - `scripts/diagnose_analytics_load.sh`
+    - `scripts/deploy_collection_count_incremental_read_model.sh`
+  - Add machine checks for latest valid manifest v2, overlapping completed and descendant invalidation, queue missing/orphan zero, final timer/service states, local/public API status/shape/headers for `collection_count_view`, `collection_stats`, and `collection_cumulative_users`, `EXPLAIN indexes=1` for keyed/hour range probes, shared lock usage, and old full refresh absence.
+  - Add a load-reduction acceptance check that fails closed when old full refresh timers/services or package/script paths are active, a legacy full-refresh tagged query or untagged broad collection-count `collection_events` aggregation appears in recent ClickHouse process/query logs, recurring 10-minute old full-refresh service runs appear in recent journal, or CPU/RAM observation output indicates the 10-minute full-refresh spike is still attributable to collection-count refresh.
+  - Require machine-distinguishable query tags/settings for approved bounded bootstrap/catch-up queries versus forbidden legacy/full periodic refresh queries, so load gates do not fail approved bootstrap work or pass forbidden periodic work.
+  - Extend diagnostics to show incremental timers, active queries, queue lag, latest manifest, orphan/missing status, and legacy timer state.
+  - _Leverage: `scripts/diagnose_analytics_load.sh`, `scripts/verify_analytics_presence_pipeline.sh`_
+  - _Requirements: 1, 6, 7_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: production verification engineer | Task: Add verification and diagnosis scripts for the incremental collection count deployment | Restrictions: Verification must fail closed; do not require the operator to run ad hoc SQL/curl/systemctl after deploy; keep output concise but actionable; load checks must identify active legacy full-refresh causes instead of only printing charts | _Leverage: existing diagnose and verify shell scripts | _Requirements: 1, 6, 7 | Success: deploy invokes verification automatically, diagnostics expose queue/manifest/timer/API/load state, all three affected endpoints are verified locally and publicly, descendant invalidation and shared lock are checked, load-reduction acceptance is machine-checkable, and failures leave old full refresh disabled._
+
+- [x] 19. Final integration, static gates, and release readiness
+  - Files:
+    - `packages/clickhouse-tools/src/refresh-collection-count-incremental.test.ts`
+    - `packages/api/src/collection-count/server.test.ts`
+    - `scripts/deploy_collection_count_incremental_read_model.sh`
+    - `package.json`
+    - `.spec-workflow/specs/collection-count-load-reduction/tasks.md`
+  - Run targeted unit tests, ClickHouse integration test, shell `bash -n`, static grep gates that fail on forbidden legacy timer enablement, direct completed-status selection, forbidden `FINAL` usage in manifest latest/stale/retry/invalidation paths, missing shared lock usage, raw broad collection-count refresh SQL, and periodic watermark predicates using `source_ingested_at` / `ingested_at` instead of `(queued_at, event_key, queue_seq)`, then update task statuses/logs according to spec workflow.
+  - _Leverage: all files changed by tasks 1-18_
+  - _Requirements: All_
+  - _Prompt: Implement the task for spec collection-count-load-reduction, first run spec-workflow-guide to get the workflow guide then implement the task: Role: release integrator | Task: Verify the whole spec implementation and mark completion only after tests and static gates pass | Restrictions: Do not ask the operator for manual verification commands that scripts should cover; do not proceed if approval cleanup or task logging is incomplete; do not claim production readiness without local targeted verification | _Leverage: package tests, shell scripts, spec workflow logs | _Requirements: All | Success: targeted tests pass or failures are documented, shell scripts pass `bash -n`, forbidden old timer/raw scan/direct-status/FINAL patterns are absent, periodic refresh predicates use `(queued_at, event_key, queue_seq)` rather than `source_ingested_at`/`ingested_at`, shared lock gates pass, root `refresh:collection-count` reroute is verified after P1 gates, and tasks/logs reflect actual completion._

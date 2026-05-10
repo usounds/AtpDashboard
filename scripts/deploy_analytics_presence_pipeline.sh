@@ -89,7 +89,8 @@ echo "[presence-deploy] final target state:"
 echo "  AnalyticsPresencePipeline.timer: enabled, OnCalendar=*:17, Persistent=false"
 echo "  AnalyticsChartsRefresh.timer: disabled"
 echo "  AnalyticsHourlyNewRefresh.timer: disabled"
-echo "  CollectionCountRefresh.timer: stays disabled until its full-scan refresh is replaced"
+echo "  CollectionCountRefresh.timer: disabled"
+echo "  CollectionCountReadModelRefresh.timer: disabled"
 echo "  API/frontend: unchanged, reads analytics_chart_snapshot"
 echo "  source: presence event source ordered by ingested_at; scheduled path does not use uniqExactMerge or broad raw scans"
 echo "[presence-deploy] run_id=$RUN_ID periodic=$PERIODIC"
@@ -193,8 +194,8 @@ if [[ "$PERIODIC" != true ]]; then
   "${SUDO[@]}" systemctl daemon-reload
 
   echo "[presence-deploy] disabling legacy analytics timers"
-  "${SUDO[@]}" systemctl stop AnalyticsChartsRefresh.timer AnalyticsChartsRefresh.service AnalyticsHourlyNewRefresh.timer AnalyticsHourlyNewRefresh.service CollectionCountRefresh.timer CollectionCountRefresh.service 2>/dev/null || true
-  "${SUDO[@]}" systemctl disable AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer 2>/dev/null || true
+  "${SUDO[@]}" systemctl stop AnalyticsChartsRefresh.timer AnalyticsChartsRefresh.service AnalyticsHourlyNewRefresh.timer AnalyticsHourlyNewRefresh.service CollectionCountRefresh.timer CollectionCountRefresh.service CollectionCountReadModelRefresh.timer CollectionCountReadModelRefresh.service 2>/dev/null || true
+  "${SUDO[@]}" systemctl disable AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer CollectionCountReadModelRefresh.timer 2>/dev/null || true
 
   echo "[presence-deploy] enabling presence timer"
   "${SUDO[@]}" systemctl enable --now AnalyticsPresencePipeline.timer
@@ -204,7 +205,7 @@ if [[ "$PERIODIC" != true ]]; then
   "${SUDO[@]}" systemctl --no-pager list-timers 'Analytics*' 'Collection*'
   "${SUDO[@]}" systemctl --no-pager --failed
 
-  active_legacy="$("${SUDO[@]}" systemctl is-enabled AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer 2>/dev/null | grep -c '^enabled$' || true)"
+  active_legacy="$("${SUDO[@]}" systemctl is-enabled AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer CollectionCountReadModelRefresh.timer 2>/dev/null | grep -c '^enabled$' || true)"
   presence_enabled="$("${SUDO[@]}" systemctl is-enabled AnalyticsPresencePipeline.timer 2>/dev/null || true)"
   if [[ "$active_legacy" != "0" || "$presence_enabled" != "enabled" ]]; then
     echo "[presence-deploy] final timer state check failed legacy_enabled=$active_legacy presence_enabled=$presence_enabled" >&2

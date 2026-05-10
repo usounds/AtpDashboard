@@ -1,5 +1,5 @@
 [Unit]
-Description=AtpDashboard ClickHouse collection_count snapshot refresh
+Description=LEGACY DISABLED-ONLY AtpDashboard ClickHouse collection_count full snapshot refresh
 After=network.target
 
 [Service]
@@ -7,6 +7,6 @@ Type=oneshot
 User=root
 WorkingDirectory=/srv/AtpDashboard
 EnvironmentFile=-/etc/atpdashboard/clickhouse.env
-ExecStart=pnpm refresh:collection-count -- --confirm-production --stale-running-minutes 60 --recent-hours 72
+ExecStart=pnpm refresh:collection-count-legacy -- --confirm-production --stale-running-minutes 60 --recent-hours 72
 StandardOutput=append:/var/log/CollectionCountRefresh.log
 StandardError=append:/var/log/CollectionCountRefresh.log

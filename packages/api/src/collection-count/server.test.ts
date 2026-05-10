@@ -137,9 +137,12 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), '');
   assert.equal(response.headers.get('X-Snapshot-Refresh-Id'), '00000000-0000-4000-8000-000000000001');
-  assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_refresh_manifest/);
+  assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_refresh_manifest_v2/);
+  assert.match(capturedQueries.join('\n'), /valid_completed_all/);
+  assert.match(capturedQueries.join('\n'), /latest_valid_completed/);
   assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_snapshot/);
   assert.doesNotMatch(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_events/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /WHERE status = 'completed'[\s\S]*ORDER BY completed_at DESC/);
   assert.deepEqual(body, [
     {
       collection: 'app.example.post',
@@ -343,6 +346,66 @@ test('clickhouse-only request returns committed read model rows without fallback
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), 'stale_snapshot');
   assert.deepEqual(body, []);
+});
+
+test('clickhouse-only collection_count_view returns 503 when no valid completed manifest exists', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [] as T;
+            },
+          };
+        },
+      },
+      fetch: createJsonFetch(postgrestRows),
+    },
+  );
+
+  const response = await app.request('/api/analytics/collection_count_view', {
+    headers: {
+      'X-Disable-Fallback': 'true',
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('X-Data-Source'), 'unavailable');
+  assert.equal(response.headers.get('X-Fallback-Reason'), 'clickhouse_error');
+  assert.equal(body.error, 'unavailable');
+});
+
+test('collection_stats returns 503 when no valid completed manifest exists', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/collection_stats?collection=app.example.post');
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('X-Data-Source'), 'unavailable');
+  assert.equal(body.error, 'No completed collection_count refresh is available');
 });
 
 test('returns 503 when ClickHouse and fallback both fail', async () => {
@@ -943,7 +1006,7 @@ test('serves cached unique DID count endpoint from ClickHouse', async () => {
 
 test('serves cached collection_stats endpoint from ClickHouse', async () => {
   let queryCount = 0;
-  let capturedQuery = '';
+  const capturedQueries: string[] = [];
   let capturedParams: Record<string, unknown> | undefined;
   const app = createCollectionCountApp(
     {
@@ -954,11 +1017,17 @@ test('serves cached collection_stats endpoint from ClickHouse', async () => {
       clickhouse: {
         async query(params) {
           queryCount += 1;
-          capturedQuery = params.query;
+          capturedQueries.push(params.query);
           capturedParams = params.query_params;
-          return {
-            async json<T>() {
-              return [
+          const rows = params.query.includes('collection_count_refresh_manifest_v2')
+            ? [
+                {
+                  refresh_id: '00000000-0000-4000-8000-000000000042',
+                  completed_at: new Date().toISOString(),
+                  row_count: 1,
+                },
+              ]
+            : [
                 {
                   collection: 'app.example.post',
                   unique_did: 12,
@@ -967,7 +1036,10 @@ test('serves cached collection_stats endpoint from ClickHouse', async () => {
                   unique_rkey: 34,
                   total_count: 56,
                 },
-              ] as T;
+              ];
+          return {
+            async json<T>() {
+              return rows as T;
             },
           };
         },
@@ -983,12 +1055,18 @@ test('serves cached collection_stats endpoint from ClickHouse', async () => {
   assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
-  assert.equal(queryCount, 1);
-  assert.match(capturedQuery, /FROM atp_dashboard\.collection_events/);
-  assert.match(capturedQuery, /uniqExact\(did\) AS unique_did/);
-  assert.match(capturedQuery, /uniqExact\(tuple\(did, collection, rkey\)\) AS unique_rkey/);
-  assert.doesNotMatch(capturedQuery, /collection_count_snapshot/);
-  assert.deepEqual(capturedParams, { collection: 'app.example.post' });
+  assert.equal(queryCount, 2);
+  assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_refresh_manifest_v2/);
+  assert.match(capturedQueries.join('\n'), /valid_completed_all/);
+  assert.match(capturedQueries.join('\n'), /latest_valid_completed/);
+  assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_snapshot/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_events/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_did_first_seen_snapshot/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /WHERE status = 'completed'[\s\S]*ORDER BY completed_at DESC/);
+  assert.deepEqual(capturedParams, {
+    refresh_id: '00000000-0000-4000-8000-000000000042',
+    collection: 'app.example.post',
+  });
   assert.deepEqual(body, [
     {
       collection: 'app.example.post',
@@ -1003,7 +1081,7 @@ test('serves cached collection_stats endpoint from ClickHouse', async () => {
 
 test('serves cached collection_cumulative_users endpoint from ClickHouse', async () => {
   let queryCount = 0;
-  let capturedQuery = '';
+  const capturedQueries: string[] = [];
   let capturedParams: Record<string, unknown> | undefined;
   const app = createCollectionCountApp(
     {
@@ -1014,14 +1092,23 @@ test('serves cached collection_cumulative_users endpoint from ClickHouse', async
       clickhouse: {
         async query(params) {
           queryCount += 1;
-          capturedQuery = params.query;
+          capturedQueries.push(params.query);
           capturedParams = params.query_params;
-          return {
-            async json<T>() {
-              return [
+          const rows = params.query.includes('collection_count_refresh_manifest_v2')
+            ? [
+                {
+                  refresh_id: '00000000-0000-4000-8000-000000000043',
+                  completed_at: new Date().toISOString(),
+                  row_count: 1,
+                },
+              ]
+            : [
                 { date: '2026-05-08', day_offset: -1, new: 3, cumulative: 3 },
                 { date: '2026-05-09', day_offset: 0, new: 2, cumulative: 5 },
-              ] as T;
+              ];
+          return {
+            async json<T>() {
+              return rows as T;
             },
           };
         },
@@ -1037,17 +1124,17 @@ test('serves cached collection_cumulative_users endpoint from ClickHouse', async
   assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
-  assert.equal(queryCount, 1);
-  assert.match(capturedQuery, /latest_snapshot AS/);
-  assert.match(capturedQuery, /FROM atp_dashboard\.collection_count_snapshot/);
-  assert.match(capturedQuery, /FROM atp_dashboard\.collection_did_first_seen_snapshot/);
-  assert.match(capturedQuery, /\(SELECT max_created_at FROM latest_snapshot\) AS latest_at/);
-  assert.match(capturedQuery, /AS baseline_users/);
-  assert.match(capturedQuery, /first_seen_at <= window_start_at/);
-  assert.match(capturedQuery, /baseline_users \+ sum\(new\) OVER/);
-  assert.match(capturedQuery, /sum\(new\) OVER/);
-  assert.doesNotMatch(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.equal(queryCount, 2);
+  assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_refresh_manifest_v2/);
+  assert.match(capturedQueries.join('\n'), /valid_completed_all/);
+  assert.match(capturedQueries.join('\n'), /latest_valid_completed/);
+  assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_cumulative_users_snapshot/);
+  assert.match(capturedQueries.join('\n'), /LIMIT 365/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_events/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_did_first_seen_snapshot/);
+  assert.doesNotMatch(capturedQueries.join('\n'), /WHERE status = 'completed'[\s\S]*ORDER BY completed_at DESC/);
   assert.deepEqual(capturedParams, {
+    refresh_id: '00000000-0000-4000-8000-000000000043',
     collection: 'app.example.post',
     days: 30,
     bucket_days: 1,
@@ -1081,12 +1168,21 @@ test('serves yearly collection_cumulative_users endpoint with 30 day buckets', a
       clickhouse: {
         async query(params) {
           capturedParams = params.query_params;
-          return {
-            async json<T>() {
-              return [
+          const rows = params.query.includes('collection_count_refresh_manifest_v2')
+            ? [
+                {
+                  refresh_id: '00000000-0000-4000-8000-000000000044',
+                  completed_at: new Date().toISOString(),
+                  row_count: 1,
+                },
+              ]
+            : [
                 { date: '2025-05-15', day_offset: -360, new: 12, cumulative: 12 },
                 { date: '2026-05-10', day_offset: 0, new: 24, cumulative: 512 },
-              ] as T;
+              ];
+          return {
+            async json<T>() {
+              return rows as T;
             },
           };
         },
@@ -1099,6 +1195,7 @@ test('serves yearly collection_cumulative_users endpoint with 30 day buckets', a
 
   assert.equal(response.status, 200);
   assert.deepEqual(capturedParams, {
+    refresh_id: '00000000-0000-4000-8000-000000000044',
     collection: 'app.example.post',
     days: 365,
     bucket_days: 30,

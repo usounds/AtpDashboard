@@ -17,7 +17,7 @@
 APIとtoolsは、原則としてDockerコンテナ化しなくてよい。
 
 - `packages/api`: Node.jsの常駐プロセスとして起動する。自サーバーではsystemdで管理する。
-- `packages/clickhouse-tools`: 常駐サービスではなくCLIである。systemd timerまたはcronから `pnpm backfill:collection-events` や `pnpm refresh:collection-count` を定期実行する。
+- `packages/clickhouse-tools`: 常駐サービスではなくCLIである。systemd timerから `pnpm backfill:collection-events` と、cutover後の `pnpm refresh:collection-count-incremental` を定期実行する。
 - Postgres: 既存の本番Postgresを使う。ローカル検証ではDockerでよい。
 - ClickHouse: 本番では別VMまたは専用プロセスとして運用する。ローカル検証ではDockerでよい。
 
@@ -60,7 +60,7 @@ POSTGRES_URL=postgres://sync_user:REDACTED@127.0.0.1:5432/atpdashboard \
 ```bash
 CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
   CLICKHOUSE_DATABASE=atp_dashboard \
-  pnpm refresh:collection-count -- --dry-run
+  pnpm --filter @atpdashboard/clickhouse-tools refresh:collection-count-incremental -- --dry-run
 ```
 
 ## 本番既定化判定用の推奨実行間隔
@@ -124,23 +124,25 @@ checkpoint境界:
 - checkpoint更新はClickHouse insert成功後にだけ行う。
 - 同一 `createdAt` 行を取りこぼさないため、`createdAt` 単独watermarkに戻してはいけない。
 
-### 2. スナップショット更新
+### 2. collection_count incremental 更新
 
-スナップショット更新は `collection_events` から `collection_count_snapshot` を作り、成功後のみ `collection_count_refresh_manifest.status = completed` を記録する。
+collection_count 更新は queue/existence log から bounded に処理し、成功後だけ `collection_count_refresh_manifest_v2` の valid completed manifest を記録する。旧 full-refresh の `refresh:collection-count-legacy`、`CollectionCountRefresh.timer`、`CollectionCountReadModelRefresh.timer` は通常運用では使わない。
 
 ```bash
 CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
   CLICKHOUSE_DATABASE=atp_dashboard \
-  pnpm refresh:collection-count -- \
+  pnpm --filter @atpdashboard/clickhouse-tools refresh:collection-count-incremental -- \
     --confirm-production \
-    --stale-running-minutes 60 \
-    --recent-hours 72
+    --safety-lag-seconds 300 \
+    --max-rows 500000 \
+    --max-queued-at-span-seconds 600 \
+    --max-estimated-bytes 536870912
 ```
 
 推奨頻度:
 
 ```text
-*/15 * * * * collection_count snapshot refresh
+*:08/10 collection_count incremental refresh
 ```
 
 本番既定化判定では、`SNAPSHOT_MAX_AGE_SECONDS=1800` を前提に、スナップショット経過時間が30分を超えないことを観測する。
@@ -200,24 +202,24 @@ WantedBy=timers.target
 
 ```ini
 [Unit]
-Description=AtpDashboard ClickHouse collection_count snapshot refresh
+Description=AtpDashboard ClickHouse collection_count incremental refresh
 
 [Service]
 Type=oneshot
-WorkingDirectory=/srv/AtpDashboard
+WorkingDirectory=/srv/AtpDashboard/packages/clickhouse-tools
 EnvironmentFile=/etc/atpdashboard/clickhouse.env
-ExecStart=/usr/bin/pnpm refresh:collection-count -- --confirm-production --stale-running-minutes 60 --recent-hours 72
+ExecStart=/usr/bin/flock -n /run/atpdashboard-collection-count-incremental.lock /usr/bin/pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows 500000 --max-queued-at-span-seconds 600 --max-estimated-bytes 536870912
 ```
 
 スナップショット更新timer例:
 
 ```ini
 [Unit]
-Description=Run AtpDashboard ClickHouse collection_count snapshot refresh every 15 minutes, staggered
+Description=Run AtpDashboard ClickHouse collection_count incremental refresh every 10 minutes, staggered
 
 [Timer]
-OnCalendar=*:3/15
-Persistent=true
+OnCalendar=*:08/10
+Persistent=false
 
 [Install]
 WantedBy=timers.target
@@ -257,7 +259,7 @@ cronで運用する場合も、最初はコメントアウトした状態でレ�
 ```cron
 # */10 * * * * cd /srv/AtpDashboard && set -a && . /etc/atpdashboard/clickhouse.env && set +a && pnpm backfill:collection-events -- --confirm-production --max-runtime-minutes 10 --max-rows 500000 --batch-size 50000 --lock-ttl-seconds 900
 # */10 * * * * cd /srv/AtpDashboard && set -a && . /etc/atpdashboard/clickhouse.env && set +a && pnpm backfill:collection-events -- --confirm-production --rescan-days 1 --max-rows 500000 --batch-size 50000 --lock-ttl-seconds 900
-# */15 * * * * cd /srv/AtpDashboard && set -a && . /etc/atpdashboard/clickhouse.env && set +a && pnpm refresh:collection-count -- --confirm-production --stale-running-minutes 60 --recent-hours 72
+# */10 * * * * cd /srv/AtpDashboard/packages/clickhouse-tools && set -a && . /etc/atpdashboard/clickhouse.env && set +a && flock -n /run/atpdashboard-collection-count-incremental.lock pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows 500000 --max-queued-at-span-seconds 600 --max-estimated-bytes 536870912
 # */30 * * * * cd /srv/AtpDashboard && pnpm compare:collection-count -- --clickhouse-only --postgres-url https://collectiondata.usounds.work/collection_count_view --clickhouse-url https://collectiondata.usounds.work/api/analytics/collection_count_view --json-out reports/collection-count-compare-latest.json --markdown-out reports/collection-count-compare-latest.md
 ```
 

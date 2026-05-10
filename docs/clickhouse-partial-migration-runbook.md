@@ -138,8 +138,8 @@ packages/clickhouse-tools/CollectionEventsSync.service
 packages/clickhouse-tools/CollectionEventsSync.timer
 packages/clickhouse-tools/CollectionEventsRescan.service
 packages/clickhouse-tools/CollectionEventsRescan.timer
-packages/clickhouse-tools/CollectionCountRefresh.service
-packages/clickhouse-tools/CollectionCountRefresh.timer
+packages/clickhouse-tools/CollectionCountIncrementalRefresh.service
+packages/clickhouse-tools/CollectionCountIncrementalRefresh.timer
 packages/clickhouse-tools/AnalyticsHourlyNewRefresh.service
 packages/clickhouse-tools/AnalyticsHourlyNewRefresh.timer
 packages/clickhouse-tools/CollectionCountCompare.service
@@ -161,8 +161,8 @@ sudo cp packages/clickhouse-tools/CollectionEventsSync.service /etc/systemd/syst
 sudo cp packages/clickhouse-tools/CollectionEventsSync.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionEventsRescan.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionEventsRescan.timer /etc/systemd/system/
-sudo cp packages/clickhouse-tools/CollectionCountRefresh.service /etc/systemd/system/
-sudo cp packages/clickhouse-tools/CollectionCountRefresh.timer /etc/systemd/system/
+sudo cp packages/clickhouse-tools/CollectionCountIncrementalRefresh.service /etc/systemd/system/
+sudo cp packages/clickhouse-tools/CollectionCountIncrementalRefresh.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/AnalyticsHourlyNewRefresh.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/AnalyticsHourlyNewRefresh.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/AnalyticsChartsRefresh.service /etc/systemd/system/
@@ -186,12 +186,13 @@ sudo systemctl status AtpDashboardAnalyticsApi.service
 ```bash
 sudo systemctl enable --now CollectionEventsSync.timer
 sudo systemctl enable --now CollectionEventsRescan.timer
-sudo systemctl enable --now CollectionCountRefresh.timer
 sudo systemctl enable --now AnalyticsHourlyNewRefresh.timer
 sudo systemctl enable --now AnalyticsChartsRefresh.timer
 sudo systemctl enable --now CollectionCountCompare.timer
 sudo systemctl list-timers 'Collection*' 'Analytics*'
 ```
+
+`CollectionCountIncrementalRefresh.timer` は migration deploy が dual-write、bootstrap、repair/catch-up、API検証、retention gate を通した後だけ有効化する。旧 `CollectionCountRefresh.timer` と `CollectionCountReadModelRefresh.timer` は通常運用では有効化しない。
 
 ```ini
 [Unit]
@@ -388,26 +389,9 @@ POSTGRES_URL=postgres://sync_user:REDACTED@127.0.0.1:5432/atpdashboard \
     --limit 100000
 ```
 
-## スナップショット再作成
+## collection_count read model 更新
 
-dry-run:
-
-```bash
-CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
-  CLICKHOUSE_DATABASE=atp_dashboard \
-  pnpm refresh:collection-count -- --dry-run
-```
-
-実行:
-
-```bash
-CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
-  CLICKHOUSE_DATABASE=atp_dashboard \
-pnpm refresh:collection-count -- \
-    --confirm-production \
-    --stale-running-minutes 60 \
-    --recent-hours 72
-```
+旧 full-refresh の `pnpm refresh:collection-count -- --stale-running-minutes ...` と `CollectionCountRefresh.timer` は通常運用では使わない。collection count の更新は、incremental migration deploy が全ゲートを通した後に `CollectionCountIncrementalRefresh.timer` で実行する。
 
 analytics chart snapshot も初回デプロイ時に手動更新する:
 
@@ -428,7 +412,7 @@ CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
 ```bash
 curl 'http://127.0.0.1:8123/' --data-binary '
 SELECT refresh_id, status, row_count, started_at, completed_at, error_message
-FROM atp_dashboard.collection_count_refresh_manifest
+FROM atp_dashboard.collection_count_refresh_manifest_v2
 ORDER BY updated_at DESC
 LIMIT 5
 '
