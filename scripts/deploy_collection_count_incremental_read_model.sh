@@ -361,10 +361,10 @@ run_all_api_checks() {
   log "checking local/public API endpoints for collection=$SAMPLE_COLLECTION"
   http_check_json "local collection_count_view" "$LOCAL_API_BASE_URL/collection_count_view" array true
   http_check_json "local collection_stats" "$LOCAL_API_BASE_URL/collection_stats?collection=$encoded_collection" array true
-  http_check_json "local collection_cumulative_users" "$LOCAL_API_BASE_URL/collection_cumulative_users?collection=$encoded_collection&days=30" array true
+  http_check_json "local collection_cumulative_users" "$LOCAL_API_BASE_URL/collection_cumulative_users?collection=$encoded_collection&days=30" object true
   http_check_json "public collection_count_view" "$PUBLIC_API_BASE_URL/collection_count_view" array true
   http_check_json "public collection_stats" "$PUBLIC_API_BASE_URL/collection_stats?collection=$encoded_collection" array true
-  http_check_json "public collection_cumulative_users" "$PUBLIC_API_BASE_URL/collection_cumulative_users?collection=$encoded_collection&days=30" array true
+  http_check_json "public collection_cumulative_users" "$PUBLIC_API_BASE_URL/collection_cumulative_users?collection=$encoded_collection&days=30" object true
 }
 
 assert_unit_disabled_inactive() {
