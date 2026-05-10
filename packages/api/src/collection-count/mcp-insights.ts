@@ -74,6 +74,21 @@ export type UniqueDidCountRow = {
   unique_did_count: number;
 };
 
+export type AnalyticsChartSnapshotRow = {
+  date: string;
+  day_offset: number;
+  active: number;
+  new: number;
+  count: number;
+};
+
+export type AnalyticsChartSnapshotResult = {
+  refreshId: string;
+  refreshedAt: string;
+  snapshotAgeSeconds: number;
+  rows: AnalyticsChartSnapshotRow[];
+};
+
 export type LatestCollectionRecordPointer = {
   collection: string;
   created_at: string;
@@ -115,6 +130,17 @@ type RawEventCountRow = {
 
 type RawUniqueDidCountRow = {
   unique_did_count: string | number;
+};
+
+type RawAnalyticsChartSnapshotRow = {
+  refresh_id: string;
+  refreshed_at: string;
+  snapshot_age_seconds: string | number;
+  date: string;
+  day_offset: string | number;
+  active: string | number;
+  new: string | number;
+  count: string | number;
 };
 
 type RawNamespaceCollectionRow = {
@@ -218,6 +244,67 @@ export async function readThroughMcpCache<T>(
     cache.delete(key);
     throw error;
   }
+}
+
+export async function readAnalyticsChartSnapshotFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: { tool: string; days: number; bucketDays: number },
+): Promise<AnalyticsChartSnapshotResult> {
+  const result = await withTimeout(
+    client.query({
+      query: `
+WITH latest_refresh AS
+(
+  SELECT refresh_id
+  FROM atp_dashboard.analytics_chart_refresh_manifest
+  WHERE status = 'completed'
+  ORDER BY completed_at DESC
+  LIMIT 1
+)
+SELECT
+  toString(snapshot.refresh_id) AS refresh_id,
+  formatDateTime(snapshot.refreshed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS refreshed_at,
+  greatest(0, dateDiff('second', snapshot.refreshed_at, now64(3, 'UTC'))) AS snapshot_age_seconds,
+  toString(snapshot.date) AS date,
+  snapshot.day_offset AS day_offset,
+  snapshot.active AS active,
+  snapshot.new AS new,
+  snapshot.count AS count
+FROM atp_dashboard.analytics_chart_snapshot snapshot
+INNER JOIN latest_refresh USING refresh_id
+WHERE snapshot.tool = {tool:String}
+  AND snapshot.days = {days:UInt16}
+  AND snapshot.bucket_days = {bucket_days:UInt8}
+ORDER BY snapshot.bucket_index DESC
+`,
+      query_params: {
+        tool: params.tool,
+        days: params.days,
+        bucket_days: params.bucketDays,
+      },
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse analytics chart snapshot query timed out',
+  );
+  const rows = await result.json<RawAnalyticsChartSnapshotRow[]>();
+  if (rows.length === 0) {
+    throw new Error('analytics chart snapshot is unavailable');
+  }
+
+  return {
+    refreshId: rows[0].refresh_id,
+    refreshedAt: rows[0].refreshed_at,
+    snapshotAgeSeconds: Number(rows[0].snapshot_age_seconds),
+    rows: rows.map((row) => ({
+      date: row.date,
+      day_offset: Number(row.day_offset),
+      active: Number(row.active),
+      new: Number(row.new),
+      count: Number(row.count),
+    })),
+  };
 }
 
 export async function readNewCollectionsFromClickHouse(

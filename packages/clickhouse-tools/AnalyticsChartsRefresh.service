@@ -1,0 +1,12 @@
+[Unit]
+Description=AtpDashboard ClickHouse analytics chart snapshot refresh
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+ExecStart=pnpm refresh:analytics-charts -- --confirm-production --stale-running-minutes 60
+StandardOutput=append:/var/log/AnalyticsChartsRefresh.log
+StandardError=append:/var/log/AnalyticsChartsRefresh.log

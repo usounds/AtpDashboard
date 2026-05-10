@@ -6,6 +6,7 @@
   "scripts": {
     "backfill:collection-events": "node --experimental-strip-types src/backfill-collection-events.ts",
     "compare:collection-count": "node --experimental-strip-types src/compare-collection-count-view.ts",
+    "refresh:analytics-charts": "node --experimental-strip-types src/refresh-analytics-chart-snapshot.ts",
     "refresh:collection-count": "node --experimental-strip-types src/refresh-collection-count-snapshot.ts",
     "test": "node --test src/*.test.ts"
   },

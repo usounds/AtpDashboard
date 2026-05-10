@@ -4,6 +4,7 @@ import {
   parseDailyChartBucketDays,
   parseMcpDailyUserDays,
   parseMcpDateRange,
+  readAnalyticsChartSnapshotFromClickHouse,
   readCollectionsForNamespaceFromClickHouse,
   readDailyCollectionsFromClickHouse,
   readDailyUsersFromClickHouse,
@@ -199,6 +200,102 @@ test('reads event counts as rolling bucket series', async () => {
       count: 12345,
     },
   ]);
+});
+
+test('reads analytics chart snapshot rows from latest completed refresh', async () => {
+  let capturedQuery = '';
+  let capturedQueryParams: Record<string, unknown> = {};
+  const client: ClickHouseQueryClient = {
+    async query(queryParams) {
+      capturedQuery = queryParams.query;
+      capturedQueryParams = queryParams.query_params ?? {};
+      return {
+        async json<T>() {
+          return [
+            {
+              refresh_id: '00000000-0000-4000-8000-000000000001',
+              refreshed_at: '2026-05-10T02:00:00.000Z',
+              snapshot_age_seconds: 180,
+              date: '2026-05-09',
+              day_offset: -1,
+              active: 452,
+              new: 18,
+              count: 12000,
+            },
+            {
+              refresh_id: '00000000-0000-4000-8000-000000000001',
+              refreshed_at: '2026-05-10T02:00:00.000Z',
+              snapshot_age_seconds: 180,
+              date: '2026-05-10',
+              day_offset: 0,
+              active: 489,
+              new: 31,
+              count: 13500,
+            },
+          ] as T;
+        },
+      };
+    },
+  };
+
+  const result = await readAnalyticsChartSnapshotFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, {
+    tool: 'daily_collections',
+    days: 30,
+    bucketDays: 1,
+  });
+
+  assert.match(capturedQuery, /analytics_chart_refresh_manifest/);
+  assert.match(capturedQuery, /analytics_chart_snapshot/);
+  assert.match(capturedQuery, /status = 'completed'/);
+  assert.match(capturedQuery, /ORDER BY snapshot\.bucket_index DESC/);
+  assert.deepEqual(capturedQueryParams, {
+    tool: 'daily_collections',
+    days: 30,
+    bucket_days: 1,
+  });
+  assert.deepEqual(result, {
+    refreshId: '00000000-0000-4000-8000-000000000001',
+    refreshedAt: '2026-05-10T02:00:00.000Z',
+    snapshotAgeSeconds: 180,
+    rows: [
+      {
+        date: '2026-05-09',
+        day_offset: -1,
+        active: 452,
+        new: 18,
+        count: 12000,
+      },
+      {
+        date: '2026-05-10',
+        day_offset: 0,
+        active: 489,
+        new: 31,
+        count: 13500,
+      },
+    ],
+  });
+});
+
+test('rejects missing analytics chart snapshot', async () => {
+  const client: ClickHouseQueryClient = {
+    async query() {
+      return {
+        async json<T>() {
+          return [] as T;
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      readAnalyticsChartSnapshotFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, {
+        tool: 'daily_users',
+        days: 7,
+        bucketDays: 1,
+      }),
+    /analytics chart snapshot is unavailable/,
+  );
 });
 
 test('reads unique DID count from ClickHouse', async () => {

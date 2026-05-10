@@ -448,7 +448,7 @@ test('serves cached daily collections chart endpoint from ClickHouse', async () 
           queryCount += 1;
           return {
             async json<T>() {
-              return [
+              return snapshotRows([
                 {
                   date: '2026-05-08',
                   day_offset: -1,
@@ -461,7 +461,7 @@ test('serves cached daily collections chart endpoint from ClickHouse', async () 
                   active: 489,
                   new: 31,
                 },
-              ] as T;
+              ]) as T;
             },
           };
         },
@@ -474,9 +474,11 @@ test('serves cached daily collections chart endpoint from ClickHouse', async () 
   const body = await second.json();
 
   assert.equal(first.status, 200);
-  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse_snapshot');
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(first.headers.get('X-Cache-Ttl-Seconds'), '600');
+  assert.equal(first.headers.get('X-Snapshot-Refresh-Id'), '00000000-0000-4000-8000-000000000001');
+  assert.equal(first.headers.get('X-Snapshot-Age-Seconds'), '180');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
   assert.deepEqual(body, {
@@ -504,6 +506,11 @@ test('serves cached daily collections chart endpoint from ClickHouse', async () 
       key: 'daily_collections:days=30:bucket_days=1',
       ttl_seconds: 600,
     },
+    snapshot: {
+      refresh_id: '00000000-0000-4000-8000-000000000001',
+      refreshed_at: '2026-05-10T02:00:00.000Z',
+      age_seconds: 180,
+    },
   });
 });
 
@@ -518,7 +525,7 @@ test('serves daily users chart endpoint from ClickHouse', async () => {
         async query() {
           return {
             async json<T>() {
-              return [
+              return snapshotRows([
                 {
                   date: '2026-05-03',
                   day_offset: -6,
@@ -531,7 +538,7 @@ test('serves daily users chart endpoint from ClickHouse', async () => {
                   active: 4265,
                   new: 410,
                 },
-              ] as T;
+              ]) as T;
             },
           };
         },
@@ -543,7 +550,7 @@ test('serves daily users chart endpoint from ClickHouse', async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(response.headers.get('X-Data-Source'), 'clickhouse_snapshot');
   assert.deepEqual(body.rows, [
     {
       date: '2026-05-03',
@@ -564,6 +571,33 @@ test('serves daily users chart endpoint from ClickHouse', async () => {
   });
 });
 
+test('returns 503 when analytics chart snapshot is unavailable', async () => {
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/daily_users?days=7');
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('X-Data-Source'), 'unavailable');
+  assert.deepEqual(body, { error: 'analytics chart snapshot is unavailable' });
+});
+
 test('serves yearly daily chart endpoint as 30 day buckets', async () => {
   let queryParams: Record<string, unknown> | null = null;
   const app = createCollectionCountApp(
@@ -577,7 +611,7 @@ test('serves yearly daily chart endpoint as 30 day buckets', async () => {
           queryParams = params.query_params as Record<string, unknown>;
           return {
             async json<T>() {
-              return [
+              return snapshotRows([
                 {
                   date: '2025-05-14',
                   day_offset: -360,
@@ -590,7 +624,7 @@ test('serves yearly daily chart endpoint as 30 day buckets', async () => {
                   active: 150,
                   new: 12,
                 },
-              ] as T;
+              ]) as T;
             },
           };
         },
@@ -602,6 +636,7 @@ test('serves yearly daily chart endpoint as 30 day buckets', async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Cache-Ttl-Seconds'), '600');
   assert.deepEqual(body.parameters, {
     days: 365,
     bucket_days: 30,
@@ -621,10 +656,19 @@ test('serves yearly daily chart endpoint as 30 day buckets', async () => {
     },
   ]);
   assert.deepEqual(queryParams, {
+    tool: 'daily_users',
     days: 365,
-    bucket_count: 13,
     bucket_days: 30,
-    bucket_seconds: 2592000,
+  });
+  assert.deepEqual(body.cache, {
+    status: 'MISS',
+    key: 'daily_users:days=365:bucket_days=30',
+    ttl_seconds: 600,
+  });
+  assert.deepEqual(body.snapshot, {
+    refresh_id: '00000000-0000-4000-8000-000000000001',
+    refreshed_at: '2026-05-10T02:00:00.000Z',
+    age_seconds: 180,
   });
 });
 
@@ -641,7 +685,7 @@ test('serves cached event counts chart endpoint from ClickHouse', async () => {
           queryCount += 1;
           return {
             async json<T>() {
-              return [
+              return snapshotRows([
                 {
                   date: '2026-05-08',
                   day_offset: -1,
@@ -652,7 +696,7 @@ test('serves cached event counts chart endpoint from ClickHouse', async () => {
                   day_offset: 0,
                   count: 13500,
                 },
-              ] as T;
+              ]) as T;
             },
           };
         },
@@ -665,7 +709,7 @@ test('serves cached event counts chart endpoint from ClickHouse', async () => {
   const body = await second.json();
 
   assert.equal(first.status, 200);
-  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse_snapshot');
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
@@ -692,6 +736,11 @@ test('serves cached event counts chart endpoint from ClickHouse', async () => {
       key: 'event_counts:days=30:bucket_days=1',
       ttl_seconds: 600,
     },
+    snapshot: {
+      refresh_id: '00000000-0000-4000-8000-000000000001',
+      refreshed_at: '2026-05-10T02:00:00.000Z',
+      age_seconds: 180,
+    },
   });
 });
 
@@ -708,7 +757,7 @@ test('serves yearly event counts as 30 day buckets', async () => {
           queryParams = params.query_params as Record<string, unknown>;
           return {
             async json<T>() {
-              return [
+              return snapshotRows([
                 {
                   date: '2025-05-14',
                   day_offset: -360,
@@ -719,7 +768,7 @@ test('serves yearly event counts as 30 day buckets', async () => {
                   day_offset: 0,
                   count: 150000,
                 },
-              ] as T;
+              ]) as T;
             },
           };
         },
@@ -731,6 +780,7 @@ test('serves yearly event counts as 30 day buckets', async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Cache-Ttl-Seconds'), '600');
   assert.deepEqual(body.parameters, {
     days: 365,
     bucket_days: 30,
@@ -748,10 +798,19 @@ test('serves yearly event counts as 30 day buckets', async () => {
     },
   ]);
   assert.deepEqual(queryParams, {
+    tool: 'event_counts',
     days: 365,
-    bucket_count: 13,
     bucket_days: 30,
-    bucket_seconds: 2592000,
+  });
+  assert.deepEqual(body.cache, {
+    status: 'MISS',
+    key: 'event_counts:days=365:bucket_days=30',
+    ttl_seconds: 600,
+  });
+  assert.deepEqual(body.snapshot, {
+    refresh_id: '00000000-0000-4000-8000-000000000001',
+    refreshed_at: '2026-05-10T02:00:00.000Z',
+    age_seconds: 180,
   });
 });
 
@@ -1652,6 +1711,21 @@ test('serves MCP get_latest_record_for_collection invalid collection as invalid 
   assert.equal(body.error.code, -32602);
   assert.equal(body.error.message, 'collection must be a non-empty string');
 });
+
+function snapshotRows(
+  rows: Array<{ date: string; day_offset: number; active?: number; new?: number; count?: number }>,
+): Array<Record<string, string | number>> {
+  return rows.map((row) => ({
+    refresh_id: '00000000-0000-4000-8000-000000000001',
+    refreshed_at: '2026-05-10T02:00:00.000Z',
+    snapshot_age_seconds: 180,
+    date: row.date,
+    day_offset: row.day_offset,
+    active: row.active ?? 0,
+    new: row.new ?? 0,
+    count: row.count ?? 0,
+  }));
+}
 
 function createFakeClickHouse(params: { refreshRows: unknown[]; snapshotRows: unknown[]; dailyRows?: unknown[] }): ClickHouseQueryClient {
   return {

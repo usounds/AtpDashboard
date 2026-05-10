@@ -23,14 +23,15 @@ import {
   parseDailyChartBucketDays,
   parseMcpDateRange,
   parseMcpDailyUserDays,
+  readAnalyticsChartSnapshotFromClickHouse,
   readLatestCollectionRecordPointerFromClickHouse,
   readCollectionsForNamespaceFromClickHouse,
   readDailyCollectionsFromClickHouse,
   readDailyUsersFromClickHouse,
-  readEventCountsFromClickHouse,
   readNewCollectionsFromClickHouse,
   readThroughMcpCache,
   readUniqueDidCountFromClickHouse,
+  type AnalyticsChartSnapshotResult,
   type DailyCollectionRow,
   type DailyChartBucketParams,
   type DailyUserRow,
@@ -85,6 +86,11 @@ type DailyChartResult = {
   rows: DailyUserRow[] | DailyCollectionRow[] | EventCountRow[];
   cacheKey: string;
   cacheStatus: McpCacheStatus;
+  snapshot: {
+    refreshId: string;
+    refreshedAt: string;
+    ageSeconds: number;
+  };
   params: Required<DailyChartBucketParams>;
   tool: DailyChartTool;
 };
@@ -582,20 +588,24 @@ async function resolveDailyChart(params: {
   }
 
   const cacheKey = buildDailyChartCacheKey(params.tool, params.params);
-  const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () => {
-    if (params.tool === 'daily_users') {
-      return readDailyUsersFromClickHouse(client, params.config, params.params);
-    }
-    if (params.tool === 'event_counts') {
-      return readEventCountsFromClickHouse(client, params.config, params.params);
-    }
-    return readDailyCollectionsFromClickHouse(client, params.config, params.params);
-  });
+  const cached = await readThroughMcpCache(params.mcpReadCache, cacheKey, async () =>
+    readAnalyticsChartSnapshotFromClickHouse(client, params.config, {
+      tool: params.tool,
+      days: params.params.days,
+      bucketDays: params.params.bucketDays,
+    }),
+  );
+  const snapshot = cached.value as AnalyticsChartSnapshotResult;
 
   return {
-    rows: cached.value as DailyUserRow[] | DailyCollectionRow[] | EventCountRow[],
+    rows: formatDailyChartSnapshotRows(params.tool, snapshot.rows),
     cacheKey,
     cacheStatus: cached.status,
+    snapshot: {
+      refreshId: snapshot.refreshId,
+      refreshedAt: snapshot.refreshedAt,
+      ageSeconds: snapshot.snapshotAgeSeconds,
+    },
     params: params.params,
     tool: params.tool,
   };
@@ -625,10 +635,13 @@ async function resolveUniqueDidCount(params: {
 }
 
 function setDailyChartCacheHeaders(c: { header: (name: string, value: string) => void }, result: DailyChartResult): void {
-  c.header('X-Data-Source', 'clickhouse');
+  c.header('X-Data-Source', 'clickhouse_snapshot');
   c.header('X-Cache', result.cacheStatus);
   c.header('X-Cache-Key', result.cacheKey);
   c.header('X-Cache-Ttl-Seconds', String(Math.floor(MCP_READ_CACHE_TTL_MS / 1000)));
+  c.header('X-Snapshot-Refresh-Id', result.snapshot.refreshId);
+  c.header('X-Snapshot-Refreshed-At', result.snapshot.refreshedAt);
+  c.header('X-Snapshot-Age-Seconds', String(result.snapshot.ageSeconds));
 }
 
 function formatDailyChartHttpResult(result: DailyChartResult): Record<string, unknown> {
@@ -645,6 +658,25 @@ function formatDailyChartHttpResult(result: DailyChartResult): Record<string, un
       ttl_seconds: Math.floor(MCP_READ_CACHE_TTL_MS / 1000),
     },
   };
+}
+
+function formatDailyChartSnapshotRows(
+  tool: DailyChartTool,
+  rows: AnalyticsChartSnapshotResult['rows'],
+): DailyUserRow[] | DailyCollectionRow[] | EventCountRow[] {
+  if (tool === 'event_counts') {
+    return rows.map((row) => ({
+      date: row.date,
+      day_offset: row.day_offset,
+      count: row.count,
+    }));
+  }
+  return rows.map((row) => ({
+    date: row.date,
+    day_offset: row.day_offset,
+    active: row.active,
+    new: row.new,
+  }));
 }
 
 function setUniqueDidCountCacheHeaders(c: { header: (name: string, value: string) => void }, result: UniqueDidCountResult): void {
