@@ -167,6 +167,15 @@ CREATE TABLE IF NOT EXISTS atp_dashboard.collection_count_event_existence_log
 ENGINE = MergeTree
 ORDER BY (event_key, payload_hash);
 
+CREATE TABLE IF NOT EXISTS atp_dashboard.collection_count_bootstrap_progress
+(
+    name String,
+    last_event_key String,
+    updated_at DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (name, updated_at);
+
 CREATE TABLE IF NOT EXISTS atp_dashboard.collection_count_event_raw_candidate_stage
 (
     run_id UUID,

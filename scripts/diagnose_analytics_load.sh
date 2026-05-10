@@ -164,6 +164,15 @@ SELECT
   (SELECT max(queued_at) FROM atp_dashboard.collection_count_ingest_queue) AS max_queued_at
 "
 
+  run "collection count bootstrap progress" ch --query "
+SELECT
+  (SELECT count() FROM atp_dashboard.collection_events) AS raw_rows,
+  (SELECT count() FROM atp_dashboard.collection_count_event_existence_log) AS existence_rows,
+  (SELECT count() FROM atp_dashboard.collection_count_ingest_queue) AS queue_rows,
+  (SELECT coalesce(argMax(last_event_key, updated_at), '') FROM atp_dashboard.collection_count_bootstrap_progress WHERE name = 'raw_event_key_scan') AS last_scanned_event_key,
+  (SELECT count() FROM atp_dashboard.collection_events WHERE event_key > (SELECT coalesce(argMax(last_event_key, updated_at), '') FROM atp_dashboard.collection_count_bootstrap_progress WHERE name = 'raw_event_key_scan')) AS raw_rows_after_bootstrap_progress
+"
+
   run "collection count forbidden broad raw queries" ch --query "
 SELECT
   event_time,

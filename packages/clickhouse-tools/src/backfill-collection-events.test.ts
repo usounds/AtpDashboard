@@ -167,8 +167,11 @@ test('bootstrap raw source queries are bounded and ordered by bootstrap high tup
   assert.match(high, /ORDER BY ingested_at DESC, event_key DESC/);
   assert.match(source.query, /collection_count_bootstrap_bounded/);
   assert.match(source.query, /FROM atp_dashboard\.collection_events/);
+  assert.match(source.query, /FROM atp_dashboard\.collection_count_bootstrap_progress/);
   assert.match(source.query, /FROM atp_dashboard\.collection_count_event_existence_log/);
-  assert.match(source.query, /WHERE c\.event_key > last_bootstrapped_event_key/);
+  assert.match(source.query, /WHERE event_key > last_scanned_event_key/);
+  assert.match(source.query, /LEFT ANY JOIN/);
+  assert.match(source.query, /alreadyExists/);
   assert.match(source.query, /ORDER BY c\.event_key ASC/);
   assert.match(source.query, /LIMIT \{limit:UInt64\}/);
   assert.deepEqual(source.query_params, { limit: 1000 });
@@ -378,11 +381,13 @@ test('bootstrap queue from raw inserts only existence log and queue', async () =
           return {
             data: [
               {
+                eventKey: 'event-a',
                 did: 'did:plc:a',
                 collection: 'app.a',
                 rkey: 'r1',
                 createdAt: '2026-05-09T00:00:00.000001Z',
                 sourceIngestedAt: '2026-05-10 00:00:00.000',
+                alreadyExists: 0,
               },
             ],
           };
@@ -418,7 +423,71 @@ test('bootstrap queue from raw inserts only existence log and queue', async () =
     'query-raw',
     'insert:atp_dashboard.collection_count_event_existence_log',
     'insert:atp_dashboard.collection_count_ingest_queue',
+    'insert:atp_dashboard.collection_count_bootstrap_progress',
   ]);
+});
+
+test('bootstrap queue from raw advances progress across existing sidecar rows', async () => {
+  const operations: string[] = [];
+  const clickhouse = {
+    async query() {
+      operations.push('query-raw');
+      return {
+        async json() {
+          return {
+            data: [
+              {
+                eventKey: 'event-existing',
+                did: 'did:plc:a',
+                collection: 'app.a',
+                rkey: 'r1',
+                createdAt: '2026-05-09T00:00:00.000001Z',
+                sourceIngestedAt: '2026-05-10 00:00:00.000',
+                alreadyExists: 1,
+              },
+            ],
+          };
+        },
+      };
+    },
+    async insert(params: { table: string }) {
+      operations.push(`insert:${params.table}`);
+    },
+  };
+
+  const result = await runBackfill(
+    {
+      dryRun: false,
+      limit: 1,
+      resumeFrom: null,
+      batchSize: 1,
+      maxRuntimeMinutes: null,
+      maxRows: null,
+      rescanDays: null,
+      bootstrapQueueFromRaw: true,
+      confirmProduction: true,
+      checkpointName: 'test',
+      lockName: 'test',
+      lockTtlSeconds: 60,
+    },
+    {
+      pg: {
+        async connect() {},
+        async end() {},
+        async query<T>(sql: string) {
+          if (sql.includes('RETURNING holder')) {
+            return { rows: [{ holder: 'test-holder' }] as T[] };
+          }
+          return { rows: [] as T[] };
+        },
+      },
+      clickhouse,
+    },
+  );
+
+  assert.equal(result.rowsRead, 1);
+  assert.equal(result.rowsInserted, 0);
+  assert.deepEqual(operations, ['query-raw', 'insert:atp_dashboard.collection_count_bootstrap_progress']);
 });
 
 test('dry-run reads rows but does not insert or checkpoint', async () => {

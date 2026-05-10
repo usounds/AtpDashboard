@@ -15,7 +15,9 @@ export type CollectionSourceRow = {
 };
 
 export type CollectionSidecarSourceRow = CollectionSourceRow & {
+  eventKey?: string;
   sourceIngestedAt: string;
+  alreadyExists?: number | string | boolean;
 };
 
 export type CollectionEventInsertRow = {
@@ -106,7 +108,12 @@ type ClickHouseClientLike = {
   close?: () => Promise<void>;
 };
 
-type ClickHouseInsertRow = CollectionEventInsertRow | CollectionCountExistenceLogInsertRow | CollectionCountQueueInsertRow;
+type BootstrapProgressInsertRow = {
+  name: string;
+  last_event_key: string;
+  updated_at: string;
+};
+type ClickHouseInsertRow = CollectionEventInsertRow | CollectionCountExistenceLogInsertRow | CollectionCountQueueInsertRow | BootstrapProgressInsertRow;
 
 export const DEFAULT_CHECKPOINT_NAME = 'collection_events_backfill_v2_unique_index';
 export const NULL_CREATED_AT_ORDER_NOTE =
@@ -338,17 +345,51 @@ export function buildBootstrapRawSourceQuery(limit: number): { query: string; qu
 /* collection_count_bootstrap_bounded */
 WITH
   (
-    SELECT coalesce(max(event_key), '')
-    FROM atp_dashboard.collection_count_event_existence_log
-  ) AS last_bootstrapped_event_key
+    SELECT coalesce(argMax(last_event_key, updated_at), '')
+    FROM atp_dashboard.collection_count_bootstrap_progress
+    WHERE name = 'raw_event_key_scan'
+  ) AS last_scanned_event_key,
+  raw_window AS
+  (
+    SELECT
+      event_key,
+      any(did) AS did,
+      any(collection) AS collection,
+      any(rkey) AS rkey,
+      any(created_at) AS created_at,
+      any(created_at_key) AS created_at_key,
+      min(ingested_at) AS ingested_at
+    FROM
+    (
+      SELECT
+        event_key,
+        did,
+        collection,
+        rkey,
+        created_at,
+        created_at_key,
+        ingested_at
+      FROM atp_dashboard.collection_events
+      WHERE event_key > last_scanned_event_key
+      ORDER BY event_key ASC
+      LIMIT {limit:UInt64}
+    )
+    GROUP BY event_key
+  )
 SELECT
+  c.event_key AS eventKey,
   c.did,
   c.collection,
   c.rkey,
   if(isNull(c.created_at), NULL, formatDateTime(c.created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS createdAt,
-  formatDateTime(c.ingested_at, '%Y-%m-%d %H:%i:%S.%f', 'UTC') AS sourceIngestedAt
-FROM atp_dashboard.collection_events AS c
-WHERE c.event_key > last_bootstrapped_event_key
+  formatDateTime(c.ingested_at, '%Y-%m-%d %H:%i:%S.%f', 'UTC') AS sourceIngestedAt,
+  if(e.event_key = '', 0, 1) AS alreadyExists
+FROM raw_window AS c
+LEFT ANY JOIN
+(
+  SELECT event_key
+  FROM atp_dashboard.collection_count_event_existence_log
+) AS e ON c.event_key = e.event_key
 ORDER BY c.event_key ASC
 LIMIT {limit:UInt64}`,
     query_params: { limit },
@@ -469,11 +510,18 @@ export async function runBackfill(
       const effectiveLimit = options.maxRows ?? options.limit ?? options.batchSize;
       const result = await readBootstrapRawSourceRows(clients.clickhouse, effectiveLimit);
       rowsRead += result.length;
+      const missingRows = result.filter((row) => row.alreadyExists === false || row.alreadyExists === 0 || row.alreadyExists === '0');
+      const lastEventKey = result.at(-1)?.eventKey;
 
       if (!options.dryRun && result.length > 0) {
-        const sidecarRows = buildCollectionCountSidecarRows(result);
-        await insertSidecarRows(clients.clickhouse, sidecarRows);
-        rowsInserted += result.length;
+        if (missingRows.length > 0) {
+          const sidecarRows = buildCollectionCountSidecarRows(missingRows);
+          await insertSidecarRows(clients.clickhouse, sidecarRows);
+          rowsInserted += missingRows.length;
+        }
+        if (lastEventKey) {
+          await writeBootstrapProgress(clients.clickhouse, lastEventKey);
+        }
       }
 
       return {
@@ -590,6 +638,20 @@ async function insertSidecarRows(
   await clickhouse.insert({
     table: 'atp_dashboard.collection_count_ingest_queue',
     values: rows.queue,
+    format: 'JSONEachRow',
+  });
+}
+
+async function writeBootstrapProgress(clickhouse: ClickHouseClientLike, lastEventKey: string): Promise<void> {
+  await clickhouse.insert({
+    table: 'atp_dashboard.collection_count_bootstrap_progress',
+    values: [
+      {
+        name: 'raw_event_key_scan',
+        last_event_key: lastEventKey,
+        updated_at: toClickHouseDateTime64(new Date().toISOString()),
+      },
+    ],
     format: 'JSONEachRow',
   });
 }
