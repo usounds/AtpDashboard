@@ -16,6 +16,7 @@ test('requires dry-run or confirm-production', () => {
   assert.equal(parseRefreshAnalyticsPresencePipelineOptions(['--dry-run']).dryRun, true);
   assert.equal(parseRefreshAnalyticsPresencePipelineOptions(['--confirm-production']).confirmProduction, true);
   assert.equal(parseRefreshAnalyticsPresencePipelineOptions(['--dry-run', '--backfill-days', '400']).backfillDays, 400);
+  assert.equal(parseRefreshAnalyticsPresencePipelineOptions(['--dry-run', '--chunk-days', '2']).chunkDays, 2);
 });
 
 test('presence pipeline queries use ingested watermark and avoid uniqExactMerge', () => {
@@ -56,6 +57,7 @@ test('presence pipeline commits watermark after snapshot build commands', async 
     dryRun: false,
     confirmProduction: true,
     backfillDays: 370,
+    chunkDays: 370,
     safetyLagSeconds: 300,
   });
 

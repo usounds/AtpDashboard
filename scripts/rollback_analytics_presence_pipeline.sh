@@ -70,9 +70,9 @@ WHERE refresh_id = toUUID('${rollback_refresh_id}')
 "
 fi
 
-echo "[presence-rollback] restoring legacy analytics timers"
-"${SUDO[@]}" systemctl enable --now AnalyticsChartsRefresh.timer 2>/dev/null || true
-"${SUDO[@]}" systemctl enable --now AnalyticsHourlyNewRefresh.timer 2>/dev/null || true
+echo "[presence-rollback] keeping legacy heavy analytics timers disabled"
+"${SUDO[@]}" systemctl stop AnalyticsChartsRefresh.timer AnalyticsChartsRefresh.service AnalyticsHourlyNewRefresh.timer AnalyticsHourlyNewRefresh.service CollectionCountRefresh.timer CollectionCountRefresh.service 2>/dev/null || true
+"${SUDO[@]}" systemctl disable AnalyticsChartsRefresh.timer AnalyticsHourlyNewRefresh.timer CollectionCountRefresh.timer 2>/dev/null || true
 "${SUDO[@]}" systemctl --no-pager list-timers 'Analytics*' 'Collection*' || true
 "${SUDO[@]}" systemctl --no-pager --failed || true
 echo "[presence-rollback] completed"

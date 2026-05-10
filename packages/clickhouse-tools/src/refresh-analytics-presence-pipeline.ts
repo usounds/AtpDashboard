@@ -14,6 +14,7 @@ export type RefreshAnalyticsPresencePipelineOptions = {
   dryRun: boolean;
   confirmProduction: boolean;
   backfillDays: number;
+  chunkDays: number;
   safetyLagSeconds: number;
 };
 
@@ -39,6 +40,7 @@ export function parseRefreshAnalyticsPresencePipelineOptions(argv: string[]): Re
     dryRun: false,
     confirmProduction: false,
     backfillDays: 370,
+    chunkDays: 1,
     safetyLagSeconds: 300,
   };
 
@@ -54,6 +56,8 @@ export function parseRefreshAnalyticsPresencePipelineOptions(argv: string[]): Re
       options.runId = readNext(argv, ++index, arg);
     } else if (arg === '--backfill-days') {
       options.backfillDays = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--chunk-days') {
+      options.chunkDays = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--safety-lag-seconds') {
       options.safetyLagSeconds = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else {
@@ -132,6 +136,8 @@ WHERE ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_pre
   )
   AND created_at > (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1) - toIntervalDay({backfill_days:UInt32})
   AND created_at <= (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+  AND created_at > parseDateTime64BestEffort({chunk_start:String}, 6, 'UTC')
+  AND created_at <= parseDateTime64BestEffort({chunk_end:String}, 6, 'UTC')
 GROUP BY hour, did
 `;
 }
@@ -160,6 +166,8 @@ WHERE did != {excluded_did:String}
   )
   AND created_at > (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1) - toIntervalDay({backfill_days:UInt32})
   AND created_at <= (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+  AND created_at > parseDateTime64BestEffort({chunk_start:String}, 6, 'UTC')
+  AND created_at <= parseDateTime64BestEffort({chunk_end:String}, 6, 'UTC')
 GROUP BY hour, collection
 `;
 }
@@ -187,6 +195,8 @@ WHERE ingested_at <= (SELECT cutoff_ingested_at FROM atp_dashboard.analytics_pre
   )
   AND created_at > (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1) - toIntervalDay({backfill_days:UInt32})
   AND created_at <= (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+  AND created_at > parseDateTime64BestEffort({chunk_start:String}, 6, 'UTC')
+  AND created_at <= parseDateTime64BestEffort({chunk_end:String}, 6, 'UTC')
 GROUP BY hour, event_key
 `;
 }
@@ -207,6 +217,8 @@ FROM
   FROM atp_dashboard.analytics_hourly_event_key_presence
   WHERE hour > (SELECT source_latest_hour FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1) - toIntervalDay({backfill_days:UInt32})
     AND hour <= (SELECT source_latest_hour FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+    AND hour > toDateTime64(toStartOfHour(parseDateTime64BestEffort({chunk_start:String}, 6, 'UTC')), 0, 'UTC')
+    AND hour <= toDateTime64(toStartOfHour(parseDateTime64BestEffort({chunk_end:String}, 6, 'UTC')), 0, 'UTC')
     AND (
       EXISTS (SELECT 1 FROM atp_dashboard.analytics_presence_watermarks WHERE name = 'event_source_backfill' AND run_id = {run_id:UUID})
       OR
@@ -225,6 +237,8 @@ FROM
           )
           AND created_at > (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1) - toIntervalDay({backfill_days:UInt32})
           AND created_at <= (SELECT source_latest_at FROM atp_dashboard.analytics_presence_run_status WHERE run_id = {run_id:UUID} LIMIT 1)
+          AND created_at > parseDateTime64BestEffort({chunk_start:String}, 6, 'UTC')
+          AND created_at <= parseDateTime64BestEffort({chunk_end:String}, 6, 'UTC')
         GROUP BY dirty_hour
       )
     )
@@ -328,12 +342,14 @@ export async function refreshAnalyticsPresencePipeline(
   client: ClickHouseCommandLike,
   options: RefreshAnalyticsPresencePipelineOptions,
 ): Promise<{ runId: string; dryRun: boolean; status: 'completed' | 'dry_run' }> {
-  const commands = [
-    buildPresenceRunStartQuery(),
+  const chunkedCommands = [
     buildDidPresenceInsertQuery(),
     buildCollectionPresenceInsertQuery(),
     buildEventKeyPresenceInsertQuery(),
     buildHourlyEventCountInsertQuery(),
+  ];
+  const commands = [
+    buildPresenceRunStartQuery(),
     buildHourlyNewDidRollupInsertQuery(),
     buildHourlyNewCollectionRollupInsertQuery(),
     ...buildShadowSnapshotInsertQueries(),
@@ -343,11 +359,37 @@ export async function refreshAnalyticsPresencePipeline(
   ];
 
   if (options.dryRun) {
-    console.log(commands.join('\n\n'));
+    console.log([commands[0], ...chunkedCommands, ...commands.slice(1)].join('\n\n'));
     return { runId: options.runId, dryRun: true, status: 'dry_run' };
   }
 
-  for (const query of commands) {
+  await client.command({
+    query: buildPresenceRunStartQuery(),
+    query_params: {
+      run_id: options.runId,
+      backfill_days: options.backfillDays,
+      safety_lag_seconds: options.safetyLagSeconds,
+      excluded_did: LEXICON_STORE_DID,
+    },
+  });
+
+  for (const chunk of buildBackfillChunks(options.backfillDays, options.chunkDays)) {
+    for (const query of chunkedCommands) {
+      await client.command({
+        query,
+        query_params: {
+          run_id: options.runId,
+          backfill_days: options.backfillDays,
+          safety_lag_seconds: options.safetyLagSeconds,
+          excluded_did: LEXICON_STORE_DID,
+          chunk_start: chunk.start,
+          chunk_end: chunk.end,
+        },
+      });
+    }
+  }
+
+  for (const query of commands.slice(1)) {
     await client.command({
       query,
       query_params: {
@@ -360,6 +402,20 @@ export async function refreshAnalyticsPresencePipeline(
   }
 
   return { runId: options.runId, dryRun: false, status: 'completed' };
+}
+
+function buildBackfillChunks(backfillDays: number, chunkDays: number): Array<{ start: string; end: string }> {
+  const end = new Date();
+  const start = new Date(end.getTime() - backfillDays * 24 * 60 * 60 * 1000);
+  const chunks: Array<{ start: string; end: string }> = [];
+  for (let cursor = start.getTime(); cursor < end.getTime(); cursor += chunkDays * 24 * 60 * 60 * 1000) {
+    const chunkEnd = Math.min(cursor + chunkDays * 24 * 60 * 60 * 1000, end.getTime());
+    chunks.push({
+      start: new Date(cursor).toISOString(),
+      end: new Date(chunkEnd).toISOString(),
+    });
+  }
+  return chunks;
 }
 
 function readNext(argv: string[], index: number, flag: string): string {

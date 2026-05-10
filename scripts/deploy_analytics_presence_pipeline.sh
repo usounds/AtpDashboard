@@ -104,6 +104,7 @@ export CLICKHOUSE_MAX_THREADS="${CLICKHOUSE_MAX_THREADS:-1}"
 export CLICKHOUSE_MAX_INSERT_THREADS="${CLICKHOUSE_MAX_INSERT_THREADS:-1}"
 export CLICKHOUSE_MAX_MEMORY_USAGE="${CLICKHOUSE_MAX_MEMORY_USAGE:-3000000000}"
 export ANALYTICS_PRESENCE_BACKFILL_DAYS="${ANALYTICS_PRESENCE_BACKFILL_DAYS:-370}"
+export ANALYTICS_PRESENCE_CHUNK_DAYS="${ANALYTICS_PRESENCE_CHUNK_DAYS:-1}"
 
 echo "[presence-deploy] applying ClickHouse DDL"
 ch --multiquery < sql/clickhouse/004_analytics_chart_snapshot.sql
@@ -144,7 +145,7 @@ else
 fi
 
 echo "[presence-deploy] preparing presence run"
-pnpm refresh:analytics-presence -- --confirm-production --run-id "$RUN_ID"
+pnpm refresh:analytics-presence -- --confirm-production --run-id "$RUN_ID" --backfill-days "$ANALYTICS_PRESENCE_BACKFILL_DAYS" --chunk-days "$ANALYTICS_PRESENCE_CHUNK_DAYS"
 
 echo "[presence-deploy] publishing snapshot from presence source"
 ANALYTICS_CHART_REFRESH_SOURCE=presence pnpm refresh:analytics-charts -- --confirm-production
