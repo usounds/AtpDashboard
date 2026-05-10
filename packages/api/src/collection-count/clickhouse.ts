@@ -1,8 +1,6 @@
 import type { CollectionCountApiConfig } from './config.ts';
 import type { CollectionCountResult, CollectionCountRow } from './types.ts';
 
-const LEXICON_STORE_DID = 'did:web:lexicon.store';
-
 export type ClickHouseQueryClient = {
   query: (params: { query: string; query_params?: Record<string, unknown>; format?: 'JSONEachRow' }) => Promise<{
     json: <T>() => Promise<T>;
@@ -256,19 +254,10 @@ WITH
   latest_at - toIntervalDay(lookback_days) AS window_start_at,
   (
     SELECT uniqExact(did)
-    FROM
-    (
-      SELECT
-        did,
-        min(created_at) AS first_seen_at
-      FROM atp_dashboard.collection_events
-      WHERE collection = {collection:String}
-        AND did != {excluded_did:String}
-        AND isNotNull(created_at)
-        AND created_at_key != '<NULL>'
-      GROUP BY did
-    )
-    WHERE first_seen_at <= window_start_at
+    FROM atp_dashboard.collection_did_first_seen_snapshot
+    INNER JOIN latest_refresh USING refresh_id
+    WHERE collection = {collection:String}
+      AND first_seen_at <= window_start_at
   ) AS baseline_users
 SELECT
   toString(date) AS date,
@@ -293,20 +282,11 @@ FROM
     SELECT
       toUInt16(intDiv(dateDiff('second', first_seen_at, latest_at), bucket_seconds)) AS bucket_index,
       uniqExact(did) AS new
-    FROM
-    (
-      SELECT
-        did,
-        min(created_at) AS first_seen_at
-      FROM atp_dashboard.collection_events
-      WHERE collection = {collection:String}
-        AND did != {excluded_did:String}
-        AND isNotNull(created_at)
-        AND created_at_key != '<NULL>'
-      GROUP BY did
-    )
+    FROM atp_dashboard.collection_did_first_seen_snapshot
+    INNER JOIN latest_refresh USING refresh_id
     WHERE first_seen_at > window_start_at
       AND first_seen_at <= latest_at
+      AND collection = {collection:String}
     GROUP BY bucket_index
   ) AS new_users USING (bucket_index)
 )
@@ -316,7 +296,6 @@ ORDER BY bucket_index DESC
       collection: params.collection,
       days: params.days,
       bucket_days: params.bucketDays,
-      excluded_did: LEXICON_STORE_DID,
     },
     format: 'JSONEachRow',
   });

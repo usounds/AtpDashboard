@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   LEXICON_STORE_DID,
+  buildDidFirstSeenSnapshotInsertQuery,
   buildRefreshQueryPlan,
   buildSnapshotInsertQuery,
   loadRefreshCollectionCountConfig,
@@ -48,6 +49,16 @@ test('snapshot query uses PostgREST-compatible counts and excludes lexicon store
   assert.match(sql, /WHERE did != \{excluded_did:String\}/);
 });
 
+test('DID first seen snapshot query stores one first_seen row per collection DID', () => {
+  const sql = buildDidFirstSeenSnapshotInsertQuery();
+
+  assert.match(sql, /INSERT INTO atp_dashboard\.collection_did_first_seen_snapshot/);
+  assert.match(sql, /min\(created_at\) AS first_seen_at/);
+  assert.match(sql, /WHERE did != \{excluded_did:String\}/);
+  assert.match(sql, /AND created_at_key != '<NULL>'/);
+  assert.match(sql, /GROUP BY collection, did/);
+});
+
 test('query plan marks stale running, creates running manifest, inserts snapshot, then completes manifest', () => {
   const plan = buildRefreshQueryPlan({
     refreshId: '00000000-0000-4000-8000-000000000001',
@@ -62,16 +73,18 @@ test('query plan marks stale running, creates running manifest, inserts snapshot
   assert.match(plan.beforeSnapshot[1].query, /'running'/);
   assert.equal(plan.insertSnapshot.query_params.excluded_did, LEXICON_STORE_DID);
   assert.equal(plan.insertSnapshot.query_params.recent_hours, 72);
+  assert.equal(plan.insertDidFirstSeenSnapshot.query_params.excluded_did, LEXICON_STORE_DID);
   assert.match(plan.completeManifest.query, /'completed'/);
 });
 
-test('refresh executes complete manifest only after snapshot insert', async () => {
+test('refresh executes complete manifest only after snapshot inserts', async () => {
   const operations: string[] = [];
   const client = {
     async command(params: { query: string }) {
       if (params.query.includes('marked stale')) operations.push('stale');
       if (params.query.includes("VALUES\n  ({refresh_id:UUID}, 'running'")) operations.push('running');
       if (params.query.includes('INSERT INTO atp_dashboard.collection_count_snapshot')) operations.push('snapshot');
+      if (params.query.includes('INSERT INTO atp_dashboard.collection_did_first_seen_snapshot')) operations.push('did_first_seen');
       if (params.query.includes("'completed' AS status")) operations.push('completed');
     },
   };
@@ -85,7 +98,7 @@ test('refresh executes complete manifest only after snapshot insert', async () =
   });
 
   assert.equal(result.status, 'completed');
-  assert.deepEqual(operations, ['stale', 'running', 'snapshot', 'completed']);
+  assert.deepEqual(operations, ['stale', 'running', 'snapshot', 'did_first_seen', 'completed']);
 });
 
 test('failed snapshot writes failed manifest and never completes', async () => {

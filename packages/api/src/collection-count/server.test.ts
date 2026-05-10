@@ -931,20 +931,19 @@ test('serves cached collection_cumulative_users endpoint from ClickHouse', async
   assert.equal(first.headers.get('X-Cache'), 'MISS');
   assert.equal(second.headers.get('X-Cache'), 'HIT');
   assert.equal(queryCount, 1);
-  assert.match(capturedQuery, /min\(created_at\) AS first_seen_at/);
   assert.match(capturedQuery, /latest_snapshot AS/);
   assert.match(capturedQuery, /FROM atp_dashboard\.collection_count_snapshot/);
+  assert.match(capturedQuery, /FROM atp_dashboard\.collection_did_first_seen_snapshot/);
   assert.match(capturedQuery, /\(SELECT max_created_at FROM latest_snapshot\) AS latest_at/);
   assert.match(capturedQuery, /AS baseline_users/);
   assert.match(capturedQuery, /first_seen_at <= window_start_at/);
   assert.match(capturedQuery, /baseline_users \+ sum\(new\) OVER/);
   assert.match(capturedQuery, /sum\(new\) OVER/);
-  assert.match(capturedQuery, /AND did != \{excluded_did:String\}/);
+  assert.doesNotMatch(capturedQuery, /FROM atp_dashboard\.collection_events/);
   assert.deepEqual(capturedParams, {
     collection: 'app.example.post',
     days: 30,
     bucket_days: 1,
-    excluded_did: 'did:web:lexicon.store',
   });
   assert.deepEqual(body, {
     collection: 'app.example.post',
@@ -996,7 +995,6 @@ test('serves yearly collection_cumulative_users endpoint with 30 day buckets', a
     collection: 'app.example.post',
     days: 365,
     bucket_days: 30,
-    excluded_did: 'did:web:lexicon.store',
   });
   assert.deepEqual(body.rows, [
     { date: '2025-05-15', day_offset: -360, new: 12, cumulative: 12 },

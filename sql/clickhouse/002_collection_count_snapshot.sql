@@ -15,6 +15,17 @@ CREATE TABLE IF NOT EXISTS atp_dashboard.collection_count_snapshot
 ENGINE = ReplacingMergeTree(refreshed_at)
 ORDER BY (refresh_id, collection);
 
+CREATE TABLE IF NOT EXISTS atp_dashboard.collection_did_first_seen_snapshot
+(
+    refresh_id UUID,
+    collection String,
+    did String,
+    first_seen_at DateTime64(6, 'UTC'),
+    refreshed_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(refreshed_at)
+ORDER BY (refresh_id, collection, first_seen_at, did);
+
 ALTER TABLE atp_dashboard.collection_count_snapshot
     ADD COLUMN IF NOT EXISTS unique_did UInt64 AFTER collection;
 

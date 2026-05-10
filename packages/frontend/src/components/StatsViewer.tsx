@@ -33,6 +33,10 @@ type CumulativeChartState = {
   }[];
 };
 
+function removeApexSvgTitle(chartContext: { el?: Element } | undefined): void {
+  chartContext?.el?.querySelectorAll('svg title').forEach((element) => element.remove());
+}
+
 const cumulativeUsersOptions: ApexOptions = {
   legend: {
     show: true,
@@ -45,11 +49,19 @@ const cumulativeUsersOptions: ApexOptions = {
   },
   colors: ['#3C50E0', '#80CAEE'],
   chart: {
+    id: 'collection-cumulative-users',
     fontFamily: 'Satoshi, sans-serif',
     height: 300,
     type: 'area',
+    redrawOnParentResize: true,
+    redrawOnWindowResize: true,
+    parentHeightOffset: 0,
     toolbar: {
       show: false,
+    },
+    events: {
+      mounted: (_chartContext, config) => removeApexSvgTitle(config),
+      updated: (_chartContext, config) => removeApexSvgTitle(config),
     },
   },
   fill: {
@@ -107,11 +119,12 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<StatsTab>('summary');
-  const [range, setRange] = useState<CollectionCumulativeUsersRange>('30 Days');
+  const [range, setRange] = useState<CollectionCumulativeUsersRange>('365 Days');
   const [cumulativeState, setCumulativeState] = useState<CumulativeChartState>({ series: [] });
   const [cumulativeOptions, setCumulativeOptions] = useState<ApexOptions>(cumulativeUsersOptions);
   const [isCumulativeLoading, setCumulativeLoading] = useState(false);
   const [cumulativeError, setCumulativeError] = useState<string | null>(null);
+  const [cumulativeChartKey, setCumulativeChartKey] = useState(0);
   const cumulativeRequestIdRef = useRef(0);
   const [colorMode,] = useColorMode();
 
@@ -162,6 +175,10 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
         const maxValue = Math.max(...data.rows.map((row) => row.cumulative), 0) * 1.05;
         setCumulativeOptions((prevOptions) => ({
           ...prevOptions,
+          chart: {
+            ...prevOptions.chart,
+            id: `collection-cumulative-users-${requestId}`,
+          },
           xaxis: {
             ...prevOptions.xaxis,
             categories,
@@ -172,10 +189,12 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
           },
         }));
         setCumulativeState({ series });
+        setCumulativeChartKey((value) => value + 1);
       } catch (err: any) {
         if (cancelled || requestId !== cumulativeRequestIdRef.current) return;
         setCumulativeError(err.message);
         setCumulativeState({ series: [] });
+        setCumulativeChartKey((value) => value + 1);
       } finally {
         if (!cancelled && requestId === cumulativeRequestIdRef.current) {
           setCumulativeLoading(false);
@@ -290,13 +309,14 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
               </button>
             </div>
           </div>
-          <div className="relative -ml-5 -mb-9">
+          <div className="relative -ml-5 pb-2">
             {isCumulativeLoading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-boxdark/60" aria-label="Loading cumulative users">
                 <span className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary" />
               </div>
             )}
             <ReactApexChart
+              key={`${collection}-${range}-${cumulativeChartKey}`}
               options={cumulativeOptions}
               series={cumulativeState.series}
               type="area"
@@ -305,8 +325,8 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
           </div>
         </div>
       )}
-      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
-        Data may take up to 30 minutes to be reflected.
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 text-center">
+        Data may take up to 10 minutes to be reflected.
       </p>
     </div>
   );

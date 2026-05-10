@@ -138,6 +138,24 @@ GROUP BY collection
 `;
 }
 
+export function buildDidFirstSeenSnapshotInsertQuery(): string {
+  return `
+INSERT INTO atp_dashboard.collection_did_first_seen_snapshot
+  (refresh_id, collection, did, first_seen_at, refreshed_at)
+SELECT
+  {refresh_id:UUID} AS refresh_id,
+  collection,
+  did,
+  min(created_at) AS first_seen_at,
+  now64(3, 'UTC') AS refreshed_at
+FROM atp_dashboard.collection_events
+WHERE did != {excluded_did:String}
+  AND isNotNull(created_at)
+  AND created_at_key != '<NULL>'
+GROUP BY collection, did
+`;
+}
+
 export async function refreshCollectionCountSnapshot(
   client: ClickHouseCommandLike,
   options: RefreshCollectionCountOptions,
@@ -157,6 +175,7 @@ export async function refreshCollectionCountSnapshot(
       await client.command(query);
     }
     await client.command(queries.insertSnapshot);
+    await client.command(queries.insertDidFirstSeenSnapshot);
     await client.command(queries.completeManifest);
     return {
       refreshId: options.refreshId,
@@ -179,6 +198,7 @@ export async function refreshCollectionCountSnapshot(
 export function buildRefreshQueryPlan(options: RefreshCollectionCountOptions): {
   beforeSnapshot: Array<{ query: string; query_params: Record<string, unknown> }>;
   insertSnapshot: { query: string; query_params: Record<string, unknown> };
+  insertDidFirstSeenSnapshot: { query: string; query_params: Record<string, unknown> };
   completeManifest: { query: string; query_params: Record<string, unknown> };
 } {
   return {
@@ -202,6 +222,13 @@ export function buildRefreshQueryPlan(options: RefreshCollectionCountOptions): {
       query_params: {
         refresh_id: options.refreshId,
         recent_hours: options.recentHours,
+        excluded_did: LEXICON_STORE_DID,
+      },
+    },
+    insertDidFirstSeenSnapshot: {
+      query: buildDidFirstSeenSnapshotInsertQuery(),
+      query_params: {
+        refresh_id: options.refreshId,
         excluded_did: LEXICON_STORE_DID,
       },
     },
