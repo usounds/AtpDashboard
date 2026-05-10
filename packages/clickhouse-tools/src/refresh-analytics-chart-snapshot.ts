@@ -138,6 +138,10 @@ ${targets.map(buildTargetSelectQuery).join('\nUNION ALL\n')}
 `;
 }
 
+export function buildSnapshotInsertQueryForTarget(target: AnalyticsChartSnapshotTarget): string {
+  return buildSnapshotInsertQuery([target]);
+}
+
 export async function refreshAnalyticsChartSnapshot(
   client: ClickHouseCommandLike,
   options: RefreshAnalyticsChartOptions,
@@ -156,7 +160,10 @@ export async function refreshAnalyticsChartSnapshot(
     for (const query of queries.beforeSnapshot) {
       await client.command(query);
     }
-    await client.command(queries.insertSnapshot);
+    for (const query of queries.insertSnapshots) {
+      console.log(`[analytics-chart-refresh] inserting ${query.target.tool} days=${query.target.days} bucket_days=${query.target.bucketDays}`);
+      await client.command(query.command);
+    }
     await client.command(queries.completeManifest);
     return {
       refreshId: options.refreshId,
@@ -178,7 +185,10 @@ export async function refreshAnalyticsChartSnapshot(
 
 export function buildRefreshQueryPlan(options: RefreshAnalyticsChartOptions): {
   beforeSnapshot: Array<{ query: string; query_params: Record<string, unknown> }>;
-  insertSnapshot: { query: string; query_params: Record<string, unknown> };
+  insertSnapshots: Array<{
+    target: AnalyticsChartSnapshotTarget;
+    command: { query: string; query_params: Record<string, unknown> };
+  }>;
   completeManifest: { query: string; query_params: Record<string, unknown> };
 } {
   return {
@@ -197,13 +207,16 @@ export function buildRefreshQueryPlan(options: RefreshAnalyticsChartOptions): {
         },
       },
     ],
-    insertSnapshot: {
-      query: buildSnapshotInsertQuery(),
-      query_params: {
-        refresh_id: options.refreshId,
-        excluded_did: LEXICON_STORE_DID,
+    insertSnapshots: ANALYTICS_CHART_TARGETS.map((target) => ({
+      target,
+      command: {
+        query: buildSnapshotInsertQueryForTarget(target),
+        query_params: {
+          refresh_id: options.refreshId,
+          excluded_did: LEXICON_STORE_DID,
+        },
       },
-    },
+    })),
     completeManifest: {
       query: buildManifestInsertQuery('completed'),
       query_params: {

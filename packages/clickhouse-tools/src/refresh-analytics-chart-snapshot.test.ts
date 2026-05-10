@@ -49,8 +49,10 @@ test('query plan marks stale running, creates running manifest, inserts snapshot
   assert.match(plan.beforeSnapshot[0].query, /status = 'running'/);
   assert.equal(plan.beforeSnapshot[0].query_params.stale_running_minutes, 30);
   assert.match(plan.beforeSnapshot[1].query, /'running'/);
-  assert.equal(plan.insertSnapshot.query_params.excluded_did, LEXICON_STORE_DID);
-  assert.match(plan.insertSnapshot.query, /INSERT INTO atp_dashboard\.analytics_chart_snapshot/);
+  assert.equal(plan.insertSnapshots.length, 9);
+  assert.deepEqual(plan.insertSnapshots.map((query) => query.target), ANALYTICS_CHART_TARGETS);
+  assert.equal(plan.insertSnapshots[0].command.query_params.excluded_did, LEXICON_STORE_DID);
+  assert.match(plan.insertSnapshots[0].command.query, /INSERT INTO atp_dashboard\.analytics_chart_snapshot/);
   assert.match(plan.completeManifest.query, /'completed'/);
 });
 
@@ -73,7 +75,7 @@ test('refresh executes complete manifest only after snapshot insert', async () =
   });
 
   assert.equal(result.status, 'completed');
-  assert.deepEqual(operations, ['stale', 'running', 'snapshot', 'completed']);
+  assert.deepEqual(operations, ['stale', 'running', ...Array(9).fill('snapshot'), 'completed']);
 });
 
 test('failed snapshot writes failed manifest and never completes', async () => {
