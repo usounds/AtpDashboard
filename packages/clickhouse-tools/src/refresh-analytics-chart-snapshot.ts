@@ -397,7 +397,7 @@ LEFT JOIN
 (
   SELECT
     toUInt16(intDiv(dateDiff('second', created_at, latest_at), bucket_seconds)) AS bucket_index,
-    count() AS count
+    uniqExact(event_key) AS count
   FROM atp_dashboard.collection_events
   WHERE isNotNull(created_at)
     AND created_at > latest_at - toIntervalDay(lookback_days)

@@ -25,8 +25,8 @@ test('dry-run config does not require ClickHouse URL', () => {
 test('snapshot query uses PostgREST-compatible counts and excludes lexicon store', () => {
   const sql = buildSnapshotInsertQuery();
 
-  assert.match(sql, /count\(\) AS total_count/);
-  assert.match(sql, /countIf\(isNotNull\(created_at\)/);
+  assert.match(sql, /uniqExact\(event_key\) AS total_count/);
+  assert.match(sql, /uniqExactIf\(event_key, isNotNull\(created_at\)/);
   assert.match(sql, /WHERE did != \{excluded_did:String\}/);
 });
 

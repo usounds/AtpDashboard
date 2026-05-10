@@ -35,7 +35,7 @@ test('snapshot query inserts every dashboard chart target', () => {
   assert.match(sql, /30 AS chart_bucket_days/);
   assert.doesNotMatch(sql, /\d+ AS bucket_days/);
   assert.match(sql, /did != \{excluded_did:String\}/);
-  assert.match(sql, /count\(\) AS count/);
+  assert.match(sql, /uniqExact\(event_key\) AS count/);
 });
 
 test('query plan marks stale running, creates running manifest, inserts snapshot, then completes manifest', () => {
