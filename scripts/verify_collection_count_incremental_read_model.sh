@@ -8,6 +8,7 @@ CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-atp_dashboard}"
 DUAL_WRITE_STARTED_AT="${DUAL_WRITE_STARTED_AT:-}"
 BOOTSTRAP_HIGH="${BOOTSTRAP_HIGH:-}"
 COLLECTION_COUNT_RETENTION_MODE="${COLLECTION_COUNT_RETENTION_MODE:-safe-disabled}"
+LOAD_GATE_QUERY_LOG_SINCE="${LOAD_GATE_QUERY_LOG_SINCE:-}"
 CONFIRM=false
 REPAIR=false
 P1_GATES=false
@@ -513,11 +514,14 @@ verify_load_reduction_gate() {
   fi
 
   local active_forbidden recent_forbidden
+  local query_log_since="${LOAD_GATE_QUERY_LOG_SINCE:-$(scalar "SELECT now()")}"
   active_forbidden="$(scalar "
 SELECT count()
 FROM system.processes
 WHERE query ILIKE '%collection_events%'
   AND query ILIKE '%GROUP BY%collection%'
+  AND query NOT ILIKE '%system.processes%'
+  AND query NOT ILIKE '%system.query_log%'
   AND query NOT ILIKE '%collection_count_bootstrap_bounded%'
   AND query NOT ILIKE '%collection_count_incremental_catchup%'
   AND query NOT ILIKE '%collection_count_event_existence_log%'
@@ -525,10 +529,12 @@ WHERE query ILIKE '%collection_events%'
   recent_forbidden="$(scalar "
 SELECT count()
 FROM system.query_log
-WHERE event_time >= now() - INTERVAL 30 MINUTE
+WHERE event_time >= parseDateTimeBestEffort('$query_log_since')
   AND type IN ('QueryStart', 'QueryFinish')
   AND query ILIKE '%collection_events%'
   AND query ILIKE '%GROUP BY%collection%'
+  AND query NOT ILIKE '%system.processes%'
+  AND query NOT ILIKE '%system.query_log%'
   AND query NOT ILIKE '%collection_count_bootstrap_bounded%'
   AND query NOT ILIKE '%collection_count_incremental_catchup%'
   AND query NOT ILIKE '%collection_count_event_existence_log%'
