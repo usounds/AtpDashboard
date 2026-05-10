@@ -9,6 +9,8 @@ LOCAL_API_BASE_URL="${LOCAL_API_BASE_URL:-http://127.0.0.1:8787/api/analytics}"
 PUBLIC_API_BASE_URL="${PUBLIC_API_BASE_URL:-https://dashboardapi.usounds.work/api/analytics}"
 BOOTSTRAP_MAX_ROWS="${BOOTSTRAP_MAX_ROWS:-500000}"
 BOOTSTRAP_MAX_LOOPS="${BOOTSTRAP_MAX_LOOPS:-1000}"
+BOOTSTRAP_LOCK_RETRY_SECONDS="${BOOTSTRAP_LOCK_RETRY_SECONDS:-30}"
+BOOTSTRAP_LOCK_MAX_WAIT_SECONDS="${BOOTSTRAP_LOCK_MAX_WAIT_SECONDS:-1800}"
 INCREMENTAL_MAX_ROWS="${INCREMENTAL_MAX_ROWS:-500000}"
 INCREMENTAL_MAX_SPAN_SECONDS="${INCREMENTAL_MAX_SPAN_SECONDS:-600}"
 INCREMENTAL_MAX_ESTIMATED_BYTES="${INCREMENTAL_MAX_ESTIMATED_BYTES:-536870912}"
@@ -162,14 +164,34 @@ record_bootstrap_high() {
 
 backfill_through_bootstrap_high() {
   log "backfilling bounded queue/existence rows through bootstrap_high max_rows=$BOOTSTRAP_MAX_ROWS max_loops=$BOOTSTRAP_MAX_LOOPS"
-  local loop rows_read output
+  local loop rows_read output status waited
   for ((loop = 1; loop <= BOOTSTRAP_MAX_LOOPS; loop += 1)); do
     output="$(mktemp)"
-    pnpm --filter @atpdashboard/clickhouse-tools backfill:collection-events -- \
-      --confirm-production \
-      --bootstrap-queue-from-raw \
-      --max-rows "$BOOTSTRAP_MAX_ROWS" \
-      --lock-ttl-seconds 900 | tee "$output"
+    waited=0
+    while true; do
+      set +e
+      pnpm --filter @atpdashboard/clickhouse-tools backfill:collection-events -- \
+        --confirm-production \
+        --bootstrap-queue-from-raw \
+        --max-rows "$BOOTSTRAP_MAX_ROWS" \
+        --lock-ttl-seconds 900 >"$output" 2>&1
+      status=$?
+      set -e
+
+      if [[ "$status" -eq 0 ]]; then
+        cat "$output"
+        break
+      fi
+      if grep -q 'Could not acquire ClickHouse sync lock' "$output" && [[ "$waited" -lt "$BOOTSTRAP_LOCK_MAX_WAIT_SECONDS" ]]; then
+        log "bootstrap loop=$loop waiting for collection_events sync lock ${BOOTSTRAP_LOCK_RETRY_SECONDS}s waited=${waited}s"
+        sleep "$BOOTSTRAP_LOCK_RETRY_SECONDS"
+        waited=$((waited + BOOTSTRAP_LOCK_RETRY_SECONDS))
+        continue
+      fi
+      cat "$output" >&2
+      rm -f "$output"
+      fail "bootstrap backfill failed loop=$loop status=$status"
+    done
     rows_read="$(node -e "const fs=require('fs'); const text=fs.readFileSync(process.argv[1],'utf8'); const match=text.match(/\\{[\\s\\S]*\\}/); if(!match) process.exit(2); const json=JSON.parse(match[0]); process.stdout.write(String(json.rowsRead ?? 0));" "$output")"
     rm -f "$output"
     log "bootstrap loop=$loop rows_read=$rows_read"
