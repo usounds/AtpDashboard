@@ -92,33 +92,32 @@ test('allows public CORS access for analytics routes', async () => {
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
 });
 
-test('serves collection_count_view from latest completed ClickHouse snapshot', async () => {
+test('serves collection_count_view directly from ClickHouse events', async () => {
+  let capturedQuery = '';
   const app = createCollectionCountApp(
     {
       ...baseConfig,
       clickhouseUrl: 'http://localhost:8123',
     },
     {
-      clickhouse: createFakeClickHouse({
-        refreshRows: [
-          {
-            refresh_id: '00000000-0000-4000-8000-000000000001',
-            completed_at: new Date().toISOString(),
-            row_count: 1,
-          },
-        ],
-        snapshotRows: [
-          {
-            collection: 'app.example.post',
-            count: 42,
-            recent_count: 7,
-            min: '2026-05-01T00:00:00.000000Z',
-            max: '2026-05-09T00:00:00.123000Z',
-            refresh_id: '00000000-0000-4000-8000-000000000001',
-            refreshed_at: new Date().toISOString(),
-          },
-        ],
-      }),
+      clickhouse: {
+        async query(params) {
+          capturedQuery = params.query;
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.post',
+                  count: 42,
+                  recent_count: 7,
+                  min_created_at: '2026-05-01T00:00:00.000000Z',
+                  max_created_at: '2026-05-09T00:00:00.123000Z',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
     },
   );
 
@@ -128,7 +127,11 @@ test('serves collection_count_view from latest completed ClickHouse snapshot', a
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), '');
-  assert.equal(response.headers.get('X-Snapshot-Refresh-Id'), '00000000-0000-4000-8000-000000000001');
+  assert.equal(response.headers.get('X-Snapshot-Refresh-Id'), '');
+  assert.match(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.match(capturedQuery, /GROUP BY collection/);
+  assert.doesNotMatch(capturedQuery, /collection_count_snapshot/);
+  assert.doesNotMatch(capturedQuery, /collection_count_refresh_manifest/);
   assert.deepEqual(body, [
     {
       collection: 'app.example.post',
@@ -184,7 +187,7 @@ test('serves collection_count_view collection filter directly from ClickHouse ev
   assert.equal(second.headers.get('X-Snapshot-Refresh-Id'), '');
   assert.equal(queryCount, 2);
   assert.match(capturedQuery, /FROM atp_dashboard\.collection_events/);
-  assert.match(capturedQuery, /WHERE collection = \{collection:String\}/);
+  assert.match(capturedQuery, /AND collection = \{collection:String\}/);
   assert.doesNotMatch(capturedQuery, /collection_count_snapshot/);
   assert.doesNotMatch(capturedQuery, /collection_count_refresh_manifest/);
   assert.deepEqual(capturedParams, { collection: 'app.example.post' });
@@ -228,7 +231,7 @@ test('forced fallback skips ClickHouse and returns PostgREST-compatible rows', a
   assert.deepEqual(body, postgrestRows);
 });
 
-test('stale snapshot still serves ClickHouse snapshot with stale header', async () => {
+test('collection_count_view ignores stale snapshot state and reads live events', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -236,26 +239,23 @@ test('stale snapshot still serves ClickHouse snapshot with stale header', async 
       snapshotMaxAgeSeconds: 1,
     },
     {
-      clickhouse: createFakeClickHouse({
-        refreshRows: [
-          {
-            refresh_id: '00000000-0000-4000-8000-000000000002',
-            completed_at: '2026-01-01T00:00:00.000Z',
-            row_count: 1,
-          },
-        ],
-        snapshotRows: [
-          {
-            collection: 'app.example.stale',
-            count: 42,
-            recent_count: 0,
-            min: '2026-01-01T00:00:00.000000Z',
-            max: '2026-01-01T00:00:00.000000Z',
-            refresh_id: '00000000-0000-4000-8000-000000000002',
-            refreshed_at: '2026-01-01T00:00:00.000Z',
-          },
-        ],
-      }),
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [
+                {
+                  collection: 'app.example.live',
+                  count: 42,
+                  recent_count: 0,
+                  min_created_at: '2026-01-01T00:00:00.000000Z',
+                  max_created_at: '2026-01-01T00:00:00.000000Z',
+                },
+              ] as T;
+            },
+          };
+        },
+      },
       fetch: createJsonFetch(postgrestRows),
     },
   );
@@ -265,10 +265,10 @@ test('stale snapshot still serves ClickHouse snapshot with stale header', async 
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
-  assert.equal(response.headers.get('X-Fallback-Reason'), 'stale_snapshot');
+  assert.equal(response.headers.get('X-Fallback-Reason'), '');
   assert.deepEqual(body, [
     {
-      collection: 'app.example.stale',
+      collection: 'app.example.live',
       count: 42,
       recent_count: 0,
       min: '2026-01-01T00:00:00',
@@ -277,7 +277,7 @@ test('stale snapshot still serves ClickHouse snapshot with stale header', async 
   ]);
 });
 
-test('clickhouse-only request fails instead of falling back', async () => {
+test('clickhouse-only request returns live rows without snapshot manifest', async () => {
   const app = createCollectionCountApp(
     {
       ...baseConfig,
@@ -285,16 +285,15 @@ test('clickhouse-only request fails instead of falling back', async () => {
       snapshotMaxAgeSeconds: 1,
     },
     {
-      clickhouse: createFakeClickHouse({
-        refreshRows: [
-          {
-            refresh_id: '00000000-0000-4000-8000-000000000003',
-            completed_at: '2026-01-01T00:00:00.000Z',
-            row_count: 1,
-          },
-        ],
-        snapshotRows: [],
-      }),
+      clickhouse: {
+        async query() {
+          return {
+            async json<T>() {
+              return [] as T;
+            },
+          };
+        },
+      },
       fetch: createJsonFetch(postgrestRows),
     },
   );
@@ -308,7 +307,7 @@ test('clickhouse-only request fails instead of falling back', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
-  assert.equal(response.headers.get('X-Fallback-Reason'), 'stale_snapshot');
+  assert.equal(response.headers.get('X-Fallback-Reason'), '');
   assert.deepEqual(body, []);
 });
 
@@ -366,7 +365,7 @@ test('opens circuit breaker and uses circuit_open fallback after repeated ClickH
   assert.equal(statusBody.circuit_open, true);
 });
 
-test('caches successful response for collection_count_view', async () => {
+test('does not cache live collection_count_view responses', async () => {
   let queryCount = 0;
   const app = createCollectionCountApp(
     {
@@ -376,30 +375,19 @@ test('caches successful response for collection_count_view', async () => {
     },
     {
       clickhouse: {
-        async query(queryParams) {
+        async query() {
           queryCount += 1;
-          const rows = queryParams.query.includes('collection_count_refresh_manifest')
-            ? [
-                {
-                  refresh_id: '00000000-0000-4000-8000-000000000004',
-                  completed_at: new Date().toISOString(),
-                  row_count: 1,
-                },
-              ]
-            : [
-                {
-                  collection: 'app.example.cached',
-                  count: 1,
-                  recent_count: 1,
-                  min: null,
-                  max: null,
-                  refresh_id: '00000000-0000-4000-8000-000000000004',
-                  refreshed_at: new Date().toISOString(),
-                },
-              ];
           return {
             async json<T>() {
-              return rows as T;
+              return [
+                {
+                  collection: 'app.example.live',
+                  count: 1,
+                  recent_count: 1,
+                  min_created_at: null,
+                  max_created_at: null,
+                },
+              ] as T;
             },
           };
         },

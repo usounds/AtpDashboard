@@ -78,29 +78,22 @@ export async function createClickHouseClient(config: CollectionCountApiConfig): 
 
 export async function readCollectionCountFromClickHouse(
   client: ClickHouseQueryClient,
-  config: Pick<CollectionCountApiConfig, 'snapshotMaxAgeSeconds' | 'clickhouseTimeoutMs'>,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
 ): Promise<CollectionCountResult> {
-  const refresh = await withTimeout(readLatestCompletedRefresh(client), config.clickhouseTimeoutMs, 'ClickHouse latest refresh timed out');
-  if (!refresh) {
-    throw new Error('No completed collection_count refresh is available');
-  }
-
-  const completedAtMs = Date.parse(refresh.completed_at);
-  if (Number.isNaN(completedAtMs)) {
-    throw new Error(`Invalid completed_at from ClickHouse: ${refresh.completed_at}`);
-  }
-
-  const ageSeconds = Math.max(Math.floor((Date.now() - completedAtMs) / 1000), 0);
-  const rows = await withTimeout(readSnapshotRows(client, refresh.refresh_id), config.clickhouseTimeoutMs, 'ClickHouse snapshot query timed out');
+  const rows = await withTimeout(
+    readLiveCollectionCountRows(client, null),
+    config.clickhouseTimeoutMs,
+    'ClickHouse live collection_count_view query timed out',
+  );
 
   return {
     rows,
     headers: {
       dataSource: 'clickhouse',
-      fallbackReason: ageSeconds > config.snapshotMaxAgeSeconds ? 'stale_snapshot' : null,
-      snapshotRefreshId: refresh.refresh_id,
-      snapshotRefreshedAt: refresh.completed_at,
-      snapshotAgeSeconds: ageSeconds,
+      fallbackReason: null,
+      snapshotRefreshId: null,
+      snapshotRefreshedAt: null,
+      snapshotAgeSeconds: null,
     },
   };
 }
@@ -174,7 +167,8 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
   }));
 }
 
-async function readLiveCollectionCountRows(client: ClickHouseQueryClient, collection: string): Promise<CollectionCountRow[]> {
+async function readLiveCollectionCountRows(client: ClickHouseQueryClient, collection: string | null): Promise<CollectionCountRow[]> {
+  const collectionFilter = collection == null ? '' : '  AND collection = {collection:String}';
   const result = await client.query({
     query: `
 SELECT
@@ -184,13 +178,12 @@ SELECT
   if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(minIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS min_created_at,
   if(countIf(created_at_key != '<NULL>') = 0, NULL, parseDateTime64BestEffortOrNull(maxIf(created_at_key, created_at_key != '<NULL>'), 6, 'UTC')) AS max_created_at
 FROM atp_dashboard.collection_events
-WHERE collection = {collection:String}
+WHERE did != 'did:web:lexicon.store'
+${collectionFilter}
 GROUP BY collection
-LIMIT 1
+ORDER BY max_created_at DESC NULLS LAST, collection ASC
 `,
-    query_params: {
-      collection,
-    },
+    query_params: collection == null ? {} : { collection },
     format: 'JSONEachRow',
   });
   const rows = await result.json<Array<{

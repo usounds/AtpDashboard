@@ -63,11 +63,6 @@ type RateLimitState = {
   count: number;
 };
 
-type CacheEntry = {
-  expiresAt: number;
-  result: CollectionCountResult;
-};
-
 type JsonRpcRequest = {
   jsonrpc?: string;
   id?: string | number | null;
@@ -188,7 +183,6 @@ export function createCollectionCountApp(
   const runtimeStatus = dependencies.runtimeStatus ?? createRuntimeStatus();
   const fetchImpl = dependencies.fetch ?? fetch;
   let clickhouseClient: ClickHouseQueryClient | null | undefined = dependencies.clickhouse;
-  let cache: CacheEntry | null = null;
   const mcpReadCache = new Map<string, McpCacheEntry<unknown>>();
   const didDocumentCache = new Map<string, DidDocumentCacheEntry>();
 
@@ -257,12 +251,6 @@ export function createCollectionCountApp(
       }
     }
 
-    const cached = cache && cache.expiresAt > Date.now() ? cache.result : null;
-    if (cached && !disableFallback && !config.forceCollectionCountFallback) {
-      setCollectionCountHeaders(c, cached);
-      return c.json(cached.rows);
-    }
-
     const result = await resolveCollectionCount({
       config,
       runtimeStatus,
@@ -281,7 +269,6 @@ export function createCollectionCountApp(
       return c.json({ error: 'unavailable' }, 503);
     }
 
-    cache = config.responseCacheTtlMs > 0 ? { expiresAt: Date.now() + config.responseCacheTtlMs, result: result.result } : null;
     setCollectionCountHeaders(c, result.result);
     return c.json(result.result.rows);
   });
