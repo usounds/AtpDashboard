@@ -176,6 +176,8 @@ FROM system.query_log
 WHERE event_time >= now() - INTERVAL 30 MINUTE
   AND query ILIKE '%collection_events%'
   AND query ILIKE '%GROUP BY%collection%'
+  AND query NOT ILIKE '%system.processes%'
+  AND query NOT ILIKE '%system.query_log%'
   AND query NOT ILIKE '%collection_count_bootstrap_bounded%'
   AND query NOT ILIKE '%collection_count_incremental_catchup%'
   AND query NOT ILIKE '%collection_count_event_existence_log%'
