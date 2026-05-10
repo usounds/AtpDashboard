@@ -5,6 +5,11 @@ import {
   buildDailyChartSeries,
   buildDailyChartUrl,
 } from '../components/Charts/dailyChart.ts';
+import {
+  buildEventChartCategories,
+  buildEventChartSeries,
+  buildEventCountsUrl,
+} from '../components/Charts/eventChart.ts';
 
 test('builds daily collections URL on ClickHouse analytics API', () => {
   assert.equal(
@@ -42,4 +47,39 @@ test('keeps yearly 30 day bucket offsets from the API', () => {
   ];
 
   assert.deepEqual(buildDailyChartCategories(rows), ['-360', '0']);
+});
+
+test('builds event counts URL on ClickHouse analytics API', () => {
+  assert.equal(
+    buildEventCountsUrl('30 Days', {}),
+    'https://dashboardapi.usounds.work/api/analytics/event_counts?days=30',
+  );
+});
+
+test('builds yearly event counts URL with 30 day buckets', () => {
+  assert.equal(
+    buildEventCountsUrl('365 Days', {
+      VITE_ANALYTICS_API_BASE: 'https://example.com/api/analytics',
+    }),
+    'https://example.com/api/analytics/event_counts?days=365&bucket_days=30',
+  );
+});
+
+test('maps event count rows to categories and series', () => {
+  const rows = [
+    { date: '2026-05-08', day_offset: -1, count: 120 },
+    { date: '2026-05-09', day_offset: 0, count: 150 },
+  ];
+
+  assert.deepEqual(buildEventChartCategories(rows), ['-1', 'Today']);
+  assert.deepEqual(buildEventChartSeries(rows), [{ name: 'Events', data: [120, 150] }]);
+});
+
+test('keeps yearly event count 30 day bucket offsets from the API', () => {
+  const rows = [
+    { date: '2025-05-14', day_offset: -360, count: 1250 },
+    { date: '2026-05-09', day_offset: 0, count: 1530 },
+  ];
+
+  assert.deepEqual(buildEventChartCategories(rows), ['-360', 'Today']);
 });

@@ -7,7 +7,9 @@ import {
   readCollectionsForNamespaceFromClickHouse,
   readDailyCollectionsFromClickHouse,
   readDailyUsersFromClickHouse,
+  readEventCountsFromClickHouse,
   readNewCollectionsFromClickHouse,
+  readUniqueDidCountFromClickHouse,
 } from './mcp-insights.ts';
 import type { ClickHouseQueryClient } from './clickhouse.ts';
 
@@ -158,6 +160,69 @@ test('reads daily collections as active and new collection series', async () => 
       new: 31,
     },
   ]);
+});
+
+test('reads event counts as rolling bucket series', async () => {
+  let capturedQuery = '';
+  let capturedQueryParams: Record<string, unknown> = {};
+  const client: ClickHouseQueryClient = {
+    async query(queryParams) {
+      capturedQuery = queryParams.query;
+      capturedQueryParams = queryParams.query_params ?? {};
+      return {
+        async json<T>() {
+          return [
+            {
+              date: '2026-05-09',
+              day_offset: 0,
+              count: 12345,
+            },
+          ] as T;
+        },
+      };
+    },
+  };
+
+  const rows = await readEventCountsFromClickHouse(client, { clickhouseTimeoutMs: 1000 }, { days: 365, bucketDays: 30 });
+
+  assert.equal(capturedQueryParams.days, 365);
+  assert.equal(capturedQueryParams.bucket_count, 13);
+  assert.equal(capturedQueryParams.bucket_days, 30);
+  assert.equal(capturedQueryParams.bucket_seconds, 2592000);
+  assert.match(capturedQuery, /count\(\) AS count/);
+  assert.match(capturedQuery, /toUInt16\(intDiv\(dateDiff\('second', created_at, latest_at\), bucket_seconds\)\) AS bucket_index/);
+  assert.match(capturedQuery, /ORDER BY bucket_end_at ASC/);
+  assert.deepEqual(rows, [
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      count: 12345,
+    },
+  ]);
+});
+
+test('reads unique DID count from ClickHouse', async () => {
+  let capturedQuery = '';
+  const client: ClickHouseQueryClient = {
+    async query(queryParams) {
+      capturedQuery = queryParams.query;
+      return {
+        async json<T>() {
+          return [
+            {
+              unique_did_count: 183165,
+            },
+          ] as T;
+        },
+      };
+    },
+  };
+
+  const result = await readUniqueDidCountFromClickHouse(client, { clickhouseTimeoutMs: 1000 });
+
+  assert.match(capturedQuery, /uniqExact\(did\) AS unique_did_count/);
+  assert.match(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.deepEqual(result, { unique_did_count: 183165 });
 });
 
 test('parses MCP daily user days up to one year', () => {

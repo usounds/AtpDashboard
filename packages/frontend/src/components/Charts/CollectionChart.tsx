@@ -1,7 +1,13 @@
 import { ApexOptions } from 'apexcharts';
 import ReactApexChart from 'react-apexcharts';
 import React, { useEffect, useState } from 'react';
-import { DailySummary } from '../../types/collection';
+import {
+  buildEventChartCategories,
+  buildEventChartSeries,
+  buildEventCountsUrl,
+  type EventChartRange,
+  type EventCountsResponse,
+} from './eventChart';
 
 const options: ApexOptions = {
   legend: {
@@ -122,23 +128,18 @@ const CollectionChart: React.FC = () => {
     series: [
     ],
   });
-  const [range, setRange] = useState<string>('30 Days');
+  const [range, setRange] = useState<EventChartRange>('30 Days');
   const [currentOption, setCurrentOption] = useState<ApexOptions>(options);
 
   const loadData = async () => {
-    const limit = range === '7 Days' ? 7 : range === '30 Days' ? 30 : 365;
-
-    const summary = await fetch('https://collectiondata.usounds.work/collection_daily_summary_view?limit=' + limit);
+    const summary = await fetch(buildEventCountsUrl(range));
     if (!summary.ok) {
       throw new Error(`Error: ${summary.statusText}`);
     }
 
-    const summaryList = await summary.json() as DailySummary[];
-    const reversedSummaryList = [...summaryList].reverse();
-
-    const categories = reversedSummaryList.map(({ day }) =>
-      day === 1 ? 'Today' : `-${day - 1}`
-    );
+    const result = await summary.json() as EventCountsResponse;
+    const categories = buildEventChartCategories(result.rows);
+    const series = buildEventChartSeries(result.rows);
 
     const updatedOptions = {
       ...options,
@@ -148,28 +149,19 @@ const CollectionChart: React.FC = () => {
       }
     };
 
-    const data = reversedSummaryList.map(({ count }) =>
-      count
-    );
+    const data = series[0].data;
 
-    const maxValue = Math.max(...data);
-    const roundedMaxValue = Math.ceil(maxValue / 1000) * 1000;
+    const maxValue = Math.max(...data, 0);
+    const roundedMaxValue = Math.max(Math.ceil(maxValue / 1000) * 1000, 1);
+    updatedOptions.yaxis = {
+      ...(options.yaxis as ApexYAxis),
+      max: roundedMaxValue,
+    };
 
-    if (options.yaxis) {
-      (options.yaxis as ApexYAxis).max = roundedMaxValue;
-    }
-
-    console.log(data)
     setState({
-      series: [
-        {
-          name: 'Events',
-          data: data,
-        },
-      ],
+      series,
     });
 
-    console.log(options)
     setCurrentOption(updatedOptions)
 
   }

@@ -1,5 +1,5 @@
 import { ApexOptions } from 'apexcharts';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactApexChart from 'react-apexcharts';
 import {
   buildDailyChartCategories,
@@ -138,6 +138,8 @@ const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, ti
   });
   const [range, setRange] = useState<DailyChartRange>('30 Days');
   const [currentOption, setCurrentOption] = useState<ApexOptions>(options);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const requestIdRef = useRef(0);
   const handleReset = () => {
     setState((prevState) => ({
       ...prevState,
@@ -145,7 +147,7 @@ const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, ti
   };
   handleReset;
 
-  const loadData = async () => {
+  const loadData = async (requestId: number) => {
     const response = await fetch(buildDailyChartUrl(metric, range));
     if (!response.ok) {
       throw new Error(`Error: ${response.statusText}`);
@@ -156,6 +158,10 @@ const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, ti
     const series = buildDailyChartSeries(result.rows, activeTitle, newTitle);
     const activeValues = result.rows.map((row) => row.active);
     const maxValue = Math.max(...activeValues, 0) * 1.05;
+
+    if (requestId !== requestIdRef.current) {
+      return;
+    }
 
     setCurrentOption((prevOptions) => ({
       ...prevOptions,
@@ -175,18 +181,27 @@ const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, ti
   };
 
   useEffect(() => {
-    // データを取得する非同期関数
+    let cancelled = false;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+
     const fetchData = async () => {
+      setIsLoading(true);
       try {
-
-        await loadData()
-
+        await loadData(requestId)
       } catch (err: any) {
         //setError(err.message);
+      } finally {
+        if (!cancelled && requestId === requestIdRef.current) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchData();
+    return () => {
+      cancelled = true;
+    };
   }, [metric, range]);
 
   return (
@@ -230,7 +245,12 @@ const WeekChart: React.FC<WeekChartProps> = ({ metric, newTitle, activeTitle, ti
       </div>
 
       <div>
-        <div id="chartTwo" className="-ml-5 -mb-9">
+        <div id="chartTwo" className="relative -ml-5 -mb-9">
+          {isLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-boxdark/60" aria-label="Loading chart">
+              <span className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary" />
+            </div>
+          )}
           <ReactApexChart
             options={currentOption}
             series={state.series}

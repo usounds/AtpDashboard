@@ -64,6 +64,16 @@ export type DailyChartBucketParams = {
   bucketDays?: number;
 };
 
+export type EventCountRow = {
+  date: string;
+  day_offset: number;
+  count: number;
+};
+
+export type UniqueDidCountRow = {
+  unique_did_count: number;
+};
+
 export type LatestCollectionRecordPointer = {
   collection: string;
   created_at: string;
@@ -95,6 +105,16 @@ type RawDailyCollectionRow = {
   day_offset: string | number;
   active: string | number;
   new: string | number;
+};
+
+type RawEventCountRow = {
+  date: string;
+  day_offset: string | number;
+  count: string | number;
+};
+
+type RawUniqueDidCountRow = {
+  unique_did_count: string | number;
 };
 
 type RawNamespaceCollectionRow = {
@@ -442,6 +462,91 @@ ORDER BY bucket_end_at ASC
     active: Number(row.active),
     new: Number(row.new),
   }));
+}
+
+export async function readEventCountsFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+  params: DailyChartBucketParams,
+): Promise<EventCountRow[]> {
+  const bucketDays = params.bucketDays ?? 1;
+  const bucketCount = Math.ceil(params.days / bucketDays);
+  const bucketSeconds = bucketDays * 86400;
+  const result = await withTimeout(
+    client.query({
+      query: `
+WITH
+  {days:UInt16} AS lookback_days,
+  {bucket_count:UInt16} AS bucket_count,
+  {bucket_days:UInt16} AS bucket_days,
+  {bucket_seconds:UInt32} AS bucket_seconds,
+  (
+    SELECT max(created_at)
+    FROM atp_dashboard.collection_events
+    WHERE isNotNull(created_at)
+  ) AS latest_at
+SELECT
+  formatDateTime(bucket_end_at, '%Y-%m-%d', 'UTC') AS date,
+  -toInt16(bucket_index * bucket_days) AS day_offset,
+  coalesce(events.count, 0) AS count
+FROM
+(
+  SELECT
+    toUInt16(arrayJoin(range(bucket_count))) AS bucket_index,
+    latest_at - toIntervalSecond(bucket_index * bucket_seconds) AS bucket_end_at
+) days
+LEFT JOIN
+(
+  SELECT
+    toUInt16(intDiv(dateDiff('second', created_at, latest_at), bucket_seconds)) AS bucket_index,
+    count() AS count
+  FROM atp_dashboard.collection_events
+  WHERE isNotNull(created_at)
+    AND created_at > latest_at - toIntervalDay(lookback_days)
+    AND created_at <= latest_at
+  GROUP BY bucket_index
+) events USING bucket_index
+ORDER BY bucket_end_at ASC
+`,
+      query_params: {
+        days: params.days,
+        bucket_count: bucketCount,
+        bucket_days: bucketDays,
+        bucket_seconds: bucketSeconds,
+      },
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse event_counts query timed out',
+  );
+  const rows = await result.json<RawEventCountRow[]>();
+  return rows.map((row) => ({
+    date: row.date,
+    day_offset: Number(row.day_offset),
+    count: Number(row.count),
+  }));
+}
+
+export async function readUniqueDidCountFromClickHouse(
+  client: ClickHouseQueryClient,
+  config: Pick<CollectionCountApiConfig, 'clickhouseTimeoutMs'>,
+): Promise<UniqueDidCountRow> {
+  const result = await withTimeout(
+    client.query({
+      query: `
+SELECT uniqExact(did) AS unique_did_count
+FROM atp_dashboard.collection_events
+WHERE did != ''
+`,
+      format: 'JSONEachRow',
+    }),
+    config.clickhouseTimeoutMs,
+    'ClickHouse unique_did_count query timed out',
+  );
+  const rows = await result.json<RawUniqueDidCountRow[]>();
+  return {
+    unique_did_count: Number(rows[0]?.unique_did_count ?? 0),
+  };
 }
 
 export async function readCollectionsForNamespaceFromClickHouse(

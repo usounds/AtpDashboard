@@ -628,6 +628,172 @@ test('serves yearly daily chart endpoint as 30 day buckets', async () => {
   });
 });
 
+test('serves cached event counts chart endpoint from ClickHouse', async () => {
+  let queryCount = 0;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          queryCount += 1;
+          return {
+            async json<T>() {
+              return [
+                {
+                  date: '2026-05-08',
+                  day_offset: -1,
+                  count: 12000,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  count: 13500,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/event_counts?days=30');
+  const second = await app.request('/api/analytics/event_counts?days=30');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Cache'), 'MISS');
+  assert.equal(second.headers.get('X-Cache'), 'HIT');
+  assert.equal(queryCount, 1);
+  assert.deepEqual(body, {
+    tool: 'event_counts',
+    parameters: {
+      days: 30,
+      bucket_days: 1,
+    },
+    rows: [
+      {
+        date: '2026-05-08',
+        day_offset: -1,
+        count: 12000,
+      },
+      {
+        date: '2026-05-09',
+        day_offset: 0,
+        count: 13500,
+      },
+    ],
+    cache: {
+      status: 'HIT',
+      key: 'event_counts:days=30:bucket_days=1',
+      ttl_seconds: 600,
+    },
+  });
+});
+
+test('serves yearly event counts as 30 day buckets', async () => {
+  let queryParams: Record<string, unknown> | null = null;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query(params) {
+          queryParams = params.query_params as Record<string, unknown>;
+          return {
+            async json<T>() {
+              return [
+                {
+                  date: '2025-05-14',
+                  day_offset: -360,
+                  count: 100000,
+                },
+                {
+                  date: '2026-05-09',
+                  day_offset: 0,
+                  count: 150000,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const response = await app.request('/api/analytics/event_counts?days=365&bucket_days=30');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.parameters, {
+    days: 365,
+    bucket_days: 30,
+  });
+  assert.deepEqual(body.rows, [
+    {
+      date: '2025-05-14',
+      day_offset: -360,
+      count: 100000,
+    },
+    {
+      date: '2026-05-09',
+      day_offset: 0,
+      count: 150000,
+    },
+  ]);
+  assert.deepEqual(queryParams, {
+    days: 365,
+    bucket_count: 13,
+    bucket_days: 30,
+    bucket_seconds: 2592000,
+  });
+});
+
+test('serves cached unique DID count endpoint from ClickHouse', async () => {
+  let queryCount = 0;
+  const app = createCollectionCountApp(
+    {
+      ...baseConfig,
+      clickhouseUrl: 'http://localhost:8123',
+    },
+    {
+      clickhouse: {
+        async query() {
+          queryCount += 1;
+          return {
+            async json<T>() {
+              return [
+                {
+                  unique_did_count: 183165,
+                },
+              ] as T;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  const first = await app.request('/api/analytics/unique_did_count');
+  const second = await app.request('/api/analytics/unique_did_count');
+  const body = await second.json();
+
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('X-Data-Source'), 'clickhouse');
+  assert.equal(first.headers.get('X-Cache'), 'MISS');
+  assert.equal(second.headers.get('X-Cache'), 'HIT');
+  assert.equal(queryCount, 1);
+  assert.deepEqual(body, {
+    unique_did_count: 183165,
+  });
+});
+
 test('serves compact new collection groups HTTP endpoint', async () => {
   const app = createCollectionCountApp(
     {

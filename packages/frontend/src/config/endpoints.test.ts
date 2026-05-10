@@ -31,6 +31,10 @@ test('uses ClickHouse analytics API base by default', () => {
         resolveAnalyticsEndpoint('daily_collections', {}),
         'https://dashboardapi.usounds.work/api/analytics/daily_collections',
     );
+    assert.equal(
+        resolveAnalyticsEndpoint('unique_did_count', {}),
+        'https://dashboardapi.usounds.work/api/analytics/unique_did_count',
+    );
 });
 
 test('uses configured analytics API base when provided', () => {
@@ -39,5 +43,11 @@ test('uses configured analytics API base when provided', () => {
             VITE_ANALYTICS_API_BASE: 'https://example.com/api/analytics/',
         }),
         'https://example.com/api/analytics/daily_users',
+    );
+    assert.equal(
+        resolveAnalyticsEndpoint('/event_counts', {
+            VITE_ANALYTICS_API_BASE: 'https://example.com/api/analytics/',
+        }),
+        'https://example.com/api/analytics/event_counts',
     );
 });
