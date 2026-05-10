@@ -161,6 +161,8 @@ sudo cp packages/clickhouse-tools/CollectionEventsRescan.service /etc/systemd/sy
 sudo cp packages/clickhouse-tools/CollectionEventsRescan.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountRefresh.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountRefresh.timer /etc/systemd/system/
+sudo cp packages/clickhouse-tools/AnalyticsChartsRefresh.service /etc/systemd/system/
+sudo cp packages/clickhouse-tools/AnalyticsChartsRefresh.timer /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountCompare.service /etc/systemd/system/
 sudo cp packages/clickhouse-tools/CollectionCountCompare.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -395,10 +397,20 @@ CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
 ```bash
 CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
   CLICKHOUSE_DATABASE=atp_dashboard \
-  pnpm refresh:collection-count -- \
+pnpm refresh:collection-count -- \
     --confirm-production \
     --stale-running-minutes 60 \
     --recent-hours 72
+```
+
+analytics chart snapshot も初回デプロイ時に手動更新する:
+
+```bash
+CLICKHOUSE_URL=http://clickhouse_user:REDACTED@127.0.0.1:8123 \
+  CLICKHOUSE_DATABASE=atp_dashboard \
+  pnpm refresh:analytics-charts -- \
+    --confirm-production \
+    --stale-running-minutes 60
 ```
 
 確認:
