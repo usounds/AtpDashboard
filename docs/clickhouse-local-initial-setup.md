@@ -248,6 +248,13 @@ rtk docker exec -i atpdashboard-clickhouse clickhouse-client \
   --multiquery < sql/clickhouse/003_collection_count_refresh.sql
 ```
 
+```bash
+rtk docker exec -i atpdashboard-clickhouse clickhouse-client \
+  --user default \
+  --password clickhouse \
+  --multiquery < sql/clickhouse/004_analytics_chart_snapshot.sql
+```
+
 確認:
 
 ```bash
@@ -260,6 +267,8 @@ rtk curl 'http://default:clickhouse@127.0.0.1:8123/' --data-binary 'SHOW TABLES 
 collection_count_refresh_manifest
 collection_count_snapshot
 collection_events
+analytics_chart_refresh_manifest
+analytics_chart_snapshot
 ```
 
 ## 7. backfill dry-run

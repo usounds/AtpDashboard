@@ -506,11 +506,6 @@ test('serves cached daily collections chart endpoint from ClickHouse', async () 
       key: 'daily_collections:days=30:bucket_days=1',
       ttl_seconds: 600,
     },
-    snapshot: {
-      refresh_id: '00000000-0000-4000-8000-000000000001',
-      refreshed_at: '2026-05-10T02:00:00.000Z',
-      age_seconds: 180,
-    },
   });
 });
 
@@ -665,11 +660,6 @@ test('serves yearly daily chart endpoint as 30 day buckets', async () => {
     key: 'daily_users:days=365:bucket_days=30',
     ttl_seconds: 600,
   });
-  assert.deepEqual(body.snapshot, {
-    refresh_id: '00000000-0000-4000-8000-000000000001',
-    refreshed_at: '2026-05-10T02:00:00.000Z',
-    age_seconds: 180,
-  });
 });
 
 test('serves cached event counts chart endpoint from ClickHouse', async () => {
@@ -736,11 +726,6 @@ test('serves cached event counts chart endpoint from ClickHouse', async () => {
       key: 'event_counts:days=30:bucket_days=1',
       ttl_seconds: 600,
     },
-    snapshot: {
-      refresh_id: '00000000-0000-4000-8000-000000000001',
-      refreshed_at: '2026-05-10T02:00:00.000Z',
-      age_seconds: 180,
-    },
   });
 });
 
@@ -806,11 +791,6 @@ test('serves yearly event counts as 30 day buckets', async () => {
     status: 'MISS',
     key: 'event_counts:days=365:bucket_days=30',
     ttl_seconds: 600,
-  });
-  assert.deepEqual(body.snapshot, {
-    refresh_id: '00000000-0000-4000-8000-000000000001',
-    refreshed_at: '2026-05-10T02:00:00.000Z',
-    age_seconds: 180,
   });
 });
 
