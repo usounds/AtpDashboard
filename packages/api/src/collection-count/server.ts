@@ -110,6 +110,15 @@ type LexiconResolutionSummary = {
   guidance: string;
 };
 
+type McpLexiconSummary = {
+  collection: string;
+  schema_available: boolean;
+  summary: string;
+  schema?: Record<string, unknown>;
+  lexicon_record_url?: string;
+  guidance: string;
+};
+
 type DidDocumentCacheEntry = {
   expiresAt: number;
   value?: Record<string, unknown>;
@@ -869,7 +878,7 @@ function formatNamespaceCollectionsToolResult(
       instruction:
         'Lexicon definitions may be read and summarized as schema JSON. Actual record data JSON must never be displayed inline in chat.',
       response_guidance:
-        'Explain the Lexicon purpose, fields, types, and refs. For actual user record data, provide only pds.ls/getRecord URLs.',
+        'When schema_available is true, explain the Lexicon purpose, fields, types, and refs. When schema_available is false, say the schema is not available in the current data and describe the NSID cautiously from its name and observed activity. Do not mention resolver internals, DNS lookup names, or raw status codes unless the user explicitly asks for diagnostics. For actual user record data, provide only pds.ls/getRecord URLs.',
     },
     parameters: {
       namespace_prefix: result.namespacePrefix,
@@ -931,12 +940,37 @@ function formatNamespaceCollectionsResult(
         get_record_url: row.latest_record_get_record_url,
         guidance: 'Do not fetch or paste raw record JSON inline. Send the user to pds_ls_url to inspect actual data.',
       },
-      lexicon: lexicons.get(row.collection) ?? {
-        collection: row.collection,
-        status: 'not_resolved',
-        guidance: 'Lexicon was not resolved for this response. Do not inspect actual record JSON inline.',
-      },
+      lexicon: formatLexiconSummaryForMcp(
+        lexicons.get(row.collection) ?? {
+          collection: row.collection,
+          authority_domain: getLexiconAuthorityDomain(row.collection),
+          dns_name: '',
+          status: 'not_found',
+          guidance: '',
+        },
+      ),
     })),
+  };
+}
+
+function formatLexiconSummaryForMcp(summary: LexiconResolutionSummary): McpLexiconSummary {
+  if (summary.status === 'found' && summary.schema) {
+    return {
+      collection: summary.collection,
+      schema_available: true,
+      summary: 'Lexicon schema is available and may be used to explain fields, types, and references.',
+      schema: summary.schema,
+      lexicon_record_url: summary.lexicon_record_url,
+      guidance: 'Use the schema for explanation. Do not fetch or paste actual record JSON inline.',
+    };
+  }
+
+  return {
+    collection: summary.collection,
+    schema_available: false,
+    summary: 'Lexicon schema is not available from the current data; describe this NSID cautiously from its name and observed activity.',
+    guidance:
+      'Avoid presenting resolver details, DNS lookup names, raw status labels, or error text unless the user explicitly asks for diagnostics. Do not fetch or paste actual record JSON inline.',
   };
 }
 

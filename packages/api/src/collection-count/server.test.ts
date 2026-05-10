@@ -1133,6 +1133,7 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
   assert.match(parsedToolText.raw_record_display_policy.pds_ls_instruction, /pds\.ls/);
   assert.equal(parsedToolText.lexicon_policy.lexicon_json_allowed_for_schema_understanding, true);
   assert.match(parsedToolText.lexicon_policy.instruction, /Actual record data JSON must never/);
+  assert.match(parsedToolText.lexicon_policy.response_guidance, /Do not mention resolver internals/);
   assert.deepEqual(parsedToolText.parameters, { namespace_prefix: 'app.chavatar' });
   assert.equal(parsedToolText.result.returned_nsid_count, 2);
   assert.deepEqual(
@@ -1146,9 +1147,11 @@ test('serves MCP get_collections_for_namespace with all observed child NSIDs', a
     get_record_url: 'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aschedule&collection=app.chavatar.schedules&rkey=self',
     guidance: 'Do not fetch or paste raw record JSON inline. Send the user to pds_ls_url to inspect actual data.',
   });
-  assert.equal(parsedToolText.result.nsids[1].lexicon.status, 'found');
-  assert.equal(parsedToolText.result.nsids[1].lexicon.authority_domain, 'chavatar.app');
-  assert.equal(parsedToolText.result.nsids[1].lexicon.dns_name, '_lexicon.chavatar.app');
+  assert.equal(parsedToolText.result.nsids[1].lexicon.schema_available, true);
+  assert.match(parsedToolText.result.nsids[1].lexicon.summary, /schema is available/);
+  assert.equal(parsedToolText.result.nsids[1].lexicon.lexicon_record_url, 'https://pds.example/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Alexicon&collection=com.atproto.lexicon.schema&rkey=app.chavatar.schedules');
+  assert.equal('status' in parsedToolText.result.nsids[1].lexicon, false);
+  assert.equal('dns_name' in parsedToolText.result.nsids[1].lexicon, false);
   assert.equal(parsedToolText.result.nsids[1].lexicon.schema.id, 'app.chavatar.schedules');
   assert.equal(parsedToolText.result.nsids[1].lexicon.schema.defs.main.description, 'Schedule settings');
   assert.deepEqual(parsedToolText.result.nsids[1].lexicon.schema.defs.main.record.required, ['enabled']);
