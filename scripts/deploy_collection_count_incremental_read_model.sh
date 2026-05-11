@@ -14,6 +14,7 @@ BOOTSTRAP_LOCK_MAX_WAIT_SECONDS="${BOOTSTRAP_LOCK_MAX_WAIT_SECONDS:-1800}"
 INCREMENTAL_MAX_ROWS="${INCREMENTAL_MAX_ROWS:-500000}"
 INCREMENTAL_MAX_SPAN_SECONDS="${INCREMENTAL_MAX_SPAN_SECONDS:-600}"
 INCREMENTAL_MAX_ESTIMATED_BYTES="${INCREMENTAL_MAX_ESTIMATED_BYTES:-536870912}"
+INCREMENTAL_CATCHUP_MAX_LOOPS="${INCREMENTAL_CATCHUP_MAX_LOOPS:-1000}"
 SAFETY_LAG_SECONDS="${SAFETY_LAG_SECONDS:-300}"
 COLLECTION_COUNT_RETENTION_MODE="${COLLECTION_COUNT_RETENTION_MODE:-safe-disabled}"
 LOAD_GATE_QUERY_LOG_SINCE="${LOAD_GATE_QUERY_LOG_SINCE:-}"
@@ -224,6 +225,28 @@ publish_snapshot_under_lock() {
       --max-queued-at-span-seconds "$INCREMENTAL_MAX_SPAN_SECONDS" \
       --max-estimated-bytes "$INCREMENTAL_MAX_ESTIMATED_BYTES" \
       --retention-mode "$COLLECTION_COUNT_RETENTION_MODE"
+}
+
+queue_backlog_after_latest_valid() {
+  scalar "WITH $(latest_valid_cte)
+SELECT count()
+FROM atp_dashboard.collection_count_ingest_queue AS q
+CROSS JOIN latest_valid_completed AS v
+WHERE (q.queued_at, q.event_key, q.queue_seq) > (v.cutoff_queued_at, v.cutoff_event_key, v.cutoff_queue_seq)"
+}
+
+catch_up_incremental_queue() {
+  local loop backlog
+  for ((loop = 1; loop <= INCREMENTAL_CATCHUP_MAX_LOOPS; loop += 1)); do
+    backlog="$(queue_backlog_after_latest_valid)"
+    log "incremental catch-up loop=$loop backlog_after_latest_valid=$backlog"
+    if [[ "$backlog" == "0" ]]; then
+      return
+    fi
+    publish_snapshot_under_lock
+    run_verification_repair_and_gates
+  done
+  fail "incremental catch-up did not drain within INCREMENTAL_CATCHUP_MAX_LOOPS=$INCREMENTAL_CATCHUP_MAX_LOOPS"
 }
 
 latest_valid_cte() {
@@ -501,8 +524,7 @@ verify_dual_write_static_paths
 record_bootstrap_high
 backfill_through_bootstrap_high
 run_verification_repair_and_gates
-publish_snapshot_under_lock
-run_verification_repair_and_gates
+catch_up_incremental_queue
 verify_visible_v2_marker
 run_api_continuity_checks_current_live
 restart_api_for_cutover
