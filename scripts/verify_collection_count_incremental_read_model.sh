@@ -13,6 +13,7 @@ CONFIRM=false
 REPAIR=false
 P1_GATES=false
 LOAD_GATES=false
+REPAIR_MAX_LOOPS="${REPAIR_MAX_LOOPS:-5}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -210,10 +211,8 @@ WHERE queue_seq != ''
 "
 }
 
-verify_queue_invariants() {
-  local missing_count orphan_count empty_queue_seq conflict_count unsafe_count
-
-  missing_count="$(scalar "
+queue_missing_count() {
+  scalar "
 WITH
 $(latest_valid_cte),
 watermark AS
@@ -233,7 +232,25 @@ LEFT JOIN collection_count_ingest_queue AS q
 WHERE q.event_key = ''
   AND e.did != 'did:web:lexicon.store'
   AND (e.written_at, e.event_key, concat(toString(toUnixTimestamp64Milli(e.written_at)), '-existence')) > (w.cutoff_queued_at, w.cutoff_event_key, w.cutoff_queue_seq)
-")"
+"
+}
+
+repair_missing_queue_until_stable() {
+  local loop missing_count
+  for ((loop = 1; loop <= REPAIR_MAX_LOOPS; loop += 1)); do
+    missing_count="$(queue_missing_count)"
+    if [[ "$missing_count" == "0" ]]; then
+      return
+    fi
+    log "queue_missing=$missing_count before repair loop=$loop"
+    repair_missing_queue_from_existence_log
+  done
+}
+
+verify_queue_invariants() {
+  local missing_count orphan_count empty_queue_seq conflict_count unsafe_count
+
+  missing_count="$(queue_missing_count)"
 
   orphan_count="$(scalar "
 SELECT count()
@@ -555,7 +572,7 @@ WHERE event_time >= parseDateTimeBestEffort('$query_log_since')
 }
 
 if [[ "$REPAIR" == true ]]; then
-  repair_missing_queue_from_existence_log
+  repair_missing_queue_until_stable
 fi
 
 verify_queue_invariants
