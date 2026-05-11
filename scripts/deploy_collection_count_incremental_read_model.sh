@@ -229,22 +229,21 @@ publish_snapshot_under_lock() {
 
 queue_backlog_after_latest_valid() {
   scalar "WITH $(latest_valid_cte)
-SELECT count()
-FROM atp_dashboard.collection_count_ingest_queue AS q
-CROSS JOIN latest_valid_completed AS v
-WHERE (q.queued_at, q.event_key, q.queue_seq) > (v.cutoff_queued_at, v.cutoff_event_key, v.cutoff_queue_seq)"
+SELECT source_rows
+FROM latest_valid_completed"
 }
 
 catch_up_incremental_queue() {
-  local loop backlog
+  local loop processed_rows
   for ((loop = 1; loop <= INCREMENTAL_CATCHUP_MAX_LOOPS; loop += 1)); do
-    backlog="$(queue_backlog_after_latest_valid)"
-    log "incremental catch-up loop=$loop backlog_after_latest_valid=$backlog"
-    if [[ "$backlog" == "0" ]]; then
-      return
-    fi
+    log "incremental catch-up loop=$loop publishing next bounded batch"
     publish_snapshot_under_lock
     run_verification_repair_and_gates
+    processed_rows="$(queue_backlog_after_latest_valid)"
+    log "incremental catch-up loop=$loop source_rows=$processed_rows"
+    if [[ "$processed_rows" == "0" ]]; then
+      return
+    fi
   done
   fail "incremental catch-up did not drain within INCREMENTAL_CATCHUP_MAX_LOOPS=$INCREMENTAL_CATCHUP_MAX_LOOPS"
 }
@@ -262,6 +261,7 @@ latest_manifest AS
     argMax(cutoff_event_key, tuple(updated_at, status_version)) AS cutoff_event_key,
     argMax(cutoff_queue_seq, tuple(updated_at, status_version)) AS cutoff_queue_seq,
     argMax(snapshot_anchor_at, tuple(updated_at, status_version)) AS snapshot_anchor_at,
+    argMax(source_rows, tuple(updated_at, status_version)) AS source_rows,
     argMax(snapshot_written, tuple(updated_at, status_version)) AS snapshot_written,
     argMax(event_seen_written, tuple(updated_at, status_version)) AS event_seen_written,
     argMax(event_conflict_written, tuple(updated_at, status_version)) AS event_conflict_written,
