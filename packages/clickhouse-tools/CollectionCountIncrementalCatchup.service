@@ -1,0 +1,20 @@
+[Unit]
+Description=AtpDashboard ClickHouse incremental collection_count catch-up runner
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/AtpDashboard
+EnvironmentFile=-/etc/atpdashboard/clickhouse.env
+Environment=MAX_LOOPS=1000
+Environment=MAX_ROWS=500000
+Environment=SLEEP_SECONDS=5
+ExecStart=/srv/AtpDashboard/scripts/run_collection_count_incremental_catchup.sh --confirm
+KillSignal=SIGINT
+TimeoutStopSec=60
+NoNewPrivileges=true
+StandardOutput=append:/var/log/CollectionCountIncrementalCatchup.log
+StandardError=append:/var/log/CollectionCountIncrementalCatchup.log
+
+[Install]
+WantedBy=multi-user.target
