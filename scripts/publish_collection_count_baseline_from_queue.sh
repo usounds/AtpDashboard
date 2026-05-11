@@ -138,24 +138,24 @@ INSERT INTO collection_count_event_stage
   (run_id, event_key, collection, did, rkey, created_at, created_at_key, created_hour, source_ingested_at, queued_at, queue_seq, payload_hash)
 SELECT
   '$RUN_ID' AS run_id,
-  event_key,
+  q.event_key,
   any(q.collection) AS collection,
   any(q.did) AS did,
   any(q.rkey) AS rkey,
   any(q.created_at) AS created_at,
   any(q.created_at_key) AS created_at_key,
   any(q.created_hour) AS created_hour,
-  min(source_ingested_at) AS source_ingested_at,
-  min(queued_at) AS queued_at,
-  argMin(queue_seq, tuple(queued_at, queue_seq, payload_hash)) AS queue_seq,
-  any(payload_hash) AS payload_hash
+  min(q.source_ingested_at) AS source_ingested_at,
+  min(q.queued_at) AS queued_at,
+  argMin(q.queue_seq, tuple(q.queued_at, q.queue_seq, q.payload_hash)) AS queue_seq,
+  any(q.payload_hash) AS payload_hash
 FROM
 (
   SELECT *
   FROM collection_count_ingest_queue
   WHERE did != 'did:web:lexicon.store'
 ) AS q
-GROUP BY event_key
+GROUP BY q.event_key
 SETTINGS max_threads = 1, max_insert_threads = 1, optimize_aggregation_in_order = 1, max_bytes_before_external_group_by = 268435456, max_bytes_before_external_sort = 268435456;
 
 INSERT INTO collection_count_event_seen_log
