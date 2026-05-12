@@ -16,7 +16,8 @@ log() {
   echo "[collection-count-catchup-service] $*"
 }
 
-log "installing systemd catch-up service"
+log "installing systemd incremental refresh and catch-up services"
+"${SUDO[@]}" cp packages/clickhouse-tools/CollectionCountIncrementalRefresh.service /etc/systemd/system/
 "${SUDO[@]}" cp packages/clickhouse-tools/CollectionCountIncrementalCatchup.service /etc/systemd/system/
 "${SUDO[@]}" systemctl daemon-reload
 
