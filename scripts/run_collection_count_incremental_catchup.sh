@@ -87,9 +87,13 @@ for ((loop = 1; loop <= MAX_LOOPS; loop += 1)); do
     exit 1
   fi
 
-  if [[ "$source_rows" =~ ^[0-9]+$ ]] && (( source_rows < MAX_ROWS )); then
-    log "caught up: last batch source_rows=$source_rows is below max_rows=$MAX_ROWS"
+  if [[ "$source_rows" =~ ^[0-9]+$ ]] && (( source_rows == 0 )); then
+    log "caught up: last batch source_rows=0"
     exit 0
+  fi
+
+  if [[ "$source_rows" =~ ^[0-9]+$ ]] && (( source_rows < MAX_ROWS )); then
+    log "continuing: source_rows=$source_rows is below max_rows=$MAX_ROWS, but bounded queued_at spans can produce partial batches before backlog is drained"
   fi
 
   sleep "$SLEEP_SECONDS"
