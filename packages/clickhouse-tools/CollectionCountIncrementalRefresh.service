@@ -7,7 +7,10 @@ Type=oneshot
 WorkingDirectory=/srv/AtpDashboard/packages/clickhouse-tools
 EnvironmentFile=-/etc/atpdashboard/clickhouse.env
 Environment=CLICKHOUSE_REFRESH_TIMEOUT_MS=600000
-ExecStart=/usr/bin/flock -n /run/atpdashboard-collection-count-incremental.lock /usr/bin/env pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows 500000 --max-queued-at-span-seconds 600 --max-estimated-bytes 536870912
+Environment=INCREMENTAL_MAX_ROWS=500000
+Environment=INCREMENTAL_MAX_SPAN_SECONDS=1200
+Environment=INCREMENTAL_MAX_ESTIMATED_BYTES=536870912
+ExecStart=/usr/bin/flock -n /run/atpdashboard-collection-count-incremental.lock /usr/bin/env bash -lc 'pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows "$INCREMENTAL_MAX_ROWS" --max-queued-at-span-seconds "$INCREMENTAL_MAX_SPAN_SECONDS" --max-estimated-bytes "$INCREMENTAL_MAX_ESTIMATED_BYTES"'
 NoNewPrivileges=true
 StandardOutput=append:/var/log/CollectionCountIncrementalRefresh.log
 StandardError=append:/var/log/CollectionCountIncrementalRefresh.log

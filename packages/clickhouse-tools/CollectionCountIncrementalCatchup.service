@@ -8,6 +8,7 @@ WorkingDirectory=/srv/AtpDashboard
 EnvironmentFile=-/etc/atpdashboard/clickhouse.env
 Environment=MAX_LOOPS=1000
 Environment=MAX_ROWS=500000
+Environment=INCREMENTAL_MAX_SPAN_SECONDS=1200
 Environment=SLEEP_SECONDS=5
 ExecStart=/srv/AtpDashboard/scripts/run_collection_count_incremental_catchup.sh --confirm
 KillSignal=SIGINT
