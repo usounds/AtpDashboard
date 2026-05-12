@@ -27,8 +27,6 @@ test('reads new collections by first record created_at instead of ingestion time
               first_seen_at: '2026-05-09T11:00:00.000000Z',
               event_count: 4,
               latest_record_created_at: '2026-05-09T11:30:00.000000Z',
-              latest_record_did: 'did:plc:example',
-              latest_record_rkey: '3lv4ouczo2b2a',
             },
           ] as T;
         },
@@ -44,23 +42,23 @@ test('reads new collections by first record created_at instead of ingestion time
       first_seen_at: '2026-05-09T11:00:00.000000Z',
       event_count: 4,
       latest_record_created_at: '2026-05-09T11:30:00.000000Z',
-      latest_record_at_uri: 'at://did:plc:example/app.example.backfilled/3lv4ouczo2b2a',
-      latest_record_get_record_url:
-        'https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aexample&collection=app.example.backfilled&rkey=3lv4ouczo2b2a',
+      latest_record_at_uri: '',
+      latest_record_get_record_url: '',
     },
   ]);
-  assert.match(capturedQuery, /SELECT max\(created_at\)/);
-  assert.match(capturedQuery, /WHERE isNotNull\(created_at\)/);
-  assert.match(capturedQuery, /min\(created_at\) AS first_seen_created_at/);
+  assert.match(capturedQuery, /collection_count_refresh_manifest_v2/);
+  assert.match(capturedQuery, /collection_count_snapshot/);
+  assert.match(capturedQuery, /SELECT max\(max_created_at\)/);
   assert.match(capturedQuery, /parseDateTime64BestEffort\(\{start_at:String\}, 6, 'UTC'\)/);
   assert.match(capturedQuery, /parseDateTime64BestEffort\(\{end_exclusive_at:String\}, 6, 'UTC'\)/);
-  assert.match(capturedQuery, /WHERE first_seen_created_at >= range_start_at/);
-  assert.match(capturedQuery, /AND first_seen_created_at < range_end_at/);
-  assert.match(capturedQuery, /uniqExactIf\(event_key, created_at >= range_start_at AND created_at < range_end_at\) AS event_count/);
+  assert.match(capturedQuery, /min_created_at >= range_start_at/);
+  assert.match(capturedQuery, /AND min_created_at < range_end_at/);
+  assert.match(capturedQuery, /total_count AS event_count/);
   assert.doesNotMatch(capturedQuery, /countIf\(created_at >= range_start_at AND created_at < range_end_at\) AS event_count/);
-  assert.match(capturedQuery, /max\(created_at\) AS latest_record_created_at/);
-  assert.match(capturedQuery, /argMax\(did, tuple\(created_at, event_key\)\) AS latest_record_did/);
-  assert.match(capturedQuery, /argMax\(rkey, tuple\(created_at, event_key\)\) AS latest_record_rkey/);
+  assert.match(capturedQuery, /formatDateTime\(max_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC'\) AS latest_record_created_at/);
+  assert.doesNotMatch(capturedQuery, /FROM atp_dashboard\.collection_events/);
+  assert.doesNotMatch(capturedQuery, /argMax\(did, tuple\(created_at, event_key\)\) AS latest_record_did/);
+  assert.doesNotMatch(capturedQuery, /argMax\(rkey, tuple\(created_at, event_key\)\) AS latest_record_rkey/);
   assert.doesNotMatch(capturedQuery, /LIMIT \{row_limit:UInt16\}/);
   assert.doesNotMatch(capturedQuery, /min\(ingested_at\) AS first_seen_ingested_at/);
 });

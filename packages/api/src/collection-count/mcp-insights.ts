@@ -104,8 +104,6 @@ type RawNewCollectionRow = {
   first_seen_at: string;
   event_count: string | number;
   latest_record_created_at: string;
-  latest_record_did: string;
-  latest_record_rkey: string;
 };
 
 type RawDailyUserRow = {
@@ -319,10 +317,43 @@ export async function readNewCollectionsFromClickHouse(
 WITH
   {days:UInt16} AS lookback_days,
   {has_explicit_date_range:Bool} AS has_explicit_date_range,
+  latest_manifest AS
   (
-    SELECT max(created_at)
-    FROM atp_dashboard.collection_events
-    WHERE isNotNull(created_at)
+    SELECT
+      refresh_id,
+      argMax(status, tuple(updated_at, status_version)) AS latest_status,
+      argMax(completed_at, tuple(updated_at, status_version)) AS latest_completed_at,
+      argMax(cutoff_queued_at, tuple(updated_at, status_version)) AS cutoff_queued_at,
+      argMax(cutoff_event_key, tuple(updated_at, status_version)) AS cutoff_event_key,
+      argMax(cutoff_queue_seq, tuple(updated_at, status_version)) AS cutoff_queue_seq,
+      argMax(snapshot_written, tuple(updated_at, status_version)) AS snapshot_written,
+      argMax(validation_passed, tuple(updated_at, status_version)) AS validation_passed,
+      argMax(invalidated_at, tuple(updated_at, status_version)) AS invalidated_at,
+      argMax(is_bootstrap_seed, tuple(updated_at, status_version)) AS is_bootstrap_seed
+    FROM atp_dashboard.collection_count_refresh_manifest_v2
+    GROUP BY refresh_id
+  ),
+  latest_valid_completed AS
+  (
+    SELECT refresh_id
+    FROM latest_manifest
+    WHERE latest_status = 'completed'
+      AND latest_completed_at IS NOT NULL
+      AND invalidated_at IS NULL
+      AND is_bootstrap_seed = 0
+      AND cutoff_queued_at IS NOT NULL
+      AND cutoff_event_key IS NOT NULL
+      AND cutoff_queue_seq != ''
+      AND snapshot_written = 1
+      AND validation_passed = 1
+    ORDER BY latest_completed_at DESC, cutoff_queued_at DESC, cutoff_event_key DESC, cutoff_queue_seq DESC, refresh_id DESC
+    LIMIT 1
+  ),
+  (
+    SELECT max(max_created_at)
+    FROM atp_dashboard.collection_count_snapshot
+    WHERE refresh_id = (SELECT refresh_id FROM latest_valid_completed)
+      AND isNotNull(max_created_at)
   ) AS latest_at,
   if(
     has_explicit_date_range,
@@ -336,35 +367,21 @@ WITH
   ) AS range_end_at
 SELECT
   collection,
-  formatDateTime(first_seen_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
-  event_count,
-  formatDateTime(latest_record_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS latest_record_created_at,
-  latest_record_did,
-  latest_record_rkey
-FROM
-(
-  SELECT
-    collection,
-    min(created_at) AS first_seen_created_at,
-    uniqExactIf(event_key, created_at >= range_start_at AND created_at < range_end_at) AS event_count,
-    max(created_at) AS latest_record_created_at,
-    argMax(did, tuple(created_at, event_key)) AS latest_record_did,
-    argMax(rkey, tuple(created_at, event_key)) AS latest_record_rkey
-  FROM atp_dashboard.collection_events
-  WHERE isNotNull(created_at)
-    AND did != {excluded_did:String}
-  GROUP BY collection
-)
-WHERE first_seen_created_at >= range_start_at
-  AND first_seen_created_at < range_end_at
-ORDER BY first_seen_created_at DESC, event_count DESC, collection ASC
+  formatDateTime(min_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS first_seen_at,
+  total_count AS event_count,
+  formatDateTime(max_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS latest_record_created_at
+FROM atp_dashboard.collection_count_snapshot
+WHERE refresh_id = (SELECT refresh_id FROM latest_valid_completed)
+  AND isNotNull(min_created_at)
+  AND min_created_at >= range_start_at
+  AND min_created_at < range_end_at
+ORDER BY min_created_at DESC, event_count DESC, collection ASC
 `,
       query_params: {
         days: params.days,
         has_explicit_date_range: hasExplicitDateRange ? 1 : 0,
         start_at: params.startDateTime ?? '1970-01-01 00:00:00.000000',
         end_exclusive_at: params.endExclusiveDateTime ?? '1970-01-01 00:00:00.000000',
-        excluded_did: LEXICON_STORE_DID,
       },
       format: 'JSONEachRow',
     }),
@@ -377,8 +394,8 @@ ORDER BY first_seen_created_at DESC, event_count DESC, collection ASC
     first_seen_at: row.first_seen_at,
     event_count: Number(row.event_count),
     latest_record_created_at: row.latest_record_created_at,
-    latest_record_at_uri: buildAtUri(row.latest_record_did, row.collection, row.latest_record_rkey),
-    latest_record_get_record_url: buildGetRecordUrl(row.latest_record_did, row.collection, row.latest_record_rkey),
+    latest_record_at_uri: '',
+    latest_record_get_record_url: '',
   }));
 }
 
