@@ -208,23 +208,54 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
   // エラーは表の上に表示する形に変更
   return (
     <div className="overflow-x-auto">
-      <div className="mb-4 inline-flex items-center gap-1 rounded-md bg-slate-200 p-1.5 dark:bg-meta-4">
-        <button
-          className={`rounded py-1 px-3 text-xs font-medium ${tab === 'summary'
-            ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-            : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-          onClick={() => setTab('summary')}
-        >
-          Summary
-        </button>
-        <button
-          className={`rounded py-1 px-3 text-xs font-medium ${tab === 'cumulative'
-            ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-            : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-          onClick={() => setTab('cumulative')}
-        >
-          Cumulative Users
-        </button>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="inline-flex items-center gap-1 rounded-md bg-slate-200 p-1.5 dark:bg-meta-4">
+          <button
+            className={`rounded py-1 px-3 text-xs font-medium ${tab === 'summary'
+              ? 'text-black bg-white dark:bg-boxdark dark:text-white'
+              : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
+            onClick={() => setTab('summary')}
+          >
+            Summary
+          </button>
+          <button
+            className={`rounded py-1 px-3 text-xs font-medium ${tab === 'cumulative'
+              ? 'text-black bg-white dark:bg-boxdark dark:text-white'
+              : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
+            onClick={() => setTab('cumulative')}
+          >
+            Cumulative Users
+          </button>
+        </div>
+
+        {tab === 'cumulative' && (
+          <div className="inline-flex items-center gap-1 rounded-md bg-slate-200 p-1.5 dark:bg-meta-4">
+            <button
+              className={`rounded py-1 px-3 text-xs font-medium ${range === '7 Days'
+                ? 'text-black bg-white dark:bg-boxdark dark:text-white'
+                : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
+              onClick={() => setRange('7 Days')}
+            >
+              This Week
+            </button>
+            <button
+              className={`rounded py-1 px-3 text-xs font-medium ${range === '30 Days'
+                ? 'text-black bg-white dark:bg-boxdark dark:text-white'
+                : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
+              onClick={() => setRange('30 Days')}
+            >
+              This Month
+            </button>
+            <button
+              className={`rounded py-1 px-3 text-xs font-medium ${range === '365 Days'
+                ? 'text-black bg-white dark:bg-boxdark dark:text-white'
+                : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
+              onClick={() => setRange('365 Days')}
+            >
+              This Year
+            </button>
+          </div>
+        )}
       </div>
 
       {tab === 'summary' && (
@@ -278,34 +309,6 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
       {tab === 'cumulative' && (
         <div>
           {cumulativeError && <div style={{ color: "red" }}>Error: {cumulativeError}</div>}
-          <div className="mb-3 flex justify-end">
-            <div className="inline-flex items-center gap-1 rounded-md bg-slate-200 p-1.5 dark:bg-meta-4">
-              <button
-                className={`rounded py-1 px-3 text-xs font-medium ${range === '7 Days'
-                  ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-                  : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-                onClick={() => setRange('7 Days')}
-              >
-                This Week
-              </button>
-              <button
-                className={`rounded py-1 px-3 text-xs font-medium ${range === '30 Days'
-                  ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-                  : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-                onClick={() => setRange('30 Days')}
-              >
-                This Month
-              </button>
-              <button
-                className={`rounded py-1 px-3 text-xs font-medium ${range === '365 Days'
-                  ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-                  : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-                onClick={() => setRange('365 Days')}
-              >
-                This Year
-              </button>
-            </div>
-          </div>
           <div className="relative pb-2">
             {isCumulativeLoading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-boxdark/60" aria-label="Loading cumulative users">
