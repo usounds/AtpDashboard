@@ -79,6 +79,7 @@ export type BackfillCliOptions = {
   maxRuntimeMinutes: number | null;
   maxRows: number | null;
   rescanDays: number | null;
+  rescanMinutes: number | null;
   bootstrapQueueFromRaw: boolean;
   confirmProduction: boolean;
   checkpointName: string;
@@ -128,6 +129,7 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
     maxRuntimeMinutes: null,
     maxRows: null,
     rescanDays: null,
+    rescanMinutes: null,
     bootstrapQueueFromRaw: false,
     confirmProduction: false,
     checkpointName: DEFAULT_CHECKPOINT_NAME,
@@ -153,6 +155,8 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
       options.maxRows = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--rescan-days') {
       options.rescanDays = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--rescan-minutes') {
+      options.rescanMinutes = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--bootstrap-queue-from-raw') {
       options.bootstrapQueueFromRaw = true;
     } else if (arg === '--resume-from') {
@@ -173,8 +177,11 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
   if (options.limit == null && options.maxRows == null && options.maxRuntimeMinutes == null) {
     throw new Error('Refusing unbounded run. Provide --limit, --max-rows, or --max-runtime-minutes.');
   }
-  if (options.rescanDays != null && options.limit == null && options.maxRows == null) {
-    throw new Error('Refusing unbounded rescan. Provide --limit or --max-rows with --rescan-days.');
+  if (options.rescanDays != null && options.rescanMinutes != null) {
+    throw new Error('Use either --rescan-days or --rescan-minutes, not both.');
+  }
+  if ((options.rescanDays != null || options.rescanMinutes != null) && options.limit == null && options.maxRows == null) {
+    throw new Error('Refusing unbounded rescan. Provide --limit or --max-rows with --rescan-days/--rescan-minutes.');
   }
   if (options.bootstrapQueueFromRaw && options.limit == null && options.maxRows == null) {
     throw new Error('Refusing unbounded raw bootstrap. Provide --limit or --max-rows with --bootstrap-queue-from-raw.');
@@ -474,7 +481,13 @@ LIMIT $5`;
   };
 }
 
-export function buildRecentRescanQuery(rescanDays: number, limit: number): { sql: string; params: unknown[] } {
+export function buildRecentRescanQuery(rescan: { days?: number; minutes?: number }, limit: number): { sql: string; params: unknown[] } {
+  const windowSql = rescan.minutes != null ? '$1::int * interval \'1 minute\'' : '$1::int * interval \'1 day\'';
+  const windowValue = rescan.minutes ?? rescan.days;
+  if (windowValue == null) {
+    throw new Error('rescan window is required');
+  }
+
   return {
     sql: `
 SELECT
@@ -484,10 +497,10 @@ SELECT
   CASE WHEN c."createdAt" IS NULL THEN NULL ELSE to_char(c."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "createdAt"
 FROM public.collection c
 WHERE c."createdAt" IS NOT NULL
-  AND c."createdAt" >= now() - ($1::int * interval '1 day')
+  AND c."createdAt" >= now() - (${windowSql})
 ORDER BY c."createdAt" DESC, c.did ASC, c.collection ASC, c.rkey ASC
 LIMIT $2`,
-    params: [rescanDays, limit],
+    params: [windowValue, limit],
   };
 }
 
@@ -532,16 +545,17 @@ export async function runBackfill(
       };
     }
 
-    if (options.rescanDays != null) {
+    if (options.rescanDays != null || options.rescanMinutes != null) {
       const effectiveLimit = options.maxRows ?? options.limit ?? options.batchSize;
-      const { sql, params } = buildRecentRescanQuery(options.rescanDays, effectiveLimit);
+      const { sql, params } = buildRecentRescanQuery({ days: options.rescanDays ?? undefined, minutes: options.rescanMinutes ?? undefined }, effectiveLimit);
       const result = await clients.pg.query<CollectionSourceRow>(sql, params);
       rowsRead += result.rows.length;
 
       if (!options.dryRun && result.rows.length > 0) {
         const dualWriteRows = buildCollectionEventDualWriteRows(result.rows);
-        await insertDualWriteRows(clients.clickhouse, dualWriteRows);
-        rowsInserted += dualWriteRows.events.length;
+        const missingRows = await filterRowsMissingSidecar(clients.clickhouse, dualWriteRows);
+        await insertDualWriteRows(clients.clickhouse, missingRows);
+        rowsInserted += missingRows.events.length;
       }
 
       return {
@@ -620,6 +634,35 @@ async function insertDualWriteRows(clickhouse: ClickHouseClientLike, rows: Colle
     values: rows.queue,
     format: 'JSONEachRow',
   });
+}
+
+async function filterRowsMissingSidecar(clickhouse: ClickHouseClientLike, rows: CollectionEventDualWriteRows): Promise<CollectionEventDualWriteRows> {
+  if (rows.events.length === 0 || !clickhouse.query) {
+    return rows;
+  }
+
+  const eventKeys = [...new Set(rows.existence.map((row) => row.event_key))];
+  const existing = await clickhouse.query<{ event_key: string; payload_hash: string | number }>({
+    query: `
+SELECT event_key, payload_hash
+FROM atp_dashboard.collection_count_event_existence_log
+WHERE event_key IN {event_keys:Array(String)}`,
+    query_params: { event_keys: eventKeys },
+    format: 'JSONEachRow',
+  });
+  const existingRows = await existing.json();
+  const existingKeys = new Set(existingRows.data.map((row) => `${row.event_key}\t${row.payload_hash}`));
+  const missingEventKeys = new Set(
+    rows.existence
+      .filter((row) => !existingKeys.has(`${row.event_key}\t${row.payload_hash}`))
+      .map((row) => row.event_key),
+  );
+
+  return {
+    events: rows.events.filter((row) => missingEventKeys.has(row.event_key)),
+    existence: rows.existence.filter((row) => missingEventKeys.has(row.event_key)),
+    queue: rows.queue.filter((row) => missingEventKeys.has(row.event_key)),
+  };
 }
 
 async function insertSidecarRows(
