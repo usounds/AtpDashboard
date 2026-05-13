@@ -197,6 +197,13 @@ eligible_candidates AS
     AND q.queued_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
   ORDER BY q.queued_at ASC, q.event_key ASC, q.queue_seq ASC
 ),
+eligible_cutoff AS
+(
+  SELECT
+    count() AS source_rows,
+    max(tuple(queued_at, event_key, queue_seq)) AS cutoff_tuple
+  FROM eligible_candidates
+),
 first_candidate AS
 (
   SELECT queued_at AS first_queued_at
@@ -238,13 +245,28 @@ selected_run AS
   UNION ALL
 
   SELECT
+    e.source_rows,
+    tupleElement(e.cutoff_tuple, 1) AS cutoff_queued_at,
+    tupleElement(e.cutoff_tuple, 2) AS cutoff_event_key,
+    tupleElement(e.cutoff_tuple, 3) AS cutoff_queue_seq
+  FROM cutoff AS c
+  CROSS JOIN eligible_cutoff AS e
+  WHERE c.source_rows = 0
+    AND e.source_rows > 0
+    AND e.source_rows * 256 <= {max_estimated_bytes:UInt64}
+
+  UNION ALL
+
+  SELECT
     toUInt64(0) AS source_rows,
     w.watermark_queued_at AS cutoff_queued_at,
     w.watermark_event_key AS cutoff_event_key,
     w.watermark_queue_seq AS cutoff_queue_seq
   FROM cutoff AS c
+  CROSS JOIN eligible_cutoff AS e
   CROSS JOIN watermark AS w
   WHERE c.source_rows = 0
+    AND e.source_rows = 0
     AND w.previous_refresh_id IS NOT NULL
 )
 SELECT

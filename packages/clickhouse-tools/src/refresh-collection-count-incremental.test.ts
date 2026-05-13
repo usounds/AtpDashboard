@@ -201,11 +201,14 @@ test('reserve run query uses compound queue cursor, safety lag, and batch limits
   assert.match(sql, /\(q\.queued_at, q\.event_key, q\.queue_seq\) > \(w\.watermark_queued_at, w\.watermark_event_key, w\.watermark_queue_seq\)/);
   assert.match(sql, /q\.queued_at <= now64\(3, 'UTC'\) - toIntervalSecond\(\{safety_lag_seconds:UInt32\}\)/);
   assert.match(sql, /first_candidate AS/);
+  assert.match(sql, /eligible_cutoff AS/);
   assert.match(sql, /GROUP BY event_key, payload_hash/);
   assert.match(sql, /argMin\(tuple\(queued_at, queue_seq\), tuple\(queued_at, queue_seq\)\)/);
   assert.match(sql, /q\.queued_at <= f\.first_queued_at \+ toIntervalSecond\(\{max_queued_at_span_seconds:UInt32\}\)/);
   assert.match(sql, /selected_run AS/);
   assert.match(sql, /c\.source_rows = 0/);
+  assert.match(sql, /e\.source_rows > 0/);
+  assert.match(sql, /e\.source_rows = 0/);
   assert.match(sql, /w\.previous_refresh_id IS NOT NULL/);
   assert.match(sql, /w\.watermark_queue_seq AS cutoff_queue_seq/);
   assert.match(sql, /LIMIT \{max_rows:UInt64\}/);

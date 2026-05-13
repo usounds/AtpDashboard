@@ -55,6 +55,7 @@ run_verify_repair() {
 run_refresh() {
   local run_id="$1"
   local refresh_id="$2"
+  local max_rows="${3:-1000}"
   CLICKHOUSE_URL="http://localhost:${HOST_PORT}" \
   CLICKHOUSE_DATABASE="atp_dashboard" \
   pnpm --filter @atpdashboard/clickhouse-tools refresh:collection-count-incremental -- \
@@ -62,7 +63,7 @@ run_refresh() {
     --run-id "$run_id" \
     --refresh-id "$refresh_id" \
     --safety-lag-seconds 1 \
-    --max-rows 1000 \
+    --max-rows "$max_rows" \
     --max-queued-at-span-seconds 7200 \
     --max-estimated-bytes 104857600 \
     --retention-mode safe-disabled
@@ -124,7 +125,7 @@ FORMAT TSV
 ")"
 IFS=$'\t' read -r total_count unique_did unique_rkey recent_count min_created_at max_created_at <<<"$summary"
 
-if [[ "$total_count" != "3" || "$unique_did" != "2" || "$unique_rkey" != "3" || "$recent_count" != "2" ]]; then
+if [[ "$total_count" != "3" || "$unique_did" != "2" || "$unique_rkey" != "3" || "$recent_count" != "0" ]]; then
   echo "unexpected app.test.one snapshot: total=$total_count did=$unique_did rkey=$unique_rkey recent=$recent_count" >&2
   exit 1
 fi
@@ -336,7 +337,7 @@ WHERE refresh_id = toUUID('00000000-0000-4000-8000-000000000906')
 FORMAT TSV
 ")"
 IFS=$'\t' read -r second_total second_unique_did second_unique_rkey second_recent <<<"$second_one_summary"
-if [[ "$second_total" != "3" || "$second_unique_did" != "2" || "$second_unique_rkey" != "3" || "$second_recent" != "2" ]]; then
+if [[ "$second_total" != "3" || "$second_unique_did" != "2" || "$second_unique_rkey" != "3" || "$second_recent" != "0" ]]; then
   echo "cross-run replay/conflict changed app.test.one snapshot: total=$second_total did=$second_unique_did rkey=$second_unique_rkey recent=$second_recent" >&2
   exit 1
 fi
@@ -411,9 +412,108 @@ if [[ "$completed_count" != "4" ]]; then
   exit 1
 fi
 
+ch --multiquery <<'SQL'
+INSERT INTO atp_dashboard.collection_count_ingest_queue
+  (event_key, collection, did, rkey, created_at, created_at_key, created_hour, source_ingested_at, queued_at, queue_seq, payload_hash)
+VALUES
+  ('e1', 'app.test.one', 'did:plc:a', 'r1', toDateTime64('2026-05-10 09:00:00.000000', 6, 'UTC'), '2026-05-10T09:00:00.000000Z', toDateTime64('2026-05-10 09:00:00', 0, 'UTC'), now64(3, 'UTC') - toIntervalSecond(4), now64(3, 'UTC') - toIntervalSecond(3), '014-seen-replay-a', 101),
+  ('e2', 'app.test.one', 'did:plc:a', 'r2', toDateTime64('2026-05-10 10:00:00.000000', 6, 'UTC'), '2026-05-10T10:00:00.000000Z', toDateTime64('2026-05-10 10:00:00', 0, 'UTC'), now64(3, 'UTC') - toIntervalSecond(3), now64(3, 'UTC') - toIntervalSecond(2), '015-seen-replay-b', 102);
+SQL
+
+run_refresh "00000000-0000-4000-8000-000000000911" "00000000-0000-4000-8000-000000000912" >/tmp/collection-count-seen-replay.log
+
+seen_replay_manifest="$(ch --query "
+SELECT source_rows, stage_rows, cutoff_queue_seq
+FROM
+(
+  SELECT
+    refresh_id,
+    argMax(source_rows, tuple(updated_at, status_version)) AS source_rows,
+    argMax(stage_rows, tuple(updated_at, status_version)) AS stage_rows,
+    argMax(cutoff_queue_seq, tuple(updated_at, status_version)) AS cutoff_queue_seq
+  FROM atp_dashboard.collection_count_refresh_manifest_v2
+  WHERE refresh_id = toUUID('00000000-0000-4000-8000-000000000912')
+  GROUP BY refresh_id
+)
+FORMAT TSV
+")"
+IFS=$'\t' read -r seen_replay_source_rows seen_replay_stage_rows seen_replay_cutoff_queue_seq <<<"$seen_replay_manifest"
+if [[ "$seen_replay_source_rows" != "2" || "$seen_replay_stage_rows" != "0" || "$seen_replay_cutoff_queue_seq" != "015-seen-replay-b" ]]; then
+  echo "seen replay batch should advance cutoff without staging: source=$seen_replay_source_rows stage=$seen_replay_stage_rows cutoff=$seen_replay_cutoff_queue_seq" >&2
+  exit 1
+fi
+
+ch --multiquery <<'SQL'
+INSERT INTO atp_dashboard.collection_count_event_existence_log
+  (event_key, payload_hash, collection, did, rkey, created_at, created_at_key, created_hour, source_ingested_at, written_at)
+SELECT
+  concat('perf-', leftPad(toString(number), 5, '0')) AS event_key,
+  toUInt64(100000 + number) AS payload_hash,
+  'app.test.perf' AS collection,
+  concat('did:plc:perf:', toString(number % 100)) AS did,
+  concat('rp-', toString(number)) AS rkey,
+  toDateTime64('2026-05-10 12:00:00.000000', 6, 'UTC') + toIntervalSecond(number) AS created_at,
+  formatDateTime(toDateTime64('2026-05-10 12:00:00.000000', 6, 'UTC') + toIntervalSecond(number), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS created_at_key,
+  toDateTime64('2026-05-10 12:00:00', 0, 'UTC') + toIntervalSecond(number) AS created_hour,
+  now64(3, 'UTC') - toIntervalSecond(4) AS source_ingested_at,
+  now64(3, 'UTC') - toIntervalSecond(3) AS written_at
+FROM numbers(10000);
+
+INSERT INTO atp_dashboard.collection_count_ingest_queue
+  (event_key, collection, did, rkey, created_at, created_at_key, created_hour, source_ingested_at, queued_at, queue_seq, payload_hash)
+SELECT
+  concat('perf-', leftPad(toString(event_number), 5, '0')) AS event_key,
+  'app.test.perf' AS collection,
+  concat('did:plc:perf:', toString(event_number % 100)) AS did,
+  concat('rp-', toString(event_number)) AS rkey,
+  toDateTime64('2026-05-10 12:00:00.000000', 6, 'UTC') + toIntervalSecond(event_number) AS created_at,
+  formatDateTime(toDateTime64('2026-05-10 12:00:00.000000', 6, 'UTC') + toIntervalSecond(event_number), '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS created_at_key,
+  toDateTime64('2026-05-10 12:00:00', 0, 'UTC') + toIntervalSecond(event_number) AS created_hour,
+  now64(3, 'UTC') - toIntervalSecond(4) AS source_ingested_at,
+  now64(3, 'UTC') - toIntervalSecond(3) AS queued_at,
+  concat('016-perf-', leftPad(toString(event_number), 5, '0'), '-', toString(copy_number)) AS queue_seq,
+  toUInt64(100000 + event_number) AS payload_hash
+FROM
+(
+  SELECT
+    intDiv(number, 2) AS event_number,
+    number % 2 AS copy_number
+  FROM numbers(20000)
+);
+SQL
+
+perf_start_epoch="$(date +%s)"
+run_refresh "00000000-0000-4000-8000-000000000913" "00000000-0000-4000-8000-000000000914" 10000 >/tmp/collection-count-perf-10k.log
+perf_elapsed_seconds="$(( $(date +%s) - perf_start_epoch ))"
+
+perf_manifest="$(ch --query "
+SELECT source_rows, stage_rows, cutoff_queue_seq
+FROM
+(
+  SELECT
+    refresh_id,
+    argMax(source_rows, tuple(updated_at, status_version)) AS source_rows,
+    argMax(stage_rows, tuple(updated_at, status_version)) AS stage_rows,
+    argMax(cutoff_queue_seq, tuple(updated_at, status_version)) AS cutoff_queue_seq
+  FROM atp_dashboard.collection_count_refresh_manifest_v2
+  WHERE refresh_id = toUUID('00000000-0000-4000-8000-000000000914')
+  GROUP BY refresh_id
+)
+FORMAT TSV
+")"
+IFS=$'\t' read -r perf_source_rows perf_stage_rows perf_cutoff_queue_seq <<<"$perf_manifest"
+if [[ "$perf_source_rows" != "10000" || "$perf_stage_rows" != "10000" || "$perf_cutoff_queue_seq" != "016-perf-09999-0" ]]; then
+  echo "10k 50% duplicate batch should publish 10k unique events: source=$perf_source_rows stage=$perf_stage_rows cutoff=$perf_cutoff_queue_seq" >&2
+  exit 1
+fi
+if (( perf_elapsed_seconds > 60 )); then
+  echo "10k 50% duplicate batch exceeded 60s: elapsed=${perf_elapsed_seconds}s" >&2
+  exit 1
+fi
+
 if ch --query "EXPLAIN indexes=1 SELECT * FROM atp_dashboard.collection_count_event_stage WHERE run_id = toUUID('00000000-0000-4000-8000-000000000903')" | grep -q 'collection_events'; then
   echo "periodic path explain should not include raw collection_events" >&2
   exit 1
 fi
 
-echo "ok collection count incremental integration total=$total_count unique_did=$unique_did unique_rkey=$unique_rkey recent=$recent_count boundary_recent=$boundary_recent min=$min_created_at conflicts=$conflicts cross_run_conflicts=$cross_run_conflicts repair_rows=$repair_queue_rows completed=$completed_count"
+echo "ok collection count incremental integration total=$total_count unique_did=$unique_did unique_rkey=$unique_rkey recent=$recent_count boundary_recent=$boundary_recent min=$min_created_at conflicts=$conflicts cross_run_conflicts=$cross_run_conflicts repair_rows=$repair_queue_rows perf_elapsed=${perf_elapsed_seconds}s completed=$completed_count"
