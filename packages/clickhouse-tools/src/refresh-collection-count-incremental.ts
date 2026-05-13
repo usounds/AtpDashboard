@@ -160,11 +160,24 @@ valid_completed_all AS
 )`;
 }
 
-export function buildReserveRunQuery(): string {
+export type WatermarkResult = {
+  hasPreviousRefresh: boolean;
+  previousRefreshId: string;
+  watermarkQueuedAt: string;
+  watermarkEventKey: string;
+  watermarkQueueSeq: string;
+};
+
+export const ZERO_WATERMARK: WatermarkResult = {
+  hasPreviousRefresh: false,
+  previousRefreshId: '00000000-0000-0000-0000-000000000000',
+  watermarkQueuedAt: '1970-01-01 00:00:00.000',
+  watermarkEventKey: '',
+  watermarkQueueSeq: '',
+};
+
+export function buildWatermarkSelectQuery(): string {
   return `
-/* collection_count_incremental_catchup */
-INSERT INTO atp_dashboard.collection_count_incremental_runs
-  (run_id, refresh_id, status, previous_refresh_id, watermark_queued_at, watermark_event_key, watermark_queue_seq, cutoff_queued_at, cutoff_event_key, cutoff_queue_seq, source_rows, stage_rows, error_message, started_at, updated_at, completed_at)
 WITH
 ${buildValidCompletedAllCte()},
 latest_valid_completed AS
@@ -173,23 +186,60 @@ latest_valid_completed AS
   FROM valid_completed_all
   ORDER BY latest_completed_at DESC, cutoff_queued_at DESC, cutoff_event_key DESC, cutoff_queue_seq DESC, refresh_id DESC
   LIMIT 1
-),
-watermark AS
-(
-  SELECT
-    refresh_id AS previous_refresh_id,
-    cutoff_queued_at AS watermark_queued_at,
-    cutoff_event_key AS watermark_event_key,
-    cutoff_queue_seq AS watermark_queue_seq
-  FROM latest_valid_completed
-  UNION ALL
-  SELECT
-    CAST(NULL, 'Nullable(UUID)') AS previous_refresh_id,
-    toDateTime64(0, 3, 'UTC') AS watermark_queued_at,
-    '' AS watermark_event_key,
-    '' AS watermark_queue_seq
-  WHERE NOT EXISTS (SELECT 1 FROM latest_valid_completed)
-),
+)
+SELECT
+  1 AS has_previous_refresh,
+  toString(refresh_id) AS previous_refresh_id,
+  toString(cutoff_queued_at) AS watermark_queued_at,
+  cutoff_event_key AS watermark_event_key,
+  cutoff_queue_seq AS watermark_queue_seq
+FROM latest_valid_completed
+
+UNION ALL
+
+SELECT
+  0 AS has_previous_refresh,
+  '' AS previous_refresh_id,
+  toString(toDateTime64(0, 3, 'UTC')) AS watermark_queued_at,
+  '' AS watermark_event_key,
+  '' AS watermark_queue_seq
+WHERE NOT EXISTS (SELECT 1 FROM latest_valid_completed)`;
+}
+
+export async function readWatermark(client: ClickHouseCommandLike): Promise<WatermarkResult> {
+  if (!client.query) {
+    throw new Error('ClickHouse query method is required for watermark lookup');
+  }
+  type WatermarkRow = {
+    has_previous_refresh: string | number;
+    previous_refresh_id: string;
+    watermark_queued_at: string;
+    watermark_event_key: string;
+    watermark_queue_seq: string;
+  };
+  const response = await client.query<WatermarkRow>({ query: buildWatermarkSelectQuery(), format: 'JSONEachRow' });
+  const json = await response.json();
+  const rows = Array.isArray(json) ? json : ((json as { data?: WatermarkRow[] }).data ?? []);
+  const row = rows[0];
+  if (!row) {
+    return ZERO_WATERMARK;
+  }
+  const hasPreviousRefresh = row.has_previous_refresh !== '0' && row.has_previous_refresh !== 0;
+  return {
+    hasPreviousRefresh,
+    previousRefreshId: hasPreviousRefresh && row.previous_refresh_id ? row.previous_refresh_id : ZERO_WATERMARK.previousRefreshId,
+    watermarkQueuedAt: row.watermark_queued_at || ZERO_WATERMARK.watermarkQueuedAt,
+    watermarkEventKey: row.watermark_event_key ?? '',
+    watermarkQueueSeq: row.watermark_queue_seq ?? '',
+  };
+}
+
+export function buildReserveRunQuery(): string {
+  return `
+/* collection_count_incremental_catchup */
+INSERT INTO atp_dashboard.collection_count_incremental_runs
+  (run_id, refresh_id, status, previous_refresh_id, watermark_queued_at, watermark_event_key, watermark_queue_seq, cutoff_queued_at, cutoff_event_key, cutoff_queue_seq, source_rows, stage_rows, error_message, started_at, updated_at, completed_at)
+WITH
 eligible_candidates AS
 (
   SELECT
@@ -198,8 +248,7 @@ eligible_candidates AS
     q.queue_seq,
     q.payload_hash
   FROM atp_dashboard.collection_count_ingest_queue AS q
-  CROSS JOIN watermark AS w
-  WHERE (q.queued_at, q.event_key, q.queue_seq) > (w.watermark_queued_at, w.watermark_event_key, w.watermark_queue_seq)
+  WHERE (q.queued_at, q.event_key, q.queue_seq) > ({watermark_queued_at:DateTime64(3,'UTC')}, {watermark_event_key:String}, {watermark_queue_seq:String})
     AND q.queued_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
   ORDER BY q.queued_at ASC, q.event_key ASC, q.queue_seq ASC
   LIMIT {slice_limit:UInt64}
@@ -246,22 +295,21 @@ selected_run AS
 
   SELECT
     toUInt64(0) AS source_rows,
-    w.watermark_queued_at AS cutoff_queued_at,
-    w.watermark_event_key AS cutoff_event_key,
-    w.watermark_queue_seq AS cutoff_queue_seq
+    {watermark_queued_at:DateTime64(3,'UTC')} AS cutoff_queued_at,
+    {watermark_event_key:String} AS cutoff_event_key,
+    {watermark_queue_seq:String} AS cutoff_queue_seq
   FROM cutoff AS c
-  CROSS JOIN watermark AS w
   WHERE c.source_rows = 0
-    AND w.previous_refresh_id IS NOT NULL
+    AND {has_previous_refresh:UInt8} = 1
 )
 SELECT
   {run_id:UUID} AS run_id,
   {refresh_id:UUID} AS refresh_id,
   'running' AS status,
-  w.previous_refresh_id,
-  w.watermark_queued_at,
-  w.watermark_event_key,
-  w.watermark_queue_seq,
+  if({has_previous_refresh:UInt8} = 1, toUUID({previous_refresh_id:String}), CAST(NULL, 'Nullable(UUID)')) AS previous_refresh_id,
+  {watermark_queued_at:DateTime64(3,'UTC')} AS watermark_queued_at,
+  {watermark_event_key:String} AS watermark_event_key,
+  {watermark_queue_seq:String} AS watermark_queue_seq,
   r.cutoff_queued_at,
   r.cutoff_event_key,
   r.cutoff_queue_seq,
@@ -271,8 +319,7 @@ SELECT
   now64(3, 'UTC') AS started_at,
   now64(3, 'UTC') AS updated_at,
   NULL AS completed_at
-FROM watermark AS w
-CROSS JOIN selected_run AS r`;
+FROM selected_run AS r`;
 }
 
 export function buildRawCandidateStageInsertQuery(): string {
@@ -1581,11 +1628,12 @@ export async function refreshCollectionCountIncremental(
   client: ClickHouseCommandLike,
   options: RefreshCollectionCountIncrementalOptions,
 ): Promise<{ runId: string; refreshId: string; dryRun: boolean; status: 'completed' | 'dry_run' }> {
-  const plan = buildRefreshCollectionCountIncrementalPlan(options);
-
   if (options.dryRun) {
     return { runId: options.runId, refreshId: options.refreshId, dryRun: true, status: 'dry_run' };
   }
+
+  const watermark = await readWatermark(client);
+  const plan = buildRefreshCollectionCountIncrementalPlan(options, watermark);
 
   for (const command of plan.beforeOrphanCheck) {
     await client.command(command);
@@ -1612,11 +1660,14 @@ export async function refreshCollectionCountIncremental(
   return { runId: options.runId, refreshId: options.refreshId, dryRun: false, status: 'completed' };
 }
 
-export function buildRefreshCollectionCountIncrementalPlan(options: RefreshCollectionCountIncrementalOptions): {
+export function buildRefreshCollectionCountIncrementalPlan(
+  options: RefreshCollectionCountIncrementalOptions,
+  watermark: WatermarkResult = ZERO_WATERMARK,
+): {
   beforeOrphanCheck: Array<{ query: string; query_params: Record<string, unknown>; clickhouse_settings?: Record<string, unknown> }>;
   afterOrphanCheck: Array<{ query: string; query_params: Record<string, unknown>; clickhouse_settings?: Record<string, unknown> }>;
 } {
-  const query_params = buildQueryParams(options);
+  const query_params = buildQueryParams(options, watermark);
   const settings = {
     max_threads: 1,
     max_insert_threads: 1,
@@ -1658,7 +1709,7 @@ export function buildRefreshCollectionCountIncrementalPlan(options: RefreshColle
   };
 }
 
-function buildQueryParams(options: RefreshCollectionCountIncrementalOptions): Record<string, unknown> {
+function buildQueryParams(options: RefreshCollectionCountIncrementalOptions, watermark: WatermarkResult = ZERO_WATERMARK): Record<string, unknown> {
   return {
     run_id: options.runId,
     refresh_id: options.refreshId,
@@ -1668,6 +1719,11 @@ function buildQueryParams(options: RefreshCollectionCountIncrementalOptions): Re
     max_queued_at_span_seconds: options.maxQueuedAtSpanSeconds,
     max_estimated_bytes: options.maxEstimatedBytes,
     excluded_did: options.excludedDid,
+    watermark_queued_at: watermark.watermarkQueuedAt,
+    watermark_event_key: watermark.watermarkEventKey,
+    watermark_queue_seq: watermark.watermarkQueueSeq,
+    has_previous_refresh: watermark.hasPreviousRefresh ? 1 : 0,
+    previous_refresh_id: watermark.previousRefreshId,
   };
 }
 

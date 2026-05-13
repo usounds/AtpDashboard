@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  ZERO_WATERMARK,
   buildCanonicalStageInsertQuery,
   buildCollectionDeltaInsertQuery,
   buildCompletedManifestInsertQuery,
@@ -39,6 +40,7 @@ import {
   buildRunSnapshotWrittenQuery,
   buildSameRunConflictInsertQuery,
   buildSnapshotPublishInsertQuery,
+  buildWatermarkSelectQuery,
   parseRefreshCollectionCountIncrementalOptions,
   refreshCollectionCountIncremental,
 } from './refresh-collection-count-incremental.ts';
@@ -198,9 +200,7 @@ test('incremental refresh options require dry-run or production confirmation', (
 test('reserve run query uses compound queue cursor, safety lag, and batch limits', () => {
   const sql = buildReserveRunQuery();
 
-  assert.match(sql, /valid_completed_all/);
-  assert.match(sql, /latest_valid_completed/);
-  assert.match(sql, /\(q\.queued_at, q\.event_key, q\.queue_seq\) > \(w\.watermark_queued_at, w\.watermark_event_key, w\.watermark_queue_seq\)/);
+  assert.match(sql, /\(q\.queued_at, q\.event_key, q\.queue_seq\) > \(\{watermark_queued_at:DateTime64\(3,'UTC'\)\}, \{watermark_event_key:String\}, \{watermark_queue_seq:String\}\)/);
   assert.match(sql, /q\.queued_at <= now64\(3, 'UTC'\) - toIntervalSecond\(\{safety_lag_seconds:UInt32\}\)/);
   assert.match(sql, /ORDER BY q\.queued_at ASC, q\.event_key ASC, q\.queue_seq ASC/);
   assert.match(sql, /LIMIT \{slice_limit:UInt64\}/);
@@ -210,12 +210,27 @@ test('reserve run query uses compound queue cursor, safety lag, and batch limits
   assert.match(sql, /q\.queued_at <= f\.first_queued_at \+ toIntervalSecond\(\{max_queued_at_span_seconds:UInt32\}\)/);
   assert.match(sql, /selected_run AS/);
   assert.match(sql, /c\.source_rows = 0/);
-  assert.match(sql, /w\.previous_refresh_id IS NOT NULL/);
-  assert.match(sql, /w\.watermark_queue_seq AS cutoff_queue_seq/);
+  assert.match(sql, /\{has_previous_refresh:UInt8\} = 1/);
+  assert.match(sql, /\{watermark_queue_seq:String\} AS cutoff_queue_seq/);
   assert.match(sql, /LIMIT \{max_rows:UInt64\}/);
   assert.match(sql, /c\.source_rows \* 256 <= \{max_estimated_bytes:UInt64\}/);
+  assert.doesNotMatch(sql, /valid_completed_all/);
+  assert.doesNotMatch(sql, /CROSS JOIN watermark/);
   assert.doesNotMatch(sql, /source_ingested_at\s*>/);
   assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
+});
+
+test('watermark select query reads manifest and returns valid_completed_all watermark', () => {
+  const sql = buildWatermarkSelectQuery();
+
+  assert.match(sql, /valid_completed_all/);
+  assert.match(sql, /latest_valid_completed/);
+  assert.match(sql, /has_previous_refresh/);
+  assert.match(sql, /toString\(refresh_id\) AS previous_refresh_id/);
+  assert.match(sql, /toString\(cutoff_queued_at\) AS watermark_queued_at/);
+  assert.match(sql, /cutoff_event_key AS watermark_event_key/);
+  assert.match(sql, /cutoff_queue_seq AS watermark_queue_seq/);
+  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM latest_valid_completed\)/);
 });
 
 test('raw candidate stage reads only queue with compound cutoff and excludes lexicon store', () => {
@@ -241,7 +256,14 @@ test('orphan detection uses existence log and fails before canonical staging', a
       else if (params.query.includes('INSERT INTO atp_dashboard.collection_count_queue_orphans')) operations.push('orphans');
       else if (params.query.includes('INSERT INTO atp_dashboard.collection_count_event_stage')) operations.push('canonical');
     },
-    async query() {
+    async query(params: { query: string }) {
+      if (params.query.includes('has_previous_refresh')) {
+        return {
+          async json() {
+            return { data: [{ has_previous_refresh: 0, previous_refresh_id: '', watermark_queued_at: ZERO_WATERMARK.watermarkQueuedAt, watermark_event_key: '', watermark_queue_seq: '' }] };
+          },
+        };
+      }
       return {
         async json() {
           return { data: [{ orphan_count: '2' }] };
@@ -336,7 +358,14 @@ test('query plan can skip per-run orphan detection for normal timer refreshes', 
   let readCountCalled = false;
   const client = {
     async command() {},
-    async query() {
+    async query(params: { query: string }) {
+      if (params.query.includes('has_previous_refresh')) {
+        return {
+          async json() {
+            return { data: [{ has_previous_refresh: 0, previous_refresh_id: '', watermark_queued_at: ZERO_WATERMARK.watermarkQueuedAt, watermark_event_key: '', watermark_queue_seq: '' }] };
+          },
+        };
+      }
       readCountCalled = true;
       return {
         async json() {
