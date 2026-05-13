@@ -387,6 +387,65 @@ test('rescan sidecar existence lookup is chunked to avoid oversized ClickHouse U
   assert.deepEqual(queryParamSizes, [50, 1]);
 });
 
+test('rescan sidecar existence lookup accepts array JSON responses from ClickHouse client', async () => {
+  const existing = buildCollectionEventDualWriteRows([
+    { did: 'did:plc:existing', collection: 'app.recent', rkey: 'r1', createdAt: '2026-05-09T16:15:00.000001Z' },
+  ]);
+  const insertedTables: string[] = [];
+  const pg = {
+    async connect() {},
+    async end() {},
+    async query<T>(sql: string): Promise<{ rows: T[] }> {
+      if (sql.includes('clickhouse_sync_checkpoints') && sql.includes('SELECT')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM public.collection')) {
+        return {
+          rows: [
+            { did: 'did:plc:existing', collection: 'app.recent', rkey: 'r1', createdAt: '2026-05-09T16:15:00.000001Z' },
+          ] as T[],
+        };
+      }
+      return { rows: [{ ok: true }] as T[] };
+    },
+  };
+  const clickhouse = {
+    async query<T>() {
+      return {
+        async json() {
+          return [{ event_key: existing.existence[0].event_key, payload_hash: existing.existence[0].payload_hash }] as T[];
+        },
+      };
+    },
+    async insert(params: { table: string }) {
+      insertedTables.push(params.table);
+    },
+  };
+
+  const result = await runBackfill(
+    {
+      dryRun: false,
+      limit: 1000,
+      resumeFrom: null,
+      batchSize: 1000,
+      maxRuntimeMinutes: null,
+      maxRows: null,
+      rescanDays: null,
+      rescanMinutes: 180,
+      rescanOverlapMinutes: 10,
+      confirmProduction: true,
+      checkpointName: 'test',
+      lockName: 'test',
+      lockTtlSeconds: 60,
+    },
+    { pg, clickhouse },
+  );
+
+  assert.equal(result.rowsRead, 1);
+  assert.equal(result.rowsInserted, 0);
+  assert.deepEqual(insertedTables, []);
+});
+
 test('runBackfill updates checkpoint only after ClickHouse insert succeeds', async () => {
   const queries: string[] = [];
   const operations: string[] = [];

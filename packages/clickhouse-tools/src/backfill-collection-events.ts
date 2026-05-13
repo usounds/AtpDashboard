@@ -665,7 +665,8 @@ WHERE event_key IN {event_keys:Array(String)}`,
       format: 'JSONEachRow',
     });
     const existingRows = await existing.json();
-    for (const row of existingRows.data) {
+    const existingData = Array.isArray(existingRows) ? existingRows : (existingRows.data ?? []);
+    for (const row of existingData) {
       existingKeys.add(`${row.event_key}\t${row.payload_hash}`);
     }
   }
