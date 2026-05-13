@@ -5,6 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   ZERO_WATERMARK,
+  buildCandidateSliceSelectQuery,
   buildCanonicalStageInsertQuery,
   buildCollectionDeltaInsertQuery,
   buildCompletedManifestInsertQuery,
@@ -33,7 +34,7 @@ import {
   buildRecentHourlyStateExplainQuery,
   buildRecentHourlyStateInsertQuery,
   buildRefreshCollectionCountIncrementalPlan,
-  buildReserveRunQuery,
+  buildReserveRunInsertQuery,
   buildRkeyDeltaInsertQuery,
   buildRkeySeenStateExplainQuery,
   buildRkeySeenStateInsertQuery,
@@ -41,6 +42,7 @@ import {
   buildSameRunConflictInsertQuery,
   buildSnapshotPublishInsertQuery,
   buildWatermarkSelectQuery,
+  computeReserveRunResult,
   parseRefreshCollectionCountIncrementalOptions,
   refreshCollectionCountIncremental,
 } from './refresh-collection-count-incremental.ts';
@@ -197,27 +199,66 @@ test('incremental refresh options require dry-run or production confirmation', (
   assert.throws(() => parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--retention-mode', 'cleanup']), /supports only safe-disabled/);
 });
 
-test('reserve run query uses compound queue cursor, safety lag, and batch limits', () => {
-  const sql = buildReserveRunQuery();
+test('candidate slice select uses compound cursor, safety lag, and LIMIT — no CTEs', () => {
+  const sql = buildCandidateSliceSelectQuery();
 
+  assert.match(sql, /FROM atp_dashboard\.collection_count_ingest_queue AS q/);
   assert.match(sql, /\(q\.queued_at, q\.event_key, q\.queue_seq\) > \(\{watermark_queued_at:DateTime64\(3,'UTC'\)\}, \{watermark_event_key:String\}, \{watermark_queue_seq:String\}\)/);
   assert.match(sql, /q\.queued_at <= now64\(3, 'UTC'\) - toIntervalSecond\(\{safety_lag_seconds:UInt32\}\)/);
   assert.match(sql, /ORDER BY q\.queued_at ASC, q\.event_key ASC, q\.queue_seq ASC/);
   assert.match(sql, /LIMIT \{slice_limit:UInt64\}/);
-  assert.match(sql, /first_candidate AS/);
-  assert.match(sql, /GROUP BY event_key, payload_hash/);
-  assert.match(sql, /argMin\(tuple\(queued_at, queue_seq\), tuple\(queued_at, queue_seq\)\)/);
-  assert.match(sql, /q\.queued_at <= f\.first_queued_at \+ toIntervalSecond\(\{max_queued_at_span_seconds:UInt32\}\)/);
-  assert.match(sql, /selected_run AS/);
-  assert.match(sql, /c\.source_rows = 0/);
-  assert.match(sql, /\{has_previous_refresh:UInt8\} = 1/);
-  assert.match(sql, /\{watermark_queue_seq:String\} AS cutoff_queue_seq/);
-  assert.match(sql, /LIMIT \{max_rows:UInt64\}/);
-  assert.match(sql, /c\.source_rows \* 256 <= \{max_estimated_bytes:UInt64\}/);
-  assert.doesNotMatch(sql, /valid_completed_all/);
-  assert.doesNotMatch(sql, /CROSS JOIN watermark/);
-  assert.doesNotMatch(sql, /source_ingested_at\s*>/);
-  assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
+  assert.doesNotMatch(sql, /WITH\b/);
+  assert.doesNotMatch(sql, /CROSS JOIN/);
+  assert.doesNotMatch(sql, /INSERT/);
+});
+
+test('reserve run insert is a no-scan SELECT from literal params only', () => {
+  const sql = buildReserveRunInsertQuery();
+
+  assert.match(sql, /INSERT INTO atp_dashboard\.collection_count_incremental_runs/);
+  assert.match(sql, /collection_count_incremental_catchup/);
+  assert.match(sql, /\{run_id:UUID\}/);
+  assert.match(sql, /\{cutoff_queued_at:DateTime64\(3,'UTC'\)\}/);
+  assert.match(sql, /\{cutoff_event_key:String\}/);
+  assert.match(sql, /\{cutoff_queue_seq:String\}/);
+  assert.match(sql, /\{source_rows:UInt64\}/);
+  assert.match(sql, /\{has_previous_refresh:UInt8\}/);
+  assert.doesNotMatch(sql, /FROM atp_dashboard\./);
+  assert.doesNotMatch(sql, /WITH\b/);
+  assert.doesNotMatch(sql, /CROSS JOIN/);
+});
+
+test('computeReserveRunResult deduplicates and computes cutoff from ordered slice', () => {
+  const watermark = { ...ZERO_WATERMARK, hasPreviousRefresh: true, watermarkQueuedAt: '2025-01-01 00:00:00.000', watermarkEventKey: 'prev', watermarkQueueSeq: '001' };
+  const opts = { maxQueuedAtSpanSeconds: 600, maxRows: 10, maxEstimatedBytes: 512 * 1024 * 1024 };
+
+  // empty slice with previous refresh → noop run at watermark
+  const noop = computeReserveRunResult([], opts, watermark);
+  assert.equal(noop?.sourceRows, 0);
+  assert.equal(noop?.cutoffQueuedAt, watermark.watermarkQueuedAt);
+
+  // empty slice without previous refresh → null
+  assert.equal(computeReserveRunResult([], opts, ZERO_WATERMARK), null);
+
+  // dedup: same event_key+payload_hash keeps earliest queued_at
+  const rows = [
+    { queued_at: '2025-01-01 00:05:00.000', event_key: 'ev1', queue_seq: '002', payload_hash: 1 },
+    { queued_at: '2025-01-01 00:01:00.000', event_key: 'ev1', queue_seq: '001', payload_hash: 1 },
+    { queued_at: '2025-01-01 00:02:00.000', event_key: 'ev2', queue_seq: '003', payload_hash: 2 },
+  ];
+  const result = computeReserveRunResult(rows, opts, ZERO_WATERMARK);
+  assert.equal(result?.sourceRows, 2);
+  assert.equal(result?.cutoffEventKey, 'ev2'); // max(queued_at, event_key, queue_seq)
+  assert.equal(result?.cutoffQueuedAt, '2025-01-01 00:02:00.000');
+
+  // rows outside span are excluded
+  const withOutOfSpan = [
+    { queued_at: '2025-01-01 00:00:00.000', event_key: 'ev_a', queue_seq: '001', payload_hash: 10 },
+    { queued_at: '2025-01-01 00:11:00.000', event_key: 'ev_b', queue_seq: '002', payload_hash: 11 }, // > 600s span
+  ];
+  const spanResult = computeReserveRunResult(withOutOfSpan, { ...opts, maxQueuedAtSpanSeconds: 600 }, ZERO_WATERMARK);
+  assert.equal(spanResult?.sourceRows, 1);
+  assert.equal(spanResult?.cutoffEventKey, 'ev_a');
 });
 
 test('watermark select query reads manifest and returns valid_completed_all watermark', () => {
@@ -261,6 +302,13 @@ test('orphan detection uses existence log and fails before canonical staging', a
         return {
           async json() {
             return { data: [{ has_previous_refresh: 0, previous_refresh_id: '', watermark_queued_at: ZERO_WATERMARK.watermarkQueuedAt, watermark_event_key: '', watermark_queue_seq: '' }] };
+          },
+        };
+      }
+      if (params.query.includes('collection_count_ingest_queue')) {
+        return {
+          async json() {
+            return { data: [{ queued_at: '2025-01-01 00:01:00.000', event_key: 'ev1', queue_seq: '001', payload_hash: 1 }] };
           },
         };
       }
@@ -323,18 +371,15 @@ test('incremental query plan stages, checks orphans, records conflicts, then can
     skipOrphanCheck: false,
   });
 
-  assert.equal(plan.beforeOrphanCheck.length, 3);
+  assert.equal(plan.beforeOrphanCheck.length, 2);
   assert.equal(plan.afterOrphanCheck.length, 23);
-  assert.match(plan.beforeOrphanCheck[0].query, /collection_count_incremental_runs/);
+  assert.match(plan.beforeOrphanCheck[0].query, /collection_count_event_raw_candidate_stage/);
   assert.match(plan.beforeOrphanCheck[0].query, /collection_count_incremental_catchup/);
-  assert.match(plan.beforeOrphanCheck[1].query, /collection_count_event_raw_candidate_stage/);
-  assert.match(plan.beforeOrphanCheck[1].query, /collection_count_incremental_catchup/);
-  assert.match(plan.beforeOrphanCheck[2].query, /collection_count_queue_orphans/);
+  assert.match(plan.beforeOrphanCheck[1].query, /collection_count_queue_orphans/);
   assert.match(plan.afterOrphanCheck[0].query, /collection_count_event_conflicts/);
   assert.match(plan.afterOrphanCheck[1].query, /existing_seen/);
   assert.match(plan.afterOrphanCheck[2].query, /collection_count_event_stage/);
   assert.equal(plan.beforeOrphanCheck[0].query_params.max_rows, 42);
-  assert.equal(plan.beforeOrphanCheck[0].query_params.slice_limit, 42 * 4);
   assert.equal(plan.beforeOrphanCheck[0].query_params.safety_lag_seconds, 120);
 });
 
@@ -352,7 +397,7 @@ test('query plan can skip per-run orphan detection for normal timer refreshes', 
     skipOrphanCheck: true,
   });
 
-  assert.equal(plan.beforeOrphanCheck.length, 2);
+  assert.equal(plan.beforeOrphanCheck.length, 1);
   assert.doesNotMatch(plan.beforeOrphanCheck.map((command) => command.query).join('\n'), /collection_count_queue_orphans/);
 
   let readCountCalled = false;
@@ -363,6 +408,13 @@ test('query plan can skip per-run orphan detection for normal timer refreshes', 
         return {
           async json() {
             return { data: [{ has_previous_refresh: 0, previous_refresh_id: '', watermark_queued_at: ZERO_WATERMARK.watermarkQueuedAt, watermark_event_key: '', watermark_queue_seq: '' }] };
+          },
+        };
+      }
+      if (params.query.includes('collection_count_ingest_queue')) {
+        return {
+          async json() {
+            return { data: [{ queued_at: '2025-01-01 00:01:00.000', event_key: 'ev1', queue_seq: '001', payload_hash: 1 }] };
           },
         };
       }

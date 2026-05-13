@@ -234,74 +234,105 @@ export async function readWatermark(client: ClickHouseCommandLike): Promise<Wate
   };
 }
 
-export function buildReserveRunQuery(): string {
+export type SliceRow = {
+  queued_at: string;
+  event_key: string;
+  queue_seq: string;
+  payload_hash: string | number;
+};
+
+export type ReserveRunResult = {
+  sourceRows: number;
+  cutoffQueuedAt: string;
+  cutoffEventKey: string;
+  cutoffQueueSeq: string;
+} | null;
+
+export function buildCandidateSliceSelectQuery(): string {
+  return `
+SELECT
+  q.queued_at,
+  q.event_key,
+  q.queue_seq,
+  q.payload_hash
+FROM atp_dashboard.collection_count_ingest_queue AS q
+WHERE (q.queued_at, q.event_key, q.queue_seq) > ({watermark_queued_at:DateTime64(3,'UTC')}, {watermark_event_key:String}, {watermark_queue_seq:String})
+  AND q.queued_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
+ORDER BY q.queued_at ASC, q.event_key ASC, q.queue_seq ASC
+LIMIT {slice_limit:UInt64}`;
+}
+
+export function computeReserveRunResult(
+  sliceRows: SliceRow[],
+  options: { maxQueuedAtSpanSeconds: number; maxRows: number; maxEstimatedBytes: number },
+  watermark: WatermarkResult,
+): ReserveRunResult {
+  if (sliceRows.length === 0) {
+    if (watermark.hasPreviousRefresh) {
+      return { sourceRows: 0, cutoffQueuedAt: watermark.watermarkQueuedAt, cutoffEventKey: watermark.watermarkEventKey, cutoffQueueSeq: watermark.watermarkQueueSeq };
+    }
+    return null;
+  }
+
+  const firstQueuedAtMs = parseClickHouseDateTime64Ms(sliceRows[0].queued_at);
+  const spanEndMs = firstQueuedAtMs + options.maxQueuedAtSpanSeconds * 1000;
+  const inSpan = sliceRows.filter((r) => parseClickHouseDateTime64Ms(r.queued_at) <= spanEndMs);
+
+  const dedupMap = new Map<string, { queued_at: string; queue_seq: string; event_key: string }>();
+  for (const row of inSpan) {
+    const key = `${row.event_key}\x00${String(row.payload_hash)}`;
+    const existing = dedupMap.get(key);
+    if (!existing || compareQueuePos(row.queued_at, row.queue_seq, existing.queued_at, existing.queue_seq) < 0) {
+      dedupMap.set(key, { queued_at: row.queued_at, queue_seq: row.queue_seq, event_key: row.event_key });
+    }
+  }
+
+  const sortedDeduped = Array.from(dedupMap.values())
+    .sort((a, b) => {
+      if (a.queued_at < b.queued_at) return -1;
+      if (a.queued_at > b.queued_at) return 1;
+      if (a.event_key < b.event_key) return -1;
+      if (a.event_key > b.event_key) return 1;
+      if (a.queue_seq < b.queue_seq) return -1;
+      if (a.queue_seq > b.queue_seq) return 1;
+      return 0;
+    })
+    .slice(0, options.maxRows);
+
+  const sourceRows = sortedDeduped.length;
+
+  if (sourceRows === 0) {
+    if (watermark.hasPreviousRefresh) {
+      return { sourceRows: 0, cutoffQueuedAt: watermark.watermarkQueuedAt, cutoffEventKey: watermark.watermarkEventKey, cutoffQueueSeq: watermark.watermarkQueueSeq };
+    }
+    return null;
+  }
+
+  if (sourceRows * 256 > options.maxEstimatedBytes) {
+    return null;
+  }
+
+  const lastRow = sortedDeduped[sortedDeduped.length - 1];
+  return { sourceRows, cutoffQueuedAt: lastRow.queued_at, cutoffEventKey: lastRow.event_key, cutoffQueueSeq: lastRow.queue_seq };
+}
+
+function parseClickHouseDateTime64Ms(s: string): number {
+  return new Date(s.replace(' ', 'T') + 'Z').getTime();
+}
+
+function compareQueuePos(qa: string, qs: string, qb: string, qbs: string): number {
+  if (qa < qb) return -1;
+  if (qa > qb) return 1;
+  if (qs < qbs) return -1;
+  if (qs > qbs) return 1;
+  return 0;
+}
+
+export function buildReserveRunInsertQuery(): string {
   return `
 /* collection_count_incremental_catchup */
 INSERT INTO atp_dashboard.collection_count_incremental_runs
   (run_id, refresh_id, status, previous_refresh_id, watermark_queued_at, watermark_event_key, watermark_queue_seq, cutoff_queued_at, cutoff_event_key, cutoff_queue_seq, source_rows, stage_rows, error_message, started_at, updated_at, completed_at)
-WITH
-eligible_candidates AS
-(
-  SELECT
-    q.queued_at,
-    q.event_key,
-    q.queue_seq,
-    q.payload_hash
-  FROM atp_dashboard.collection_count_ingest_queue AS q
-  WHERE (q.queued_at, q.event_key, q.queue_seq) > ({watermark_queued_at:DateTime64(3,'UTC')}, {watermark_event_key:String}, {watermark_queue_seq:String})
-    AND q.queued_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
-  ORDER BY q.queued_at ASC, q.event_key ASC, q.queue_seq ASC
-  LIMIT {slice_limit:UInt64}
-),
-first_candidate AS
-(
-  SELECT queued_at AS first_queued_at
-  FROM eligible_candidates
-  ORDER BY queued_at ASC, event_key ASC, queue_seq ASC
-  LIMIT 1
-),
-bounded_candidates AS
-(
-  SELECT
-    event_key,
-    payload_hash,
-    argMin(tuple(queued_at, queue_seq), tuple(queued_at, queue_seq)) AS first_queue_tuple
-  FROM eligible_candidates AS q
-  CROSS JOIN first_candidate AS f
-  WHERE q.queued_at <= f.first_queued_at + toIntervalSecond({max_queued_at_span_seconds:UInt32})
-  GROUP BY event_key, payload_hash
-  ORDER BY tupleElement(first_queue_tuple, 1) ASC, event_key ASC, tupleElement(first_queue_tuple, 2) ASC
-  LIMIT {max_rows:UInt64}
-),
-cutoff AS
-(
-  SELECT
-    count() AS source_rows,
-    max(tuple(tupleElement(first_queue_tuple, 1), event_key, tupleElement(first_queue_tuple, 2))) AS cutoff_tuple
-  FROM bounded_candidates
-),
-selected_run AS
-(
-  SELECT
-    c.source_rows,
-    tupleElement(c.cutoff_tuple, 1) AS cutoff_queued_at,
-    tupleElement(c.cutoff_tuple, 2) AS cutoff_event_key,
-    tupleElement(c.cutoff_tuple, 3) AS cutoff_queue_seq
-  FROM cutoff AS c
-  WHERE c.source_rows > 0
-    AND c.source_rows * 256 <= {max_estimated_bytes:UInt64}
-
-  UNION ALL
-
-  SELECT
-    toUInt64(0) AS source_rows,
-    {watermark_queued_at:DateTime64(3,'UTC')} AS cutoff_queued_at,
-    {watermark_event_key:String} AS cutoff_event_key,
-    {watermark_queue_seq:String} AS cutoff_queue_seq
-  FROM cutoff AS c
-  WHERE c.source_rows = 0
-    AND {has_previous_refresh:UInt8} = 1
-)
 SELECT
   {run_id:UUID} AS run_id,
   {refresh_id:UUID} AS refresh_id,
@@ -310,16 +341,15 @@ SELECT
   {watermark_queued_at:DateTime64(3,'UTC')} AS watermark_queued_at,
   {watermark_event_key:String} AS watermark_event_key,
   {watermark_queue_seq:String} AS watermark_queue_seq,
-  r.cutoff_queued_at,
-  r.cutoff_event_key,
-  r.cutoff_queue_seq,
-  r.source_rows,
+  {cutoff_queued_at:DateTime64(3,'UTC')} AS cutoff_queued_at,
+  {cutoff_event_key:String} AS cutoff_event_key,
+  {cutoff_queue_seq:String} AS cutoff_queue_seq,
+  {source_rows:UInt64} AS source_rows,
   0 AS stage_rows,
   NULL AS error_message,
   now64(3, 'UTC') AS started_at,
   now64(3, 'UTC') AS updated_at,
-  NULL AS completed_at
-FROM selected_run AS r`;
+  NULL AS completed_at`;
 }
 
 export function buildRawCandidateStageInsertQuery(): string {
@@ -1633,6 +1663,11 @@ export async function refreshCollectionCountIncremental(
   }
 
   const watermark = await readWatermark(client);
+  const reserveResult = await performReserveRun(client, options, watermark);
+  if (!reserveResult) {
+    return { runId: options.runId, refreshId: options.refreshId, dryRun: false, status: 'completed' };
+  }
+
   const plan = buildRefreshCollectionCountIncrementalPlan(options, watermark);
 
   for (const command of plan.beforeOrphanCheck) {
@@ -1660,6 +1695,50 @@ export async function refreshCollectionCountIncremental(
   return { runId: options.runId, refreshId: options.refreshId, dryRun: false, status: 'completed' };
 }
 
+async function performReserveRun(
+  client: ClickHouseCommandLike,
+  options: RefreshCollectionCountIncrementalOptions,
+  watermark: WatermarkResult,
+): Promise<ReserveRunResult> {
+  if (!client.query) {
+    throw new Error('ClickHouse query method is required for slice read');
+  }
+  const sliceParams = {
+    watermark_queued_at: watermark.watermarkQueuedAt,
+    watermark_event_key: watermark.watermarkEventKey,
+    watermark_queue_seq: watermark.watermarkQueueSeq,
+    safety_lag_seconds: options.safetyLagSeconds,
+    slice_limit: options.maxSliceRows ?? options.maxRows * 4,
+  };
+  const sliceResponse = await client.query<SliceRow>({ query: buildCandidateSliceSelectQuery(), query_params: sliceParams, format: 'JSONEachRow' });
+  const sliceJson = await sliceResponse.json();
+  const sliceRows = Array.isArray(sliceJson) ? sliceJson : ((sliceJson as { data?: SliceRow[] }).data ?? []);
+
+  const result = computeReserveRunResult(sliceRows, options, watermark);
+  if (!result) {
+    return null;
+  }
+
+  await client.command({
+    query: buildReserveRunInsertQuery(),
+    query_params: {
+      run_id: options.runId,
+      refresh_id: options.refreshId,
+      has_previous_refresh: watermark.hasPreviousRefresh ? 1 : 0,
+      previous_refresh_id: watermark.previousRefreshId,
+      watermark_queued_at: watermark.watermarkQueuedAt,
+      watermark_event_key: watermark.watermarkEventKey,
+      watermark_queue_seq: watermark.watermarkQueueSeq,
+      cutoff_queued_at: result.cutoffQueuedAt,
+      cutoff_event_key: result.cutoffEventKey,
+      cutoff_queue_seq: result.cutoffQueueSeq,
+      source_rows: result.sourceRows,
+    },
+  });
+
+  return result;
+}
+
 export function buildRefreshCollectionCountIncrementalPlan(
   options: RefreshCollectionCountIncrementalOptions,
   watermark: WatermarkResult = ZERO_WATERMARK,
@@ -1677,7 +1756,6 @@ export function buildRefreshCollectionCountIncrementalPlan(
 
   return {
     beforeOrphanCheck: [
-      { query: buildReserveRunQuery(), query_params, clickhouse_settings: settings },
       { query: buildRawCandidateStageInsertQuery(), query_params, clickhouse_settings: settings },
       ...(options.skipOrphanCheck ? [] : [{ query: buildOrphanInsertQuery(), query_params, clickhouse_settings: settings }]),
     ],
