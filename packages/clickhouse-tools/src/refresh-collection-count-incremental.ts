@@ -12,6 +12,7 @@ export type RefreshCollectionCountIncrementalOptions = {
   maxQueuedAtSpanSeconds: number;
   maxEstimatedBytes: number;
   excludedDid: string;
+  skipOrphanCheck: boolean;
   retentionMode: 'safe-disabled';
 };
 
@@ -42,6 +43,7 @@ export function parseRefreshCollectionCountIncrementalOptions(argv: string[]): R
     maxQueuedAtSpanSeconds: 600,
     maxEstimatedBytes: 512 * 1024 * 1024,
     excludedDid: LEXICON_STORE_DID,
+    skipOrphanCheck: false,
     retentionMode: 'safe-disabled',
   };
 
@@ -67,6 +69,8 @@ export function parseRefreshCollectionCountIncrementalOptions(argv: string[]): R
       options.maxEstimatedBytes = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--excluded-did') {
       options.excludedDid = readNext(argv, ++index, arg);
+    } else if (arg === '--skip-orphan-check') {
+      options.skipOrphanCheck = true;
     } else if (arg === '--retention-mode') {
       const retentionMode = readNext(argv, ++index, arg);
       if (retentionMode !== 'safe-disabled') {
@@ -185,7 +189,8 @@ eligible_candidates AS
   SELECT
     q.queued_at,
     q.event_key,
-    q.queue_seq
+    q.queue_seq,
+    q.payload_hash
   FROM atp_dashboard.collection_count_ingest_queue AS q
   CROSS JOIN watermark AS w
   WHERE (q.queued_at, q.event_key, q.queue_seq) > (w.watermark_queued_at, w.watermark_event_key, w.watermark_queue_seq)
@@ -202,20 +207,21 @@ first_candidate AS
 bounded_candidates AS
 (
   SELECT
-    q.queued_at,
-    q.event_key,
-    q.queue_seq
+    event_key,
+    payload_hash,
+    argMin(tuple(queued_at, queue_seq), tuple(queued_at, queue_seq)) AS first_queue_tuple
   FROM eligible_candidates AS q
   CROSS JOIN first_candidate AS f
   WHERE q.queued_at <= f.first_queued_at + toIntervalSecond({max_queued_at_span_seconds:UInt32})
-  ORDER BY q.queued_at ASC, q.event_key ASC, q.queue_seq ASC
+  GROUP BY event_key, payload_hash
+  ORDER BY tupleElement(first_queue_tuple, 1) ASC, event_key ASC, tupleElement(first_queue_tuple, 2) ASC
   LIMIT {max_rows:UInt64}
 ),
 cutoff AS
 (
   SELECT
     count() AS source_rows,
-    max(tuple(queued_at, event_key, queue_seq)) AS cutoff_tuple
+    max(tuple(tupleElement(first_queue_tuple, 1), event_key, tupleElement(first_queue_tuple, 2))) AS cutoff_tuple
   FROM bounded_candidates
 ),
 selected_run AS
@@ -1578,16 +1584,18 @@ export async function refreshCollectionCountIncremental(
     await client.command(command);
   }
 
-  const orphanCount = await readCount(client, buildOrphanCountQuery(), { run_id: options.runId }, 'orphan_count');
-  if (orphanCount > 0) {
-    await client.command({
-      query: buildRunFailedQuery(),
-      query_params: {
-        run_id: options.runId,
-        error_message: `orphan queue rows detected: ${orphanCount}`,
-      },
-    });
-    throw new Error(`orphan queue rows detected: ${orphanCount}`);
+  if (!options.skipOrphanCheck) {
+    const orphanCount = await readCount(client, buildOrphanCountQuery(), { run_id: options.runId }, 'orphan_count');
+    if (orphanCount > 0) {
+      await client.command({
+        query: buildRunFailedQuery(),
+        query_params: {
+          run_id: options.runId,
+          error_message: `orphan queue rows detected: ${orphanCount}`,
+        },
+      });
+      throw new Error(`orphan queue rows detected: ${orphanCount}`);
+    }
   }
 
   for (const command of plan.afterOrphanCheck) {
@@ -1613,7 +1621,7 @@ export function buildRefreshCollectionCountIncrementalPlan(options: RefreshColle
     beforeOrphanCheck: [
       { query: buildReserveRunQuery(), query_params, clickhouse_settings: settings },
       { query: buildRawCandidateStageInsertQuery(), query_params, clickhouse_settings: settings },
-      { query: buildOrphanInsertQuery(), query_params, clickhouse_settings: settings },
+      ...(options.skipOrphanCheck ? [] : [{ query: buildOrphanInsertQuery(), query_params, clickhouse_settings: settings }]),
     ],
     afterOrphanCheck: [
       { query: buildSameRunConflictInsertQuery(), query_params, clickhouse_settings: settings },

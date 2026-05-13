@@ -188,6 +188,7 @@ test('incremental refresh options require dry-run or production confirmation', (
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-rows', '100']).maxRows, 100);
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-queued-at-span-seconds', '30']).maxQueuedAtSpanSeconds, 30);
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-estimated-bytes', '1024']).maxEstimatedBytes, 1024);
+  assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--skip-orphan-check']).skipOrphanCheck, true);
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--retention-mode', 'safe-disabled']).retentionMode, 'safe-disabled');
   assert.throws(() => parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--retention-mode', 'cleanup']), /supports only safe-disabled/);
 });
@@ -200,6 +201,8 @@ test('reserve run query uses compound queue cursor, safety lag, and batch limits
   assert.match(sql, /\(q\.queued_at, q\.event_key, q\.queue_seq\) > \(w\.watermark_queued_at, w\.watermark_event_key, w\.watermark_queue_seq\)/);
   assert.match(sql, /q\.queued_at <= now64\(3, 'UTC'\) - toIntervalSecond\(\{safety_lag_seconds:UInt32\}\)/);
   assert.match(sql, /first_candidate AS/);
+  assert.match(sql, /GROUP BY event_key, payload_hash/);
+  assert.match(sql, /argMin\(tuple\(queued_at, queue_seq\), tuple\(queued_at, queue_seq\)\)/);
   assert.match(sql, /q\.queued_at <= f\.first_queued_at \+ toIntervalSecond\(\{max_queued_at_span_seconds:UInt32\}\)/);
   assert.match(sql, /selected_run AS/);
   assert.match(sql, /c\.source_rows = 0/);
@@ -255,6 +258,7 @@ test('orphan detection uses existence log and fails before canonical staging', a
         maxQueuedAtSpanSeconds: 60,
         maxEstimatedBytes: 1024 * 1024,
         excludedDid: 'did:web:lexicon.store',
+        skipOrphanCheck: false,
       }),
     /orphan queue rows detected: 2/,
   );
@@ -290,6 +294,7 @@ test('incremental query plan stages, checks orphans, records conflicts, then can
     maxQueuedAtSpanSeconds: 60,
     maxEstimatedBytes: 100000,
     excludedDid: 'did:web:lexicon.store',
+    skipOrphanCheck: false,
   });
 
   assert.equal(plan.beforeOrphanCheck.length, 3);
@@ -304,6 +309,51 @@ test('incremental query plan stages, checks orphans, records conflicts, then can
   assert.match(plan.afterOrphanCheck[2].query, /collection_count_event_stage/);
   assert.equal(plan.beforeOrphanCheck[0].query_params.max_rows, 42);
   assert.equal(plan.beforeOrphanCheck[0].query_params.safety_lag_seconds, 120);
+});
+
+test('query plan can skip per-run orphan detection for normal timer refreshes', async () => {
+  const plan = buildRefreshCollectionCountIncrementalPlan({
+    runId: '00000000-0000-4000-8000-000000000211',
+    refreshId: '00000000-0000-4000-8000-000000000212',
+    dryRun: false,
+    confirmProduction: true,
+    safetyLagSeconds: 120,
+    maxRows: 42,
+    maxQueuedAtSpanSeconds: 60,
+    maxEstimatedBytes: 100000,
+    excludedDid: 'did:web:lexicon.store',
+    skipOrphanCheck: true,
+  });
+
+  assert.equal(plan.beforeOrphanCheck.length, 2);
+  assert.doesNotMatch(plan.beforeOrphanCheck.map((command) => command.query).join('\n'), /collection_count_queue_orphans/);
+
+  let readCountCalled = false;
+  const client = {
+    async command() {},
+    async query() {
+      readCountCalled = true;
+      return {
+        async json() {
+          return { data: [{ orphan_count: '2' }] };
+        },
+      };
+    },
+  };
+
+  await refreshCollectionCountIncremental(client, {
+    runId: '00000000-0000-4000-8000-000000000213',
+    refreshId: '00000000-0000-4000-8000-000000000214',
+    dryRun: false,
+    confirmProduction: true,
+    safetyLagSeconds: 300,
+    maxRows: 10,
+    maxQueuedAtSpanSeconds: 60,
+    maxEstimatedBytes: 1024 * 1024,
+    excludedDid: 'did:web:lexicon.store',
+    skipOrphanCheck: true,
+  });
+  assert.equal(readCountCalled, false);
 });
 
 test('current-stage key and delta queries stay run-scoped and avoid raw collection_events', () => {
@@ -442,6 +492,7 @@ test('query plan publishes artifacts then commits completed manifest last', () =
     maxQueuedAtSpanSeconds: 60,
     maxEstimatedBytes: 100000,
     excludedDid: 'did:web:lexicon.store',
+    skipOrphanCheck: false,
   });
   const afterSql = plan.afterOrphanCheck.map((command) => command.query).join('\n');
 
@@ -537,6 +588,7 @@ test('incremental systemd unit is isolated and uses the shared lock', () => {
   assert.match(incrementalService, /--max-queued-at-span-seconds "\$INCREMENTAL_MAX_SPAN_SECONDS"/);
   assert.match(incrementalService, /Environment=INCREMENTAL_MAX_ESTIMATED_BYTES=536870912/);
   assert.match(incrementalService, /--max-estimated-bytes "\$INCREMENTAL_MAX_ESTIMATED_BYTES"/);
+  assert.match(incrementalService, /--skip-orphan-check/);
   assert.match(incrementalService, /CLICKHOUSE_REFRESH_TIMEOUT_MS=600000/);
 
   assert.match(incrementalTimer, /OnCalendar=\*:08\/10/);

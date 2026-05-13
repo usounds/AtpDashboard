@@ -10,7 +10,7 @@ Environment=CLICKHOUSE_REFRESH_TIMEOUT_MS=600000
 Environment=INCREMENTAL_MAX_ROWS=500000
 Environment=INCREMENTAL_MAX_SPAN_SECONDS=1200
 Environment=INCREMENTAL_MAX_ESTIMATED_BYTES=536870912
-ExecStart=/usr/bin/flock -n /run/atpdashboard-collection-count-incremental.lock /usr/bin/env bash -lc 'pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows "$INCREMENTAL_MAX_ROWS" --max-queued-at-span-seconds "$INCREMENTAL_MAX_SPAN_SECONDS" --max-estimated-bytes "$INCREMENTAL_MAX_ESTIMATED_BYTES"'
+ExecStart=/usr/bin/flock -n /run/atpdashboard-collection-count-incremental.lock /usr/bin/env bash -lc 'pnpm refresh:collection-count-incremental -- --confirm-production --safety-lag-seconds 300 --max-rows "$INCREMENTAL_MAX_ROWS" --max-queued-at-span-seconds "$INCREMENTAL_MAX_SPAN_SECONDS" --max-estimated-bytes "$INCREMENTAL_MAX_ESTIMATED_BYTES" --skip-orphan-check'
 NoNewPrivileges=true
 StandardOutput=append:/var/log/CollectionCountIncrementalRefresh.log
 StandardError=append:/var/log/CollectionCountIncrementalRefresh.log
