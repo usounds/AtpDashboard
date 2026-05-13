@@ -189,6 +189,8 @@ test('incremental refresh options require dry-run or production confirmation', (
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-queued-at-span-seconds', '30']).maxQueuedAtSpanSeconds, 30);
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-estimated-bytes', '1024']).maxEstimatedBytes, 1024);
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--skip-orphan-check']).skipOrphanCheck, true);
+  assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-slice-rows', '999']).maxSliceRows, 999);
+  assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--max-rows', '100']).maxSliceRows, 400);
   assert.equal(parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--retention-mode', 'safe-disabled']).retentionMode, 'safe-disabled');
   assert.throws(() => parseRefreshCollectionCountIncrementalOptions(['--dry-run', '--retention-mode', 'cleanup']), /supports only safe-disabled/);
 });
@@ -200,6 +202,8 @@ test('reserve run query uses compound queue cursor, safety lag, and batch limits
   assert.match(sql, /latest_valid_completed/);
   assert.match(sql, /\(q\.queued_at, q\.event_key, q\.queue_seq\) > \(w\.watermark_queued_at, w\.watermark_event_key, w\.watermark_queue_seq\)/);
   assert.match(sql, /q\.queued_at <= now64\(3, 'UTC'\) - toIntervalSecond\(\{safety_lag_seconds:UInt32\}\)/);
+  assert.match(sql, /ORDER BY q\.queued_at ASC, q\.event_key ASC, q\.queue_seq ASC/);
+  assert.match(sql, /LIMIT \{slice_limit:UInt64\}/);
   assert.match(sql, /first_candidate AS/);
   assert.match(sql, /GROUP BY event_key, payload_hash/);
   assert.match(sql, /argMin\(tuple\(queued_at, queue_seq\), tuple\(queued_at, queue_seq\)\)/);
@@ -308,6 +312,7 @@ test('incremental query plan stages, checks orphans, records conflicts, then can
   assert.match(plan.afterOrphanCheck[1].query, /existing_seen/);
   assert.match(plan.afterOrphanCheck[2].query, /collection_count_event_stage/);
   assert.equal(plan.beforeOrphanCheck[0].query_params.max_rows, 42);
+  assert.equal(plan.beforeOrphanCheck[0].query_params.slice_limit, 42 * 4);
   assert.equal(plan.beforeOrphanCheck[0].query_params.safety_lag_seconds, 120);
 });
 

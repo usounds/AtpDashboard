@@ -9,6 +9,7 @@ export type RefreshCollectionCountIncrementalOptions = {
   confirmProduction: boolean;
   safetyLagSeconds: number;
   maxRows: number;
+  maxSliceRows?: number;
   maxQueuedAtSpanSeconds: number;
   maxEstimatedBytes: number;
   excludedDid: string;
@@ -33,6 +34,7 @@ type ClickHouseCommandLike = {
 };
 
 export function parseRefreshCollectionCountIncrementalOptions(argv: string[]): RefreshCollectionCountIncrementalOptions {
+  let explicitMaxSliceRows: number | undefined;
   const options: RefreshCollectionCountIncrementalOptions = {
     runId: randomUUID(),
     refreshId: randomUUID(),
@@ -63,6 +65,8 @@ export function parseRefreshCollectionCountIncrementalOptions(argv: string[]): R
       options.safetyLagSeconds = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--max-rows') {
       options.maxRows = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--max-slice-rows') {
+      explicitMaxSliceRows = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--max-queued-at-span-seconds') {
       options.maxQueuedAtSpanSeconds = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--max-estimated-bytes') {
@@ -81,6 +85,8 @@ export function parseRefreshCollectionCountIncrementalOptions(argv: string[]): R
       throw new Error(`Unknown option: ${arg}`);
     }
   }
+
+  options.maxSliceRows = explicitMaxSliceRows ?? options.maxRows * 4;
 
   if (!options.dryRun && !options.confirmProduction) {
     throw new Error('Refusing to refresh incremental collection count without --confirm-production. Use --dry-run to inspect SQL.');
@@ -195,6 +201,8 @@ eligible_candidates AS
   CROSS JOIN watermark AS w
   WHERE (q.queued_at, q.event_key, q.queue_seq) > (w.watermark_queued_at, w.watermark_event_key, w.watermark_queue_seq)
     AND q.queued_at <= now64(3, 'UTC') - toIntervalSecond({safety_lag_seconds:UInt32})
+  ORDER BY q.queued_at ASC, q.event_key ASC, q.queue_seq ASC
+  LIMIT {slice_limit:UInt64}
 ),
 first_candidate AS
 (
@@ -1656,6 +1664,7 @@ function buildQueryParams(options: RefreshCollectionCountIncrementalOptions): Re
     refresh_id: options.refreshId,
     safety_lag_seconds: options.safetyLagSeconds,
     max_rows: options.maxRows,
+    slice_limit: options.maxSliceRows ?? options.maxRows * 4,
     max_queued_at_span_seconds: options.maxQueuedAtSpanSeconds,
     max_estimated_bytes: options.maxEstimatedBytes,
     excluded_did: options.excludedDid,
