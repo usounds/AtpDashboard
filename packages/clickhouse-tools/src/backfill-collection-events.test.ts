@@ -332,6 +332,61 @@ test('rescan mode skips rows already present in sidecar existence log', async ()
   ]);
 });
 
+test('rescan sidecar existence lookup is chunked to avoid oversized ClickHouse URLs', async () => {
+  const sourceRows = Array.from({ length: 51 }, (_, index) => ({
+    did: `did:plc:${index}`,
+    collection: 'app.recent',
+    rkey: `r${index}`,
+    createdAt: `2026-05-09T16:${String(index).padStart(2, '0')}:00.000001Z`,
+  }));
+  const queryParamSizes: number[] = [];
+  const pg = {
+    async connect() {},
+    async end() {},
+    async query<T>(sql: string): Promise<{ rows: T[] }> {
+      if (sql.includes('clickhouse_sync_checkpoints') && sql.includes('SELECT')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM public.collection')) {
+        return { rows: sourceRows as T[] };
+      }
+      return { rows: [{ ok: true }] as T[] };
+    },
+  };
+  const clickhouse = {
+    async query<T>(params: { query_params?: Record<string, unknown> }) {
+      queryParamSizes.push((params.query_params?.event_keys as string[]).length);
+      return {
+        async json() {
+          return { data: [] as T[] };
+        },
+      };
+    },
+    async insert() {},
+  };
+
+  await runBackfill(
+    {
+      dryRun: false,
+      limit: 1000,
+      resumeFrom: null,
+      batchSize: 1000,
+      maxRuntimeMinutes: null,
+      maxRows: null,
+      rescanDays: null,
+      rescanMinutes: 180,
+      rescanOverlapMinutes: 10,
+      confirmProduction: true,
+      checkpointName: 'test',
+      lockName: 'test',
+      lockTtlSeconds: 60,
+    },
+    { pg, clickhouse },
+  );
+
+  assert.deepEqual(queryParamSizes, [50, 1]);
+});
+
 test('runBackfill updates checkpoint only after ClickHouse insert succeeds', async () => {
   const queries: string[] = [];
   const operations: string[] = [];

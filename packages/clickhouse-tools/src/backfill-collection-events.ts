@@ -120,6 +120,7 @@ type ClickHouseInsertRow = CollectionEventInsertRow | CollectionCountExistenceLo
 export const DEFAULT_CHECKPOINT_NAME = 'collection_events_backfill_v2_unique_index';
 export const NULL_CREATED_AT_ORDER_NOTE =
   'Backfill order is did, collection, rkey, then "createdAt" ASC NULLS LAST to follow unique_collection_index. Resume predicates are exclusive; replay is safe because event_key is deterministic.';
+const EXISTING_SIDECAR_LOOKUP_CHUNK_SIZE = 50;
 
 export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
   const options: BackfillCliOptions = {
@@ -651,16 +652,23 @@ async function filterRowsMissingSidecar(clickhouse: ClickHouseClientLike, rows: 
   }
 
   const eventKeys = [...new Set(rows.existence.map((row) => row.event_key))];
-  const existing = await clickhouse.query<{ event_key: string; payload_hash: string | number }>({
-    query: `
+  const existingKeys = new Set<string>();
+
+  for (let index = 0; index < eventKeys.length; index += EXISTING_SIDECAR_LOOKUP_CHUNK_SIZE) {
+    const eventKeyChunk = eventKeys.slice(index, index + EXISTING_SIDECAR_LOOKUP_CHUNK_SIZE);
+    const existing = await clickhouse.query<{ event_key: string; payload_hash: string | number }>({
+      query: `
 SELECT event_key, payload_hash
 FROM atp_dashboard.collection_count_event_existence_log
 WHERE event_key IN {event_keys:Array(String)}`,
-    query_params: { event_keys: eventKeys },
-    format: 'JSONEachRow',
-  });
-  const existingRows = await existing.json();
-  const existingKeys = new Set(existingRows.data.map((row) => `${row.event_key}\t${row.payload_hash}`));
+      query_params: { event_keys: eventKeyChunk },
+      format: 'JSONEachRow',
+    });
+    const existingRows = await existing.json();
+    for (const row of existingRows.data) {
+      existingKeys.add(`${row.event_key}\t${row.payload_hash}`);
+    }
+  }
   const missingEventKeys = new Set(
     rows.existence
       .filter((row) => !existingKeys.has(`${row.event_key}\t${row.payload_hash}`))
