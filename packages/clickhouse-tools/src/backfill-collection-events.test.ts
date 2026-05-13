@@ -23,6 +23,7 @@ test('requires dry-run or confirm-production', () => {
   assert.throws(() => parseBackfillCliOptions(['--dry-run', '--max-runtime-minutes', '1', '--rescan-days', '1']), /unbounded rescan/);
   assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--rescan-days', '1']).rescanDays, 1);
   assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--rescan-minutes', '180']).rescanMinutes, 180);
+  assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--rescan-overlap-minutes', '5']).rescanOverlapMinutes, 5);
   assert.throws(() => parseBackfillCliOptions(['--dry-run', '--limit', '100', '--rescan-days', '1', '--rescan-minutes', '60']), /either --rescan-days or --rescan-minutes/);
   assert.throws(() => parseBackfillCliOptions(['--dry-run', '--max-runtime-minutes', '1', '--bootstrap-queue-from-raw']), /unbounded raw bootstrap/);
   assert.equal(parseBackfillCliOptions(['--dry-run', '--limit', '100', '--bootstrap-queue-from-raw']).bootstrapQueueFromRaw, true);
@@ -154,19 +155,12 @@ test('last watermark is taken from final row', () => {
 });
 
 test('recent rescan query reads by createdAt window without checkpoint tuple', () => {
-  const { sql, params } = buildRecentRescanQuery({ days: 1 }, 1000);
+  const { sql, params } = buildRecentRescanQuery('2026-05-09T16:00:00.000000Z', 1000);
 
-  assert.match(sql, /c\."createdAt" >= now\(\) - \(\$1::int \* interval '1 day'\)/);
+  assert.match(sql, /c\."createdAt" >= \$1::timestamptz/);
   assert.match(sql, /ORDER BY c\."createdAt" DESC, c\.did ASC, c\.collection ASC, c\.rkey ASC/);
   assert.doesNotMatch(sql, /clickhouse_sync_checkpoints/);
-  assert.deepEqual(params, [1, 1000]);
-});
-
-test('recent rescan query can use a shorter minute window', () => {
-  const { sql, params } = buildRecentRescanQuery({ minutes: 180 }, 1000);
-
-  assert.match(sql, /c\."createdAt" >= now\(\) - \(\$1::int \* interval '1 minute'\)/);
-  assert.deepEqual(params, [180, 1000]);
+  assert.deepEqual(params, ['2026-05-09T16:00:00.000000Z', 1000]);
 });
 
 test('bootstrap raw source queries are bounded and ordered by bootstrap high tuple', () => {
@@ -186,7 +180,7 @@ test('bootstrap raw source queries are bounded and ordered by bootstrap high tup
   assert.deepEqual(source.query_params, { limit: 1000 });
 });
 
-test('rescan mode inserts recent rows without moving checkpoint', async () => {
+test('rescan mode inserts recent rows and records last rescan time', async () => {
   const operations: string[] = [];
   const pg = {
     async connect() {},
@@ -244,6 +238,7 @@ test('rescan mode inserts recent rows without moving checkpoint', async () => {
       maxRows: null,
       rescanDays: 1,
       rescanMinutes: null,
+      rescanOverlapMinutes: 10,
       confirmProduction: true,
       checkpointName: 'test',
       lockName: 'test',
@@ -261,6 +256,7 @@ test('rescan mode inserts recent rows without moving checkpoint', async () => {
     'insert:atp_dashboard.collection_events',
     'insert:atp_dashboard.collection_count_event_existence_log',
     'insert:atp_dashboard.collection_count_ingest_queue',
+    'write-checkpoint',
   ]);
 });
 
@@ -271,6 +267,7 @@ test('rescan mode skips rows already present in sidecar existence log', async ()
     async end() {},
     async query<T>(sql: string): Promise<{ rows: T[] }> {
       if (sql.includes('clickhouse_sync_checkpoints') && sql.includes('SELECT')) {
+        operations.push('read-checkpoint');
         return { rows: [] };
       }
       if (sql.includes('FROM public.collection')) {
@@ -280,6 +277,9 @@ test('rescan mode skips rows already present in sidecar existence log', async ()
             { did: 'did:plc:missing', collection: 'app.recent', rkey: 'r2', createdAt: '2026-05-09T16:16:00.000001Z' },
           ] as T[],
         };
+      }
+      if (sql.includes('public.clickhouse_sync_checkpoints') && sql.includes('ON CONFLICT (name) DO UPDATE')) {
+        operations.push('write-checkpoint');
       }
       return { rows: [{ ok: true }] as T[] };
     },
@@ -311,6 +311,7 @@ test('rescan mode skips rows already present in sidecar existence log', async ()
       maxRows: null,
       rescanDays: null,
       rescanMinutes: 180,
+      rescanOverlapMinutes: 10,
       confirmProduction: true,
       checkpointName: 'test',
       lockName: 'test',
@@ -322,10 +323,12 @@ test('rescan mode skips rows already present in sidecar existence log', async ()
   assert.equal(result.rowsRead, 2);
   assert.equal(result.rowsInserted, 1);
   assert.deepEqual(operations, [
+    'read-checkpoint',
     'query-existing-sidecar',
     'insert:atp_dashboard.collection_events:1',
     'insert:atp_dashboard.collection_count_event_existence_log:1',
     'insert:atp_dashboard.collection_count_ingest_queue:1',
+    'write-checkpoint',
   ]);
 });
 
@@ -372,6 +375,7 @@ test('runBackfill updates checkpoint only after ClickHouse insert succeeds', asy
     maxRows: null,
     rescanDays: null,
     rescanMinutes: null,
+    rescanOverlapMinutes: 10,
     confirmProduction: true,
     checkpointName: 'test',
     lockName: 'test',
@@ -430,6 +434,7 @@ test('runBackfill does not checkpoint if queue write fails after raw insert', as
           maxRows: null,
           rescanDays: null,
           rescanMinutes: null,
+          rescanOverlapMinutes: 10,
           confirmProduction: true,
           checkpointName: 'test',
           lockName: 'test',
@@ -495,6 +500,7 @@ test('bootstrap queue from raw inserts only existence log and queue', async () =
       maxRows: null,
       rescanDays: null,
       rescanMinutes: null,
+      rescanOverlapMinutes: 10,
       bootstrapQueueFromRaw: true,
       confirmProduction: true,
       checkpointName: 'test',
@@ -552,6 +558,7 @@ test('bootstrap queue from raw advances progress across existing sidecar rows', 
       maxRows: null,
       rescanDays: null,
       rescanMinutes: null,
+      rescanOverlapMinutes: 10,
       bootstrapQueueFromRaw: true,
       confirmProduction: true,
       checkpointName: 'test',
@@ -608,6 +615,7 @@ test('dry-run reads rows but does not insert or checkpoint', async () => {
       maxRows: null,
       rescanDays: null,
       rescanMinutes: null,
+      rescanOverlapMinutes: 10,
       confirmProduction: false,
       checkpointName: 'test',
       lockName: 'test',

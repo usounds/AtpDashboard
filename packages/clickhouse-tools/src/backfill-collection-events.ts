@@ -80,6 +80,7 @@ export type BackfillCliOptions = {
   maxRows: number | null;
   rescanDays: number | null;
   rescanMinutes: number | null;
+  rescanOverlapMinutes: number;
   bootstrapQueueFromRaw: boolean;
   confirmProduction: boolean;
   checkpointName: string;
@@ -130,6 +131,7 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
     maxRows: null,
     rescanDays: null,
     rescanMinutes: null,
+    rescanOverlapMinutes: 10,
     bootstrapQueueFromRaw: false,
     confirmProduction: false,
     checkpointName: DEFAULT_CHECKPOINT_NAME,
@@ -157,6 +159,8 @@ export function parseBackfillCliOptions(argv: string[]): BackfillCliOptions {
       options.rescanDays = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--rescan-minutes') {
       options.rescanMinutes = readPositiveInteger(readNext(argv, ++index, arg), arg);
+    } else if (arg === '--rescan-overlap-minutes') {
+      options.rescanOverlapMinutes = readPositiveInteger(readNext(argv, ++index, arg), arg);
     } else if (arg === '--bootstrap-queue-from-raw') {
       options.bootstrapQueueFromRaw = true;
     } else if (arg === '--resume-from') {
@@ -481,13 +485,7 @@ LIMIT $5`;
   };
 }
 
-export function buildRecentRescanQuery(rescan: { days?: number; minutes?: number }, limit: number): { sql: string; params: unknown[] } {
-  const windowSql = rescan.minutes != null ? '$1::int * interval \'1 minute\'' : '$1::int * interval \'1 day\'';
-  const windowValue = rescan.minutes ?? rescan.days;
-  if (windowValue == null) {
-    throw new Error('rescan window is required');
-  }
-
+export function buildRecentRescanQuery(since: string, limit: number): { sql: string; params: unknown[] } {
   return {
     sql: `
 SELECT
@@ -497,10 +495,10 @@ SELECT
   CASE WHEN c."createdAt" IS NULL THEN NULL ELSE to_char(c."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END AS "createdAt"
 FROM public.collection c
 WHERE c."createdAt" IS NOT NULL
-  AND c."createdAt" >= now() - (${windowSql})
+  AND c."createdAt" >= $1::timestamptz
 ORDER BY c."createdAt" DESC, c.did ASC, c.collection ASC, c.rkey ASC
 LIMIT $2`,
-    params: [windowValue, limit],
+    params: [since, limit],
   };
 }
 
@@ -511,7 +509,7 @@ export async function runBackfill(
   const startedAt = Date.now();
   let rowsRead = 0;
   let rowsInserted = 0;
-  let watermark = options.resumeFrom ?? (await readCheckpoint(clients.pg, options.checkpointName));
+  let watermark = options.resumeFrom;
   const holder = randomUUID();
 
   if (!options.dryRun) {
@@ -547,7 +545,13 @@ export async function runBackfill(
 
     if (options.rescanDays != null || options.rescanMinutes != null) {
       const effectiveLimit = options.maxRows ?? options.limit ?? options.batchSize;
-      const { sql, params } = buildRecentRescanQuery({ days: options.rescanDays ?? undefined, minutes: options.rescanMinutes ?? undefined }, effectiveLimit);
+      const rescanCheckpointName = `${options.checkpointName}:recent_rescan`;
+      const since = await readRecentRescanSince(clients.pg, rescanCheckpointName, {
+        days: options.rescanDays,
+        minutes: options.rescanMinutes,
+        overlapMinutes: options.rescanOverlapMinutes,
+      });
+      const { sql, params } = buildRecentRescanQuery(since, effectiveLimit);
       const result = await clients.pg.query<CollectionSourceRow>(sql, params);
       rowsRead += result.rows.length;
 
@@ -557,6 +561,9 @@ export async function runBackfill(
         await insertDualWriteRows(clients.clickhouse, missingRows);
         rowsInserted += missingRows.events.length;
       }
+      if (!options.dryRun) {
+        await writeRecentRescanCheckpoint(clients.pg, rescanCheckpointName);
+      }
 
       return {
         rowsRead,
@@ -565,6 +572,8 @@ export async function runBackfill(
         dryRun: options.dryRun,
       };
     }
+
+    watermark ??= await readCheckpoint(clients.pg, options.checkpointName);
 
     while (true) {
       if (options.maxRuntimeMinutes != null && Date.now() - startedAt >= options.maxRuntimeMinutes * 60_000) {
@@ -764,6 +773,40 @@ async function writeCheckpoint(pg: PgClientLike, name: string, watermark: Backfi
          watermark_rkey = EXCLUDED.watermark_rkey,
          updated_at = now()`,
     [name, watermark.createdAt, watermark.createdAtKey, watermark.did, watermark.collection, watermark.rkey],
+  );
+}
+
+async function readRecentRescanSince(
+  pg: PgClientLike,
+  name: string,
+  options: { days: number | null; minutes: number | null; overlapMinutes: number },
+): Promise<string> {
+  const fallbackInterval =
+    options.minutes != null ? `${options.minutes} minutes` : `${options.days ?? 1} days`;
+  const result = await pg.query<{ since: string }>(
+    `SELECT to_char(
+       coalesce(
+         (SELECT updated_at - ($2::text || ' minutes')::interval
+          FROM public.clickhouse_sync_checkpoints
+          WHERE name = $1),
+         now() - ($3::text)::interval
+       ) AT TIME ZONE 'UTC',
+       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+     ) AS since`,
+    [name, options.overlapMinutes, fallbackInterval],
+  );
+
+  return result.rows[0]?.since ?? new Date(Date.now() - 30 * 60_000).toISOString();
+}
+
+async function writeRecentRescanCheckpoint(pg: PgClientLike, name: string): Promise<void> {
+  await pg.query(
+    `INSERT INTO public.clickhouse_sync_checkpoints
+       (name, watermark_created_at, watermark_created_at_key, watermark_did, watermark_collection, watermark_rkey, updated_at)
+     VALUES ($1, NULL, '<RESCAN_TIME>', '<RESCAN>', '<RESCAN>', '<RESCAN>', now())
+     ON CONFLICT (name) DO UPDATE
+     SET updated_at = now()`,
+    [name],
   );
 }
 
