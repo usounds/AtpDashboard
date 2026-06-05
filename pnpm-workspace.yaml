@@ -1,5 +1,11 @@
 packages:
   - "packages/*"
 
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true
+
+overrides:
+  object-path: ">=0.11.8"
+
+minimumReleaseAgeExclude:
+  - apexcharts@5.14.0
