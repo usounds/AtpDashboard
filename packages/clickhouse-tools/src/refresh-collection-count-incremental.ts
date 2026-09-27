@@ -1106,19 +1106,45 @@ effective_first_seen AS
   FROM combined_first_seen
   GROUP BY collection, did
 ),
+daily_counts AS
+(
+  SELECT
+    collection,
+    toDate(first_seen_at) AS day,
+    count() AS new_users
+  FROM effective_first_seen
+  GROUP BY collection, day
+),
+prior_users AS
+(
+  SELECT
+    collection,
+    count() AS prior_count
+  FROM effective_first_seen
+  CROSS JOIN snapshot_anchor AS a
+  WHERE toDate(first_seen_at) < addDays(a.anchor_day, -toInt32(364))
+  GROUP BY collection
+),
+collection_days AS
+(
+  SELECT
+    c.collection,
+    d.day
+  FROM cumulative_affected_collections AS c
+  CROSS JOIN day_series AS d
+),
 regenerated AS
 (
   SELECT
     {refresh_id:UUID} AS refresh_id,
-    c.collection,
-    d.day,
-    countIf(toDate(f.first_seen_at) = d.day) AS new_users,
-    countIf(toDate(f.first_seen_at) <= d.day) AS cumulative_users,
+    cd.collection,
+    cd.day,
+    toUInt64(coalesce(dc.new_users, 0)) AS new_users,
+    toUInt64(coalesce(pu.prior_count, 0) + sum(coalesce(dc.new_users, 0)) OVER (PARTITION BY cd.collection ORDER BY cd.day ASC)) AS cumulative_users,
     now64(3, 'UTC') AS refreshed_at
-  FROM cumulative_affected_collections AS c
-  CROSS JOIN day_series AS d
-  LEFT JOIN effective_first_seen AS f ON f.collection = c.collection
-  GROUP BY c.collection, d.day
+  FROM collection_days AS cd
+  LEFT JOIN daily_counts AS dc ON dc.collection = cd.collection AND dc.day = cd.day
+  LEFT JOIN prior_users AS pu ON pu.collection = cd.collection
 ),
 copied AS
 (
