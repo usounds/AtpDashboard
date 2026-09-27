@@ -552,6 +552,7 @@ test('cumulative users publish regenerates affected collections and copies forwa
   assert.match(sql, /INNER JOIN valid_completed_all AS v USING \(refresh_id\)/);
   assert.match(sql, /INNER JOIN cumulative_affected_collections AS c ON c\.collection = s\.collection/);
   assert.match(sql, /LEFT JOIN cumulative_affected_collections AS c ON c\.collection = p\.collection/);
+  assert.match(sql, /s\.collection NOT IN \(SELECT DISTINCT collection FROM previous_daily\)/);
   assert.doesNotMatch(sql, /FROM atp_dashboard\.collection_events/);
   assert.doesNotMatch(sql, /WHERE status = 'completed'/);
 });

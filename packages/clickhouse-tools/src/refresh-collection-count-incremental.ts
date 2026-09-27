@@ -1062,6 +1062,13 @@ cumulative_affected_collections AS
   CROSS JOIN latest_valid_completed AS v
   CROSS JOIN snapshot_anchor AS a
   WHERE toDate(v.snapshot_anchor_at) < a.anchor_day
+
+  UNION DISTINCT
+
+  SELECT DISTINCT s.collection
+  FROM atp_dashboard.collection_count_snapshot AS s
+  WHERE s.refresh_id = {refresh_id:UUID}
+    AND s.collection NOT IN (SELECT DISTINCT collection FROM previous_daily)
 ),
 day_series AS
 (
