@@ -57,7 +57,11 @@ WHERE status = 'completed'
 ORDER BY completed_at DESC, cutoff_queued_at DESC, refresh_id DESC
 LIMIT 1
 FORMAT TSV"
+restore_timer() {
+  log "restoring CollectionCountIncrementalRefresh.timer"
+  "${SUDO[@]}" systemctl enable --now CollectionCountIncrementalRefresh.timer >/dev/null 2>&1 || true
 }
+trap restore_timer EXIT
 
 log "disabling timer so catch-up is controlled by this runner"
 "${SUDO[@]}" systemctl disable --now CollectionCountIncrementalRefresh.timer >/dev/null 2>&1 || true
