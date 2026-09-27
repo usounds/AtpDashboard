@@ -19,7 +19,7 @@ else
 fi
 
 log() {
-  echo "[collection-count-catchup] $*"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [collection-count-catchup] $*"
 }
 
 ch() {
@@ -69,6 +69,7 @@ log "disabling timer so catch-up is controlled by this runner"
 "${SUDO[@]}" systemctl disable --now CollectionCountIncrementalRefresh.timer >/dev/null 2>&1 || true
 
 for ((loop = 1; loop <= MAX_LOOPS; loop += 1)); do
+  loop_start_sec=$(date +%s)
   before="$(latest_manifest_tsv || true)"
   log "loop=$loop starting CollectionCountIncrementalRefresh.service"
 
@@ -78,15 +79,16 @@ for ((loop = 1; loop <= MAX_LOOPS; loop += 1)); do
     exit 1
   fi
 
+  loop_elapsed=$(( $(date +%s) - loop_start_sec ))
   after="$(latest_manifest_tsv || true)"
   if [[ -z "$after" ]]; then
-    log "no completed manifest found after loop=$loop"
+    log "no completed manifest found after loop=$loop (took ${loop_elapsed}s)"
     sleep "$SLEEP_SECONDS"
     continue
   fi
 
   IFS=$'\t' read -r completed_at row_count source_rows cutoff_queued_at refresh_id <<<"$after"
-  log "loop=$loop completed_at=$completed_at snapshot_rows=$row_count source_rows=$source_rows cutoff_queued_at=$cutoff_queued_at refresh_id=$refresh_id"
+  log "loop=$loop took ${loop_elapsed}s; completed_at=$completed_at snapshot_rows=$row_count source_rows=$source_rows cutoff_queued_at=$cutoff_queued_at refresh_id=$refresh_id"
 
   if [[ "$after" == "$before" ]]; then
     log "latest manifest did not advance; stopping to avoid a blind loop"
