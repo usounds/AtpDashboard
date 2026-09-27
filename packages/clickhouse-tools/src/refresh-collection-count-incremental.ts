@@ -1073,8 +1073,8 @@ day_series AS
 visible_first_seen AS
 (
   SELECT
-    s.collection,
-    s.did,
+    s.collection AS collection,
+    s.did AS did,
     min(s.first_seen_at) AS first_seen_at
   FROM atp_dashboard.collection_count_did_first_seen_state AS s
   INNER JOIN valid_completed_all AS v USING (refresh_id)
@@ -1162,10 +1162,10 @@ copied AS
 (
   SELECT
     {refresh_id:UUID} AS refresh_id,
-    p.collection,
-    p.day,
-    p.new_users,
-    p.cumulative_users,
+    p.collection AS collection,
+    p.day AS day,
+    p.new_users AS new_users,
+    p.cumulative_users AS cumulative_users,
     now64(3, 'UTC') AS refreshed_at
   FROM previous_daily AS p
   LEFT JOIN cumulative_affected_collections AS c ON c.collection = p.collection
