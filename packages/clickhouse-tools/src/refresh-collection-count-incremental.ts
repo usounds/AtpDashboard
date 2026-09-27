@@ -1106,45 +1106,57 @@ effective_first_seen AS
   FROM combined_first_seen
   GROUP BY collection, did
 ),
-daily_counts AS
+all_user_points AS
 (
   SELECT
     collection,
     toDate(first_seen_at) AS day,
-    count() AS new_users
+    toUInt64(count()) AS users
   FROM effective_first_seen
   GROUP BY collection, day
+
+  UNION ALL
+
+  SELECT
+    c.collection,
+    d.day,
+    toUInt64(0) AS users
+  FROM cumulative_affected_collections AS c
+  CROSS JOIN day_series AS d
 ),
-prior_users AS
+aggregated_days AS
 (
   SELECT
     collection,
-    count() AS prior_count
-  FROM effective_first_seen
-  CROSS JOIN snapshot_anchor AS a
-  WHERE toDate(first_seen_at) < addDays(a.anchor_day, -toInt32(364))
-  GROUP BY collection
+    day,
+    sum(users) AS new_users
+  FROM all_user_points
+  GROUP BY collection, day
 ),
-collection_days AS
+with_cumulative AS
 (
   SELECT
-    c.collection,
-    d.day
-  FROM cumulative_affected_collections AS c
-  CROSS JOIN day_series AS d
+    {refresh_id:UUID} AS refresh_id,
+    collection,
+    day,
+    toUInt64(new_users) AS new_users,
+    toUInt64(sum(new_users) OVER (PARTITION BY collection ORDER BY day ASC)) AS cumulative_users,
+    now64(3, 'UTC') AS refreshed_at
+  FROM aggregated_days
 ),
 regenerated AS
 (
   SELECT
-    {refresh_id:UUID} AS refresh_id,
-    cd.collection,
-    cd.day,
-    toUInt64(coalesce(dc.new_users, 0)) AS new_users,
-    toUInt64(coalesce(pu.prior_count, 0) + sum(coalesce(dc.new_users, 0)) OVER (PARTITION BY cd.collection ORDER BY cd.day ASC)) AS cumulative_users,
-    now64(3, 'UTC') AS refreshed_at
-  FROM collection_days AS cd
-  LEFT JOIN daily_counts AS dc ON dc.collection = cd.collection AND dc.day = cd.day
-  LEFT JOIN prior_users AS pu ON pu.collection = cd.collection
+    w.refresh_id,
+    w.collection,
+    w.day,
+    w.new_users,
+    w.cumulative_users,
+    w.refreshed_at
+  FROM with_cumulative AS w
+  CROSS JOIN snapshot_anchor AS a
+  WHERE w.day >= addDays(a.anchor_day, -toInt32(364))
+    AND w.day <= a.anchor_day
 ),
 copied AS
 (
