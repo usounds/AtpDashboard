@@ -670,7 +670,7 @@ test('incremental systemd unit is isolated and uses the shared lock', () => {
   assert.match(incrementalService, /--safety-lag-seconds 300/);
   assert.match(incrementalService, /Environment=INCREMENTAL_MAX_ROWS=500000/);
   assert.match(incrementalService, /--max-rows "\$INCREMENTAL_MAX_ROWS"/);
-  assert.match(incrementalService, /Environment=INCREMENTAL_MAX_SPAN_SECONDS=1200/);
+  assert.match(incrementalService, /Environment=INCREMENTAL_MAX_SPAN_SECONDS=3600/);
   assert.match(incrementalService, /--max-queued-at-span-seconds "\$INCREMENTAL_MAX_SPAN_SECONDS"/);
   assert.match(incrementalService, /Environment=INCREMENTAL_MAX_ESTIMATED_BYTES=536870912/);
   assert.match(incrementalService, /--max-estimated-bytes "\$INCREMENTAL_MAX_ESTIMATED_BYTES"/);
