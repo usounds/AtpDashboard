@@ -1047,7 +1047,7 @@ previous_daily AS
 (
   SELECT d.*
   FROM atp_dashboard.collection_count_cumulative_users_snapshot AS d
-  INNER JOIN latest_valid_completed AS v ON v.refresh_id = d.refresh_id
+  WHERE d.refresh_id = (SELECT refresh_id FROM latest_valid_completed)
 ),
 cumulative_affected_collections AS
 (
@@ -1078,7 +1078,7 @@ visible_first_seen AS
     min(s.first_seen_at) AS first_seen_at
   FROM atp_dashboard.collection_count_did_first_seen_state AS s
   INNER JOIN valid_completed_all AS v USING (refresh_id)
-  WHERE s.collection IN (SELECT collection FROM cumulative_affected_collections)
+  INNER JOIN cumulative_affected_collections AS c ON c.collection = s.collection
   GROUP BY s.collection, s.did
 ),
 current_first_seen AS
@@ -1168,7 +1168,8 @@ copied AS
     p.cumulative_users,
     now64(3, 'UTC') AS refreshed_at
   FROM previous_daily AS p
-  WHERE p.collection NOT IN (SELECT collection FROM cumulative_affected_collections)
+  LEFT JOIN cumulative_affected_collections AS c ON c.collection = p.collection
+  WHERE c.collection = '' OR isNull(c.collection)
 )
 SELECT *
 FROM regenerated
