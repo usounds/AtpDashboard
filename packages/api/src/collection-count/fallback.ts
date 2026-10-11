@@ -51,6 +51,7 @@ export function normalizePostgrestRows(value: unknown): CollectionCountRow[] {
       count: Number(source.count),
       recent_count: Number(source.recent_count),
       unique_did: source.unique_did == null ? undefined : Number(source.unique_did),
+      recent_unique_did: source.recent_unique_did == null ? undefined : Number(source.recent_unique_did),
       min: source.min == null ? null : String(source.min),
       max: source.max == null ? null : String(source.max),
     };

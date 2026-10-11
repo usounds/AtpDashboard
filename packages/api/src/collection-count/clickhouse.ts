@@ -17,6 +17,7 @@ export type CompletedRefresh = {
 export type SnapshotRow = {
   collection: string;
   unique_did?: string | number;
+  recent_unique_did?: string | number;
   count: string | number;
   recent_count: string | number;
   min: string | null;
@@ -206,14 +207,31 @@ export async function readSnapshotRows(client: ClickHouseQueryClient, refreshId:
   const collectionFilter = collection == null ? '' : '  AND collection = {collection:String}';
   const result = await client.query({
     query: `
+WITH
+(
+  SELECT max(day)
+  FROM atp_dashboard.collection_count_cumulative_users_snapshot
+  WHERE refresh_id = {refresh_id:UUID}
+) AS latest_day
 SELECT
   collection,
   unique_did,
+  toUInt64(coalesce(u.recent_unique_did, 0)) AS recent_unique_did,
   total_count AS count,
   recent_count,
   if(isNull(min_created_at), NULL, formatDateTime(min_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS min,
   if(isNull(max_created_at), NULL, formatDateTime(max_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS max
 FROM atp_dashboard.collection_count_snapshot
+LEFT JOIN
+(
+  SELECT
+    collection,
+    sum(new_users) AS recent_unique_did
+  FROM atp_dashboard.collection_count_cumulative_users_snapshot
+  WHERE refresh_id = {refresh_id:UUID}
+    AND day > latest_day - toIntervalDay(3)
+  GROUP BY collection
+) AS u USING (collection)
 WHERE refresh_id = {refresh_id:UUID}
 ${collectionFilter}
 ORDER BY max_created_at DESC NULLS LAST, collection ASC
@@ -230,6 +248,7 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
     count: Number(row.count),
     recent_count: Number(row.recent_count),
     unique_did: row.unique_did != null ? Number(row.unique_did) : undefined,
+    recent_unique_did: row.recent_unique_did != null ? Number(row.recent_unique_did) : undefined,
     min: toPostgrestTimestamp(row.min),
     max: toPostgrestTimestamp(row.max),
   }));

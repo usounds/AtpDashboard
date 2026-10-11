@@ -5,6 +5,7 @@ export type CollectionCountRow = {
   count: number;
   recent_count: number;
   unique_did?: number;
+  recent_unique_did?: number;
   min: string | null;
   max: string | null;
 };

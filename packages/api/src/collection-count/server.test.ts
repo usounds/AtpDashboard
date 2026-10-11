@@ -115,6 +115,7 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
                 {
                   collection: 'app.example.post',
                   unique_did: 15,
+                  recent_unique_did: 3,
                   count: 42,
                   recent_count: 7,
                   min: '2026-05-01T00:00:00.000000Z',
@@ -136,6 +137,7 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
 
   assert.equal(response.status, 200);
   assert.equal(body[0].unique_did, 15);
+  assert.equal(body[0].recent_unique_did, 3);
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), '');
   assert.equal(response.headers.get('X-Snapshot-Refresh-Id'), '00000000-0000-4000-8000-000000000001');
@@ -143,12 +145,14 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
   assert.match(capturedQueries.join('\n'), /valid_completed_all/);
   assert.match(capturedQueries.join('\n'), /latest_valid_completed/);
   assert.match(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_count_snapshot/);
+  assert.match(capturedQueries.join('\n'), /collection_count_cumulative_users_snapshot/);
   assert.doesNotMatch(capturedQueries.join('\n'), /FROM atp_dashboard\.collection_events/);
   assert.doesNotMatch(capturedQueries.join('\n'), /WHERE status = 'completed'[\s\S]*ORDER BY completed_at DESC/);
   assert.deepEqual(body, [
     {
       collection: 'app.example.post',
       unique_did: 15,
+      recent_unique_did: 3,
       count: 42,
       recent_count: 7,
       min: '2026-05-01T00:00:00',
