@@ -114,6 +114,7 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
             : [
                 {
                   collection: 'app.example.post',
+                  unique_did: 15,
                   count: 42,
                   recent_count: 7,
                   min: '2026-05-01T00:00:00.000000Z',
@@ -134,6 +135,7 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
   const body = await response.json();
 
   assert.equal(response.status, 200);
+  assert.equal(body[0].unique_did, 15);
   assert.equal(response.headers.get('X-Data-Source'), 'clickhouse');
   assert.equal(response.headers.get('X-Fallback-Reason'), '');
   assert.equal(response.headers.get('X-Snapshot-Refresh-Id'), '00000000-0000-4000-8000-000000000001');
@@ -146,6 +148,7 @@ test('serves collection_count_view from committed ClickHouse read model snapshot
   assert.deepEqual(body, [
     {
       collection: 'app.example.post',
+      unique_did: 15,
       count: 42,
       recent_count: 7,
       min: '2026-05-01T00:00:00',

@@ -16,6 +16,7 @@ export type CompletedRefresh = {
 
 export type SnapshotRow = {
   collection: string;
+  unique_did?: string | number;
   count: string | number;
   recent_count: string | number;
   min: string | null;
@@ -207,6 +208,7 @@ export async function readSnapshotRows(client: ClickHouseQueryClient, refreshId:
     query: `
 SELECT
   collection,
+  unique_did,
   total_count AS count,
   recent_count,
   if(isNull(min_created_at), NULL, formatDateTime(min_created_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC')) AS min,
@@ -227,6 +229,7 @@ ORDER BY max_created_at DESC NULLS LAST, collection ASC
     collection: row.collection,
     count: Number(row.count),
     recent_count: Number(row.recent_count),
+    unique_did: row.unique_did != null ? Number(row.unique_did) : undefined,
     min: toPostgrestTimestamp(row.min),
     max: toPostgrestTimestamp(row.max),
   }));
