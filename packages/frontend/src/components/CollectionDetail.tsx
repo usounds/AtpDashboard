@@ -1,40 +1,49 @@
-import { useEffect, useState } from 'react';
-import LexiconViewer from "./LexiconViewer";
-import DataViewer from "./DataViewer";
-import StatsViewer from "./StatsViewer";
+import React, { useEffect, useState } from 'react';
+import { Modal, SegmentedControl, Group, Text, Box, Button } from '@mantine/core';
+import { IconChartBar, IconCode, IconDatabase, IconExternalLink } from '@tabler/icons-react';
+import LexiconViewer from './LexiconViewer';
+import DataViewer from './DataViewer';
+import StatsViewer from './StatsViewer';
+import CollectionFavicon from './CollectionFavicon';
+import { getWebDomainFromNsid } from '../logic/domain';
 
 export type ModalProps = {
-    open: boolean;
-    onCancel: () => void;
-    onOk: () => void;
-    collection: string
+  open: boolean;
+  onClose?: () => void;
+  onCancel?: () => void;
+  onOk?: () => void;
+  collection: string;
 };
 
-const CollectionDetail = (props: ModalProps) => {
+const CollectionDetail: React.FC<ModalProps> = ({ open, onClose, onOk, onCancel, collection }) => {
+  const handleClose = () => {
+    if (onClose) onClose();
+    else if (onOk) onOk();
+    else if (onCancel) onCancel();
+  };
   const [did, setDid] = useState('');
   const [rkey, setRkey] = useState('');
-  const [mode, setMode] = useState<'lexicon' | 'data' |'stats'>('stats');
+  const [mode, setMode] = useState<'stats' | 'lexicon' | 'data'>('stats');
+  const webDomain = getWebDomainFromNsid(collection);
 
-  // モーダルが開くたびに state 初期化
   useEffect(() => {
-    if (props.open) {
+    if (open) {
       setDid('');
       setRkey('');
-      //setMode('lexicon'); // モードを初期化
+      setMode('stats');
     }
-  }, [props.open]);
+  }, [open, collection]);
 
-  // データ取得
   useEffect(() => {
-    if (!props.open) return;
+    if (!open) return;
     const fetchData = async () => {
       try {
         const result = await fetch(
-          `https://collectiondata.usounds.work/collection?select=did,rkey,collection,createdAt&collection=eq.${props.collection}&order=createdAt.desc&limit=1`
+          `https://collectiondata.usounds.work/collection?select=did,rkey,collection,createdAt&collection=eq.${collection}&order=createdAt.desc&limit=1`,
         );
-        const result4 = await result.json();
-        if (result4.length > 0) {
-          const item = result4[0] as { did: string; rkey: string };
+        const resultData = await result.json();
+        if (resultData.length > 0) {
+          const item = resultData[0] as { did: string; rkey: string };
           setDid(item.did);
           setRkey(item.rkey);
         }
@@ -43,50 +52,108 @@ const CollectionDetail = (props: ModalProps) => {
       }
     };
     fetchData();
-  }, [props.open, props.collection]); // open と collection 両方依存
-
-  if (!props.open) return null;
+  }, [open, collection]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white dark:bg-boxdark p-4 rounded-lg w-[80%] max-w-3xl">
-        <div className="flex justify-center mb-4">
-          <button
-            className={`px-4 py-2 text-white ${mode === 'stats'  ?'bg-meta-3' : 'bg-black'}`}
-            onClick={() => setMode('stats')}
-          >
-            Stats
-          </button>
-          <button
-            className={`px-4 py-2 text-white ${mode === 'lexicon' ?'bg-meta-3' : 'bg-black'}`}
-            onClick={() => setMode('lexicon')}
-          >
-            Lexicon
-          </button>
-          <button
-            className={`px-4 py-2 text-white ${mode === 'data'  ?'bg-meta-3' : 'bg-black'}`}
-            onClick={() => setMode('data')}
-          >
-            Data
-          </button>
-        </div>
+    <Modal
+      opened={open}
+      onClose={handleClose}
+      title={
+        <SegmentedControl
+          value={mode}
+          onChange={(val) => setMode(val as 'stats' | 'lexicon' | 'data')}
+          radius="md"
+          size="sm"
+          data={[
+            {
+              value: 'stats',
+              label: (
+                <Group gap={6} wrap="nowrap" justify="center">
+                  <IconChartBar size={16} />
+                  <span className="whitespace-nowrap">Stats</span>
+                </Group>
+              ),
+            },
+            {
+              value: 'lexicon',
+              label: (
+                <Group gap={6} wrap="nowrap" justify="center">
+                  <IconCode size={16} />
+                  <span className="whitespace-nowrap">Lexicon</span>
+                </Group>
+              ),
+            },
+            {
+              value: 'data',
+              label: (
+                <Group gap={6} wrap="nowrap" justify="center">
+                  <IconDatabase size={16} />
+                  <span className="whitespace-nowrap">Sample Data</span>
+                </Group>
+              ),
+            },
+          ]}
+        />
+      }
+      size="xl"
+      radius="lg"
+      centered
+      classNames={{
+        content: 'dark:bg-[#182234] dark:border dark:border-gray-800',
+        header: 'dark:bg-[#182234] border-b border-gray-100 dark:border-gray-800 pb-3',
+      }}
+    >
+      <Box pt="xs">
+        {/* Collection Identity Bar */}
+        <Group
+          justify="space-between"
+          align="center"
+          mb="md"
+          p="xs"
+          className="rounded-lg bg-gray-50/80 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/60"
+        >
+          <Group gap="sm" wrap="nowrap">
+            <CollectionFavicon domain={webDomain} size={28} />
+            <Box>
+              <Text fw={700} size="sm" className="font-mono text-gray-900 dark:text-white break-all">
+                {collection}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Domain Authority: <span className="font-semibold text-gray-700 dark:text-gray-300">{webDomain}</span>
+              </Text>
+            </Box>
+          </Group>
 
-        {mode === 'lexicon' && <LexiconViewer domain={props.collection} />}
-        {mode === 'data' && did && rkey && (
-          <DataViewer uri={`at://${did}/${props.collection}/${rkey}`} />
-        )}
-        {mode === 'stats' && <StatsViewer collection={props.collection} />}
-
-        <div className="flex justify-center mt-4">
-          <button
-            className="bg-black text-white px-4 py-2 rounded"
-            onClick={props.onOk}
+          <Button
+            component="a"
+            href={`https://${webDomain}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="light"
+            color="blue"
+            size="xs"
+            radius="md"
+            rightSection={<IconExternalLink size={13} />}
           >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
+            Visit Website
+          </Button>
+        </Group>
+
+        <Box>
+          {mode === 'lexicon' && <LexiconViewer domain={collection} />}
+          {mode === 'data' && (
+            did && rkey ? (
+              <DataViewer uri={`at://${did}/${collection}/${rkey}`} />
+            ) : (
+              <Text size="sm" c="dimmed" ta="center" py="xl">
+                No sample data available for this collection.
+              </Text>
+            )
+          )}
+          {mode === 'stats' && <StatsViewer collection={collection} />}
+        </Box>
+      </Box>
+    </Modal>
   );
 };
 

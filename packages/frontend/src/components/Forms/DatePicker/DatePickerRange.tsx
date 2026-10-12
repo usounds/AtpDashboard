@@ -5,9 +5,11 @@ import 'flatpickr/dist/flatpickr.min.css';
 interface DatePickerRangeProps {
   value?: [string, string];
   onChange?: (dates: [string, string]) => void;
+  className?: string;
+  placeholder?: string;
 }
 
-const DatePickerRange = ({ value, onChange }: DatePickerRangeProps) => {
+const DatePickerRange = ({ value, onChange, className, placeholder }: DatePickerRangeProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const fpInstance = useRef<flatpickr.Instance | null>(null);
 
@@ -74,10 +76,10 @@ const DatePickerRange = ({ value, onChange }: DatePickerRangeProps) => {
     <div className="relative">
       <input
         ref={inputRef}
-        className="form-datepicker w-full rounded border-[1.5px] border-stroke bg-transparent px-5 py-3 font-normal text-left outline-none transition dark:border-form-strokedark dark:bg-form-input"
-        placeholder="yyyy/mm/dd to yyyy/mm/dd"
+        className={className || "form-datepicker w-full rounded border-[1.5px] border-stroke bg-transparent px-5 py-3 font-normal text-left outline-none transition dark:border-form-strokedark dark:bg-form-input"}
+        placeholder={placeholder || "yyyy/mm/dd to yyyy/mm/dd"}
       />
-      <div className="pointer-events-none absolute inset-0 left-auto right-5 flex items-center">
+      <div className="pointer-events-none absolute inset-0 left-auto right-4 flex items-center">
         {/* カレンダーアイコン */}
         <svg
           width="18"

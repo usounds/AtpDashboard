@@ -1,17 +1,31 @@
-import { ApexOptions } from 'apexcharts';
-import React, { useEffect, useRef, useState } from "react";
-import ReactApexChart from 'react-apexcharts';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  SegmentedControl,
+  Paper,
+  Table,
+  LoadingOverlay,
+  Text,
+  Group,
+  Alert,
+  Box,
+  Badge,
+  Stack,
+  SimpleGrid,
+} from '@mantine/core';
+import { AreaChart } from '@mantine/charts';
+import { IconAlertCircle } from '@tabler/icons-react';
 import useColorMode from '../hooks/useColorMode';
 import { BarLoader } from 'react-spinners';
 import { resolveAnalyticsEndpoint } from '../config/endpoints';
+import { useCollectionStore } from '../zustand/collectionStore';
+import { calculateUserSurge, calculateRecordSurge } from '../utils/surge';
 import {
-  buildCollectionCumulativeUsersCategories,
-  buildCollectionCumulativeUsersSeries,
   buildCollectionCumulativeUsersUrl,
   type CollectionCumulativeUsersRange,
   type CollectionCumulativeUsersResponse,
+  type CollectionCumulativeUsersRow,
 } from './Charts/collectionCumulativeUsers';
-import { removeApexSvgTitle } from './Charts/chartLabels';
+import { formatRelativeDayOffsetLabel } from './Charts/chartLabels';
 
 type Stats = {
   unique_did: number;
@@ -27,89 +41,9 @@ type Props = {
 
 type StatsTab = 'summary' | 'cumulative';
 
-type CumulativeChartState = {
-  series: {
-    name: string;
-    data: number[];
-  }[];
-};
-
-const cumulativeUsersOptions: ApexOptions = {
-  legend: {
-    show: true,
-    position: 'top',
-    horizontalAlign: 'center',
-    fontFamily: 'Satoshi',
-    markers: {
-      size: 5,
-    },
-  },
-  colors: ['#3C50E0', '#80CAEE'],
-  chart: {
-    id: 'collection-cumulative-users',
-    fontFamily: 'Satoshi, sans-serif',
-    height: 300,
-    type: 'area',
-    redrawOnParentResize: true,
-    redrawOnWindowResize: true,
-    parentHeightOffset: 0,
-    toolbar: {
-      show: false,
-    },
-    events: {
-      mounted: (chartContext) => removeApexSvgTitle(chartContext),
-      updated: (chartContext) => removeApexSvgTitle(chartContext),
-    },
-  },
-  fill: {
-    gradient: {
-      opacityFrom: 0.45,
-      opacityTo: 0,
-    },
-  },
-  dataLabels: {
-    enabled: false,
-  },
-  stroke: {
-    curve: 'smooth',
-    width: 2,
-  },
-  grid: {
-    xaxis: {
-      lines: {
-        show: true,
-      },
-    },
-    yaxis: {
-      lines: {
-        show: true,
-      },
-    },
-  },
-  markers: {
-    size: 3,
-    strokeWidth: 2,
-    hover: {
-      size: 5,
-    },
-  },
-  xaxis: {
-    type: 'category',
-    categories: [],
-    axisBorder: {
-      show: false,
-    },
-    axisTicks: {
-      show: false,
-    },
-  },
-  yaxis: {
-    min: 0,
-    labels: {
-      formatter: (val) => val.toFixed(0),
-    },
-  },
-};
+interface FormattedCumulativeRow extends CollectionCumulativeUsersRow {
+  displayDate: string;
+}
 
 const StatsViewer: React.FC<Props> = ({ collection }) => {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -117,13 +51,51 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<StatsTab>('summary');
   const [range, setRange] = useState<CollectionCumulativeUsersRange>('365 Days');
-  const [cumulativeState, setCumulativeState] = useState<CumulativeChartState>({ series: [] });
-  const [cumulativeOptions, setCumulativeOptions] = useState<ApexOptions>(cumulativeUsersOptions);
+  const [cumulativeData, setCumulativeData] = useState<FormattedCumulativeRow[]>([]);
   const [isCumulativeLoading, setCumulativeLoading] = useState(false);
   const [cumulativeError, setCumulativeError] = useState<string | null>(null);
-  const [cumulativeChartKey, setCumulativeChartKey] = useState(0);
   const cumulativeRequestIdRef = useRef(0);
-  const [colorMode,] = useColorMode();
+  const [colorMode] = useColorMode();
+  const { collection: collections, fetchCollection } = useCollectionStore();
+
+  useEffect(() => {
+    if (collections.length === 0) {
+      fetchCollection();
+    }
+  }, [collections.length, fetchCollection]);
+
+  const collectionItem = useMemo(
+    () => collections.find((c) => c.collection === collection),
+    [collections, collection]
+  );
+
+  const { userSurge, recordSurge } = useMemo(() => {
+    const nowMs = Date.now();
+    const uSurge = collectionItem
+      ? calculateUserSurge(
+          collectionItem.unique_did,
+          collectionItem.recent_unique_did,
+          collectionItem.min,
+          nowMs
+        )
+      : null;
+
+    const rSurge = collectionItem
+      ? calculateRecordSurge(
+          collectionItem.count,
+          collectionItem.recent_count,
+          collectionItem.unique_did,
+          collectionItem.recent_unique_did,
+          collectionItem.min,
+          nowMs
+        )
+      : null;
+
+    return {
+      userSurge: uSurge,
+      recordSurge: rSurge,
+    };
+  }, [collectionItem]);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,39 +131,25 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
     let cancelled = false;
     const requestId = cumulativeRequestIdRef.current + 1;
     cumulativeRequestIdRef.current = requestId;
+
     const fetchCumulativeUsers = async () => {
       setCumulativeLoading(true);
       setCumulativeError(null);
       try {
         const res = await fetch(buildCollectionCumulativeUsersUrl(collection, range));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json() as CollectionCumulativeUsersResponse;
+        const data = (await res.json()) as CollectionCumulativeUsersResponse;
         if (cancelled || requestId !== cumulativeRequestIdRef.current) return;
-        const categories = buildCollectionCumulativeUsersCategories(data.rows);
-        const series = buildCollectionCumulativeUsersSeries(data.rows);
-        const maxValue = Math.max(...data.rows.map((row) => row.cumulative), 0) * 1.05;
-        setCumulativeOptions((prevOptions) => ({
-          ...prevOptions,
-          chart: {
-            ...prevOptions.chart,
-            id: `collection-cumulative-users-${requestId}`,
-          },
-          xaxis: {
-            ...prevOptions.xaxis,
-            categories,
-          },
-          yaxis: {
-            ...prevOptions.yaxis,
-            max: maxValue > 0 ? maxValue : 1,
-          },
+        const isMonthly = range === '365 Days';
+        const formatted: FormattedCumulativeRow[] = data.rows.map((row) => ({
+          ...row,
+          displayDate: formatRelativeDayOffsetLabel(row.day_offset, isMonthly),
         }));
-        setCumulativeState({ series });
-        setCumulativeChartKey((value) => value + 1);
+        setCumulativeData(formatted);
       } catch (err: any) {
         if (cancelled || requestId !== cumulativeRequestIdRef.current) return;
         setCumulativeError(err.message);
-        setCumulativeState({ series: [] });
-        setCumulativeChartKey((value) => value + 1);
+        setCumulativeData([]);
       } finally {
         if (!cancelled && requestId === cumulativeRequestIdRef.current) {
           setCumulativeLoading(false);
@@ -204,133 +162,236 @@ const StatsViewer: React.FC<Props> = ({ collection }) => {
     };
   }, [collection, range, tab]);
 
-  // Loading 表示は消す（常に表は表示）
-  // エラーは表の上に表示する形に変更
   return (
-    <div className="overflow-x-auto">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="inline-flex items-center gap-1 rounded-md bg-slate-200 p-1.5 dark:bg-meta-4">
-          <button
-            className={`rounded py-1 px-3 text-xs font-medium ${tab === 'summary'
-              ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-              : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-            onClick={() => setTab('summary')}
-          >
-            Summary
-          </button>
-          <button
-            className={`rounded py-1 px-3 text-xs font-medium ${tab === 'cumulative'
-              ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-              : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-            onClick={() => setTab('cumulative')}
-          >
-            Cumulative Users
-          </button>
-        </div>
+    <Box className="w-full">
+      <Group justify="space-between" align="center" mb="md" wrap="wrap" gap="sm">
+        <SegmentedControl
+          value={tab}
+          onChange={(val) => setTab(val as StatsTab)}
+          radius="md"
+          size="xs"
+          data={[
+            { label: 'Summary', value: 'summary' },
+            { label: 'Cumulative Users', value: 'cumulative' },
+          ]}
+        />
 
         {tab === 'cumulative' && (
-          <div className="inline-flex items-center gap-1 rounded-md bg-slate-200 p-1.5 dark:bg-meta-4">
-            <button
-              className={`rounded py-1 px-3 text-xs font-medium ${range === '7 Days'
-                ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-                : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-              onClick={() => setRange('7 Days')}
-            >
-              This Week
-            </button>
-            <button
-              className={`rounded py-1 px-3 text-xs font-medium ${range === '30 Days'
-                ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-                : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-              onClick={() => setRange('30 Days')}
-            >
-              This Month
-            </button>
-            <button
-              className={`rounded py-1 px-3 text-xs font-medium ${range === '365 Days'
-                ? 'text-black bg-white dark:bg-boxdark dark:text-white'
-                : 'text-black hover:bg-white hover:shadow-card dark:text-white dark:hover:bg-boxdark'}`}
-              onClick={() => setRange('365 Days')}
-            >
-              This Year
-            </button>
-          </div>
+          <SegmentedControl
+            value={range}
+            onChange={(val) => setRange(val as CollectionCumulativeUsersRange)}
+            radius="md"
+            size="xs"
+            data={[
+              { label: 'This Week', value: '7 Days' },
+              { label: 'This Month', value: '30 Days' },
+              { label: 'This Year', value: '365 Days' },
+            ]}
+          />
         )}
-      </div>
+      </Group>
 
       {tab === 'summary' && (
-        <>
-          {error && <div style={{ color: "red" }}>Error: {error}</div>}
+        <Stack gap="sm">
+          {error && (
+            <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
+              {error}
+            </Alert>
+          )}
 
-          {isLoading &&
+          {isLoading && (
             <BarLoader
               width="100%"
-              color={colorMode === 'dark' ? "#a6a6a6" : '#000000'}
+              color={colorMode === 'dark' ? '#a6a6a6' : '#3C50E0'}
             />
-          }
-          <table className="table-auto w-full text-left border-collapse">
-            <tbody>
-              <tr className="border-b border-gray-300 dark:border-gray-700 align-top">
-                <th className="px-4 py-2 align-top whitespace-nowrap">Collection</th>
-                <td className="px-4 py-2">{collection}</td>
-                <th className="px-4 py-2 align-top whitespace-nowrap">Total DIDs</th>
-                <td className="px-4 py-2">{stats ? stats.unique_did.toLocaleString() : "-"}</td>
-              </tr>
+          )}
 
-              <tr className="border-b border-gray-300 dark:border-gray-700">
-                <th className="px-4 py-2 whitespace-nowrap">Records</th>
-                <td className="px-4 py-2">{stats ? stats.unique_rkey.toLocaleString() : "-"}</td>
-                <th className="px-4 py-2 whitespace-nowrap">Events</th>
-                <td className="px-4 py-2">{stats ? stats.total_count.toLocaleString() : "-"}</td>
-              </tr>
-              <tr>
-                <th className="px-4 py-2 whitespace-nowrap">First Indexed</th>
-                <td className="px-4 py-2">
-                  {stats && stats.min_createdat
-                    ? stats.min_createdat.startsWith("1900-01-01")
-                      ? "Backfilled Data"
-                      : new Date(stats.min_createdat + "Z").toLocaleString()
-                    : "-"}
-                </td>
-                <th className="px-4 py-2 whitespace-nowrap">Last Indexed</th>
-                <td className="px-4 py-2">
-                  {stats && stats.max_createdat
-                    ? stats.max_createdat.startsWith("1900-01-01")
-                      ? "Backfilled Data"
-                      : new Date(stats.max_createdat + "Z").toLocaleString()
-                    : "-"}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </>
+          {/* 1. Momentum & Status KPI Cards */}
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+            {/* User Surge Card */}
+            <Paper
+              withBorder
+              p="sm"
+              radius="md"
+              className="bg-white dark:bg-[#182234] border-gray-200 dark:border-gray-800"
+            >
+              <Group justify="space-between" align="center" mb={4}>
+                <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                  User Surge
+                </Text>
+                <Badge
+                  color={userSurge ? 'orange' : 'gray'}
+                  variant="light"
+                  size="sm"
+                  tt="none"
+                >
+                  {userSurge
+                    ? `🔥 ${userSurge.multiplier >= 10 ? Math.round(userSurge.multiplier) : userSurge.multiplier.toFixed(1)}x`
+                    : 'Steady'}
+                </Badge>
+              </Group>
+              <Text size="lg" fw={700} c={userSurge ? 'orange.6' : undefined}>
+                {userSurge
+                  ? `+${Math.round(userSurge.netGain).toLocaleString()} users`
+                  : collectionItem
+                  ? `${(collectionItem.recent_unique_did || 0).toLocaleString()} users`
+                  : '-'}
+              </Text>
+              <Text size="xs" c="dimmed" mt={2}>
+                {userSurge
+                  ? `${(collectionItem?.recent_unique_did || 0).toLocaleString()} users in 72h · above baseline`
+                  : 'Active in past 72h'}
+              </Text>
+            </Paper>
+
+            {/* Active Buzz Card */}
+            <Paper
+              withBorder
+              p="sm"
+              radius="md"
+              className="bg-white dark:bg-[#182234] border-gray-200 dark:border-gray-800"
+            >
+              <Group justify="space-between" align="center" mb={4}>
+                <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                  Active Buzz
+                </Text>
+                <Badge
+                  color={recordSurge ? 'yellow' : 'gray'}
+                  variant="light"
+                  size="sm"
+                  tt="none"
+                >
+                  {recordSurge
+                    ? `⚡️ ${recordSurge.multiplier >= 10 ? Math.round(recordSurge.multiplier) : recordSurge.multiplier.toFixed(1)}x`
+                    : 'Steady'}
+                </Badge>
+              </Group>
+              <Text size="lg" fw={700} c={recordSurge ? 'yellow.7' : undefined}>
+                {recordSurge
+                  ? `+${Math.round(recordSurge.netGainRecords).toLocaleString()} records`
+                  : collectionItem
+                  ? `${(collectionItem.recent_count || 0).toLocaleString()} records`
+                  : '-'}
+              </Text>
+              <Text size="xs" c="dimmed" mt={2}>
+                {recordSurge
+                  ? `${(collectionItem?.recent_count || 0).toLocaleString()} records in 72h · above baseline`
+                  : 'Created in past 72h'}
+              </Text>
+            </Paper>
+          </SimpleGrid>
+
+          {/* 2. Core Volume & Activity Stats */}
+          <Paper
+            withBorder
+            p="md"
+            radius="md"
+            className="bg-white dark:bg-[#182234] border-gray-200 dark:border-gray-800"
+          >
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md" mb="md">
+              <Box>
+                <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                  Total DIDs
+                </Text>
+                <Text size="xl" fw={700} mt={4}>
+                  {stats ? stats.unique_did.toLocaleString() : '-'}
+                </Text>
+              </Box>
+              <Box>
+                <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                  Records
+                </Text>
+                <Text size="xl" fw={700} mt={4}>
+                  {stats ? stats.unique_rkey.toLocaleString() : '-'}
+                </Text>
+              </Box>
+              <Box>
+                <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                  Events
+                </Text>
+                <Text size="xl" fw={700} mt={4}>
+                  {stats ? stats.total_count.toLocaleString() : '-'}
+                </Text>
+              </Box>
+            </SimpleGrid>
+
+            <Box className="border-t border-gray-100 dark:border-gray-800 pt-3">
+              <Group justify="space-between" wrap="wrap" gap="md">
+                <Box>
+                  <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                    First Indexed
+                  </Text>
+                  <Text size="xs" mt={2}>
+                    {stats && stats.min_createdat
+                      ? stats.min_createdat.startsWith('1900-01-01')
+                        ? 'Backfilled Data'
+                        : new Date(stats.min_createdat + 'Z').toLocaleString()
+                      : '-'}
+                  </Text>
+                </Box>
+                <Box>
+                  <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                    Last Indexed
+                  </Text>
+                  <Text size="xs" mt={2}>
+                    {stats && stats.max_createdat
+                      ? stats.max_createdat.startsWith('1900-01-01')
+                        ? 'Backfilled Data'
+                        : new Date(stats.max_createdat + 'Z').toLocaleString()
+                      : '-'}
+                  </Text>
+                </Box>
+              </Group>
+            </Box>
+          </Paper>
+        </Stack>
       )}
 
       {tab === 'cumulative' && (
-        <div>
-          {cumulativeError && <div style={{ color: "red" }}>Error: {cumulativeError}</div>}
-          <div className="relative pb-2">
-            {isCumulativeLoading && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-boxdark/60" aria-label="Loading cumulative users">
-                <span className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary" />
-              </div>
-            )}
-            <ReactApexChart
-              key={`${collection}-${range}-${cumulativeChartKey}`}
-              options={cumulativeOptions}
-              series={cumulativeState.series}
-              type="area"
-              height={300}
+        <Paper withBorder radius="md" p="md" className="bg-white dark:bg-[#182234] border-gray-200 dark:border-gray-800">
+          {cumulativeError && (
+            <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light" mb="md">
+              {cumulativeError}
+            </Alert>
+          )}
+          <Box pos="relative" h={310}>
+            <LoadingOverlay
+              visible={isCumulativeLoading}
+              overlayProps={{ radius: 'md', blur: 1, opacity: 0.35 }}
+              loaderProps={{ size: 'sm', color: 'blue' }}
             />
-          </div>
-        </div>
+            {cumulativeData.length > 0 ? (
+              <AreaChart
+                h={300}
+                data={cumulativeData}
+                dataKey="displayDate"
+                curveType="monotone"
+                withGradient
+                fillOpacity={0.2}
+                strokeWidth={2}
+                withLegend
+                withDots={false}
+                gridAxis="xy"
+                valueFormatter={(val) => val.toLocaleString()}
+                series={[
+                  { name: 'cumulative', label: 'Cumulative Users', color: 'blue.6' },
+                  { name: 'new', label: 'New Users', color: 'cyan.5' },
+                ]}
+              />
+            ) : (
+              <Box className="h-full flex items-center justify-center text-gray-400">
+                {isCumulativeLoading ? '' : 'No data available'}
+              </Box>
+            )}
+          </Box>
+        </Paper>
       )}
-      <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 text-center">
+
+      <Text size="xs" c="dimmed" ta="center" mt="md">
         Data may take up to 10 minutes to be reflected.
-      </p>
-    </div>
+      </Text>
+    </Box>
   );
 };
-
 
 export default StatsViewer;

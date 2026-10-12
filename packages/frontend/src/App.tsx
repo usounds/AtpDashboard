@@ -1,71 +1,76 @@
-import { useEffect, useState } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
-import Loader from './common/Loader';
+import { useEffect } from 'react';
+import { Route, Routes, useLocation, Navigate } from 'react-router-dom';
 import PageTitle from './components/PageTitle';
-import DefaultLayout from './layout/DefaultLayout';
-import ATmosphere from './pages/Dashboard/ATmosphere';
-import CollectonBrowser from './pages/Dashboard/CollectonBrowser';
+import TopNavLayout from './layout/TopNavLayout';
+import CollectionsDashboard from './pages/Dashboard/CollectionsDashboard';
 import CustomFeedDashboard from './pages/Dashboard/CustomFeedDashboard';
-import ChartBoard from './pages/Dashboard/ChartBoard';
+import Explore from './pages/Dashboard/Explore';
+import About from './pages/About/About';
+import { useCollectionStore } from './zustand/collectionStore';
 
 function App() {
-  const [loading, setLoading] = useState<boolean>(true);
   const { pathname } = useLocation();
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
 
+  // Eagerly prefetch collections on startup
   useEffect(() => {
-    setTimeout(() => setLoading(false), 1000);
+    useCollectionStore.getState().fetchCollection();
   }, []);
 
-  return loading ? (
-    <Loader />
-  ) : (
-    <DefaultLayout>
+  return (
+    <TopNavLayout>
       <Routes>
         <Route
           index
           element={
             <>
-              <PageTitle title="3rd Party Collection | ATProto Dashboard" />
-              <ATmosphere />
+              <PageTitle title="Explore | atproto Dashboard" />
+              <Explore />
             </>
           }
         />
 
         <Route
-          path="/collection/browser"
+          path="/collections"
           element={
             <>
-              <PageTitle title="3rd Party Collection Browser | ATProto Dashboard" />
-              <CollectonBrowser />
+              <PageTitle title="Collections | atproto Dashboard" />
+              <CollectionsDashboard />
             </>
           }
         />
+
+        {/* Redirect aliases for backward compatibility */}
+        <Route path="/overview" element={<Navigate to="/collections" replace />} />
+        <Route path="/collection/browser" element={<Navigate to="/collections" replace />} />
+        <Route path="/explore" element={<Navigate to="/" replace />} />
 
         <Route
           path="/customfeed/dashboard"
           element={
             <>
-              <PageTitle title="Custom Feed | ATProto Dashboard" />
+              <PageTitle title="Custom Feed | atproto Dashboard" />
               <CustomFeedDashboard />
             </>
           }
         />
 
         <Route
-          path="/collectionChart"
+          path="/about"
           element={
             <>
-              <PageTitle title="Collection Charts | ATProto Dashboard" />
-              <ChartBoard />
+              <PageTitle title="About & Guide | atproto Dashboard" />
+              <About />
             </>
           }
         />
+        <Route path="/guide" element={<Navigate to="/about" replace />} />
+        <Route path="/help" element={<Navigate to="/about" replace />} />
       </Routes>
-    </DefaultLayout>
+    </TopNavLayout>
   );
 }
 

@@ -5,6 +5,8 @@ export type Collection = {
     min: string;
     max: string;
     isNew?: boolean;
+    unique_did?: number;
+    recent_unique_did?: number;
 }
 
 export type Did = {
