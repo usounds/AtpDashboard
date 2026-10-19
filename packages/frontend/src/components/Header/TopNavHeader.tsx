@@ -81,7 +81,7 @@ export const TopNavHeader: React.FC = () => {
           </NavLink>
 
           {/* Desktop Navigation Links */}
-          <Group gap={6} className="hidden md:flex">
+          <Group gap={6} visibleFrom="md">
             {navItems.map((item) => {
               const active = isNavActive(item);
               const Icon = item.icon;
@@ -140,7 +140,7 @@ export const TopNavHeader: React.FC = () => {
           <Burger
             opened={opened}
             onClick={toggle}
-            className="md:hidden"
+            hiddenFrom="md"
             size="sm"
             aria-label="Toggle navigation"
           />
@@ -151,6 +151,7 @@ export const TopNavHeader: React.FC = () => {
       <Drawer
         opened={opened}
         onClose={close}
+        position="right"
         title={
           <Group gap="xs">
             <img src={LogoIcon} alt="Logo" className="w-6 h-6" />
