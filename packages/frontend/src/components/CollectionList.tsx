@@ -109,7 +109,7 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
   const [sortDirection, setSortDirection] = useState<'ascending' | 'descending'>('ascending');
 
   // Search & Filter conditions from original Collection page
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState<string>(() => searchParams.get('search') || '');
   const [firstRange, setFirstRange] = useState<[string, string]>(['', '']);
   const [lastRange, setLastRange] = useState<[string, string]>(['', '']);
@@ -162,8 +162,14 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
   };
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(event.target.value);
+    const val = event.target.value;
+    setSearchQuery(val);
     setPage(1);
+    if (!val.trim() && searchParams.has('search')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('search');
+      setSearchParams(nextParams, { replace: true });
+    }
   };
 
   const handleSelectedCollection = (collection: string) => {
@@ -202,6 +208,11 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
     setHasLexiconCheck(false);
     setPage(1);
     setExpandedGroups(new Set());
+    if (searchParams.has('search')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('search');
+      setSearchParams(nextParams, { replace: true });
+    }
   };
 
   // Filter and sort individual collections
@@ -421,6 +432,11 @@ const CollectionList: React.FC<CollectionListProps> = ({ collections }) => {
                     onClick={() => {
                       setSearchQuery('');
                       setPage(1);
+                      if (searchParams.has('search')) {
+                        const nextParams = new URLSearchParams(searchParams);
+                        nextParams.delete('search');
+                        setSearchParams(nextParams, { replace: true });
+                      }
                     }}
                   />
                 ) : null

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Box,
   Text,
@@ -45,6 +46,9 @@ const CollectionsDashboard: React.FC = () => {
     fetchCollection,
     isLoading: isGlobalLoading,
   } = useCollectionStore();
+
+  const [searchParams] = useSearchParams();
+  const hasSearchParam = Boolean(searchParams.get('search')?.trim());
 
   const [viewMode, setViewMode] = useState<'table' | 'charts'>('table');
   const [didCount, setDidCount] = useState<number>(0);
@@ -165,116 +169,115 @@ const CollectionsDashboard: React.FC = () => {
         </Alert>
       )}
 
-      {/* Top Header & Actions */}
-      <Box className="w-full mb-6">
-        <Group justify="flex-end" align="center" wrap="wrap" gap="md" mb="md">
-          <Tooltip label="Fetch latest collections and analytics" withArrow position="bottom-end">
-            <Button
-              onClick={() => loadMetadata()}
-              loading={isLoading || isGlobalLoading}
-              leftSection={<IconRefresh size={14} />}
-              variant="default"
-              size="xs"
-              radius="md"
-            >
-              Reload
-            </Button>
-          </Tooltip>
-        </Group>
+      {/* 4 KPI Summary Cards (Network-wide overall metrics - hidden when filtering by search parameter) */}
+      {!hasSearchParam && (
+        <Box className="w-full mb-6">
+          <Group justify="space-between" align="center" wrap="wrap" gap="xs" mb="sm">
+            <Group gap="xs" align="center">
+              <ThemeIcon size={24} radius="sm" variant="light" color="blue">
+                <IconWorldWww size={14} />
+              </ThemeIcon>
+              <Text size="xs" fw={700} c="dimmed" className="uppercase tracking-wider">
+                Network Overall Overview (All Collections)
+              </Text>
+            </Group>
+          </Group>
 
-        {/* 4 KPI Summary Cards */}
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md" mb="xl">
-          <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
-            <Group justify="space-between" align="flex-start">
-              <Box>
-                <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
-                  Total Collections
-                </Text>
-                <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
-                  {filteredCollections.length > 0 ? filteredCollections.length.toLocaleString() : 'Loading...'}
-                </Text>
-                {newCount > 0 && (
-                  <Badge size="xs" color="teal" variant="light" radius="sm" className="mt-2 font-bold">
-                    +{newCount.toLocaleString()} New (72h)
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+            <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
+                    Network Collections
+                  </Text>
+                  <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
+                    {filteredCollections.length > 0 ? filteredCollections.length.toLocaleString() : 'Loading...'}
+                  </Text>
+                  {newCount > 0 && (
+                    <Badge size="xs" color="teal" variant="light" radius="sm" className="mt-2 font-bold">
+                      +{newCount.toLocaleString()} New (72h)
+                    </Badge>
+                  )}
+                </Box>
+                <ThemeIcon size={38} radius="md" variant="light" color="blue">
+                  <IconFolders size={20} />
+                </ThemeIcon>
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
+                    Network Namespaces
+                  </Text>
+                  <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
+                    {nsidLv2Count > 0 ? nsidLv2Count.toLocaleString() : 'Loading...'}
+                  </Text>
+                  <Text size="11px" c="dimmed" className="mt-2">
+                    Distinct apex domains (overall)
+                  </Text>
+                </Box>
+                <ThemeIcon size={38} radius="md" variant="light" color="cyan">
+                  <IconWorldWww size={20} />
+                </ThemeIcon>
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
+                    Network Users (DIDs)
+                  </Text>
+                  <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
+                    {didCount > 0 ? didCount.toLocaleString() : 'Loading...'}
+                  </Text>
+                  <Text size="11px" c="dimmed" className="mt-2">
+                    Observed record creators (overall)
+                  </Text>
+                </Box>
+                <ThemeIcon size={38} radius="md" variant="light" color="indigo">
+                  <IconUsers size={20} />
+                </ThemeIcon>
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
+                    Firehose Sync Lag
+                  </Text>
+                  <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
+                    {cursorDelayMinutes === 0 ? '0 min' : `${cursorDelayMinutes.toLocaleString()} min`}
+                  </Text>
+                  <Badge
+                    size="xs"
+                    color={cursorDelayMinutes <= 5 ? 'teal' : cursorDelayMinutes <= 30 ? 'yellow' : 'red'}
+                    variant="light"
+                    radius="sm"
+                    className="mt-2 font-bold"
+                  >
+                    {cursorDelayMinutes <= 5 ? 'Healthy' : 'Delayed'}
                   </Badge>
-                )}
-              </Box>
-              <ThemeIcon size={38} radius="md" variant="light" color="blue">
-                <IconFolders size={20} />
-              </ThemeIcon>
-            </Group>
-          </Paper>
-
-          <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
-            <Group justify="space-between" align="flex-start">
-              <Box>
-                <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
-                  Sub Namespaces
-                </Text>
-                <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
-                  {nsidLv2Count > 0 ? nsidLv2Count.toLocaleString() : 'Loading...'}
-                </Text>
-                <Text size="11px" c="dimmed" className="mt-2">
-                  Distinct apex domains
-                </Text>
-              </Box>
-              <ThemeIcon size={38} radius="md" variant="light" color="cyan">
-                <IconWorldWww size={20} />
-              </ThemeIcon>
-            </Group>
-          </Paper>
-
-          <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
-            <Group justify="space-between" align="flex-start">
-              <Box>
-                <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
-                  Total Users (DIDs)
-                </Text>
-                <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
-                  {didCount > 0 ? didCount.toLocaleString() : 'Loading...'}
-                </Text>
-                <Text size="11px" c="dimmed" className="mt-2">
-                  Observed record creators
-                </Text>
-              </Box>
-              <ThemeIcon size={38} radius="md" variant="light" color="indigo">
-                <IconUsers size={20} />
-              </ThemeIcon>
-            </Group>
-          </Paper>
-
-          <Paper withBorder p="md" radius="lg" className="bg-white dark:bg-[#182234]">
-            <Group justify="space-between" align="flex-start">
-              <Box>
-                <Text size="xs" c="dimmed" fw={600} className="uppercase tracking-wider">
-                  Cursor Sync Lag
-                </Text>
-                <Text fw={700} size="xl" className="font-mono mt-1 text-gray-900 dark:text-gray-100">
-                  {cursorDelayMinutes === 0 ? '0 min' : `${cursorDelayMinutes.toLocaleString()} min`}
-                </Text>
-                <Badge
-                  size="xs"
-                  color={cursorDelayMinutes <= 5 ? 'teal' : cursorDelayMinutes <= 30 ? 'yellow' : 'red'}
+                </Box>
+                <ThemeIcon
+                  size={38}
+                  radius="md"
                   variant="light"
-                  radius="sm"
-                  className="mt-2 font-bold"
+                  color={cursorDelayMinutes <= 5 ? 'teal' : 'yellow'}
                 >
-                  {cursorDelayMinutes <= 5 ? 'Healthy' : 'Delayed'}
-                </Badge>
-              </Box>
-              <ThemeIcon
-                size={38}
-                radius="md"
-                variant="light"
-                color={cursorDelayMinutes <= 5 ? 'teal' : 'yellow'}
-              >
-                <IconClock size={20} />
-              </ThemeIcon>
-            </Group>
-          </Paper>
-        </SimpleGrid>
+                  <IconClock size={20} />
+                </ThemeIcon>
+              </Group>
+            </Paper>
+          </SimpleGrid>
+        </Box>
+      )}
 
-        {/* View Switcher: Collections Table | Activity Charts */}
+      {/* View Switcher: Collections Table | Activity Charts + Reload Action */}
+      <Box className="w-full mb-6">
         <Group justify="space-between" align="center" mb="md" wrap="wrap" gap="sm">
           <SegmentedControl
             value={viewMode}
@@ -302,6 +305,19 @@ const CollectionsDashboard: React.FC = () => {
               },
             ]}
           />
+
+          <Tooltip label="Fetch latest collections and analytics" withArrow position="bottom-end">
+            <Button
+              onClick={() => loadMetadata()}
+              loading={isLoading || isGlobalLoading}
+              leftSection={<IconRefresh size={14} />}
+              variant="default"
+              size="xs"
+              radius="md"
+            >
+              Reload
+            </Button>
+          </Tooltip>
         </Group>
 
         {/* View Content */}
